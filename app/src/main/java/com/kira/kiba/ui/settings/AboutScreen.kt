@@ -2,6 +2,7 @@ package com.kira.kiba.ui.settings
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -23,24 +25,34 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.zIndex
+import androidx.core.content.ContextCompat
+import androidx.core.graphics.drawable.toBitmap
 import coil.imageLoader
 import coil.request.ImageRequest
 import com.kira.kiba.BuildConfig
@@ -48,6 +60,7 @@ import com.kira.kiba.core.update.ApkDownloader
 import com.kira.kiba.core.update.UpdateChecker
 import com.kira.kiba.core.update.UpdateResult
 import com.kira.kiba.core.utils.SpUtil
+import com.kira.kiba.ui.common.AboutBgEffect
 import com.kira.kiba.ui.common.MarkdownContent
 import com.kira.kiba.ui.common.SectionTitle
 import com.kira.kiba.ui.common.pageContentPadding
@@ -98,39 +111,121 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
         releaseStatus = UpdateChecker.getReleaseStatus(currentVersion)
     }
 
-    Scaffold(
-        modifier = Modifier
-            .fillMaxSize()
-            .nestedScroll(scrollBehavior.nestedScrollConnection),
-        contentWindowInsets = WindowInsets(0, 0, 0, 0),
-    ) { padding ->
+    // ── 高级渐变背景（移植 Termux Ultra：HyperCeiler 风格 RuntimeShader 动画，
+    //    minSdk 33 恒可用，不设 Brush fallback）──
+    val darkTheme = isSystemInDarkTheme()
+    // 头部前景：Logo 染色与文字同色（Termux Ultra 同款），渐变从白色像素处透出
+    val headerFg = if (darkTheme) Color.White else Color(0xFF333333)
+
+    // 滚动跟踪：滚过头部时背景渐隐、头部内容淡出
+    val listState = rememberLazyListState()
+    val density = LocalDensity.current
+    val headerHeightPx = with(density) { 100.dp.toPx() }
+    var scrollFraction by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.layoutInfo.visibleItemsInfo.firstOrNull()?.offset ?: 0 }
+            .collect { offset ->
+                val firstIndex = listState.firstVisibleItemIndex
+                scrollFraction = if (firstIndex == 0) {
+                    (-offset.toFloat() / headerHeightPx).coerceIn(0f, 1f)
+                } else {
+                    1f
+                }
+            }
+    }
+
+    var bgController by remember { mutableStateOf<AboutBgEffect.ShaderController?>(null) }
+    var bgDarkTheme by remember { mutableStateOf(darkTheme) }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        // RuntimeShader 动画渐变层（滚过头部后渐隐；暗色下减半）
+        AndroidView(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    alpha = (1f - scrollFraction) * (if (darkTheme) 0.5f else 1f)
+                }
+                .blur(120.dp)
+                .zIndex(-1f),
+            factory = { ctx ->
+                android.view.View(ctx).apply {
+                    setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                    val ctl = AboutBgEffect.createFor(this, darkTheme)
+                    bgController = ctl
+                    bgDarkTheme = darkTheme
+                    ctl?.start()
+                }
+            },
+            update = { _ ->
+                if (bgDarkTheme != darkTheme) {
+                    bgController?.updateParams(AboutBgEffect.getParams(darkTheme))
+                    bgDarkTheme = darkTheme
+                }
+            },
+        )
+
+        Scaffold(
+            modifier = Modifier
+                .fillMaxSize()
+                .nestedScroll(scrollBehavior.nestedScrollConnection),
+            containerColor = Color.Transparent,
+            contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        ) { padding ->
         LazyColumn(
+            state = listState,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
             contentPadding = pageContentPadding(withNavBar = false),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // ── 头部：图标 + 名称 + 版本 + 状态标签 ──
+            // ── 头部：Logo（染色透出渐变）+ 名称 + 版本 + 状态标签 ──
             item(key = "header") {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 36.dp, bottom = 10.dp),
+                        .graphicsLayer { alpha = 1f - scrollFraction }
+                        .padding(top = 48.dp, bottom = 10.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    val appIcon = remember {
+                    // App Logo：白色像素透明（透出渐变），其余染成文字色（Termux Ultra 同款处理）
+                    val appIcon = remember(darkTheme) {
+                        val fgInt = android.graphics.Color.argb(
+                            (headerFg.alpha * 255).toInt(),
+                            (headerFg.red * 255).toInt(),
+                            (headerFg.green * 255).toInt(),
+                            (headerFg.blue * 255).toInt(),
+                        )
                         runCatching {
-                            android.graphics.BitmapFactory.decodeResource(
-                                context.resources, context.applicationInfo.icon,
-                            )
-                        }.getOrNull()
+                            ContextCompat.getDrawable(context, context.applicationInfo.icon)?.toBitmap()
+                        }.getOrNull()?.let { bm ->
+                            val copy = bm.copy(android.graphics.Bitmap.Config.ARGB_8888, true)
+                            val pixels = IntArray(copy.width * copy.height)
+                            copy.getPixels(pixels, 0, copy.width, 0, 0, copy.width, copy.height)
+                            for (i in pixels.indices) {
+                                val c = pixels[i]
+                                val r = (c shr 16) and 0xFF
+                                val g = (c shr 8) and 0xFF
+                                val b = c and 0xFF
+                                val a = (c shr 24) and 0xFF
+                                val brightness = (r + g + b) / 3f
+                                if (a > 128 && brightness > 180f) {
+                                    // 白色像素 → 透明，让 shader 渐变透出
+                                    pixels[i] = 0x00000000
+                                } else if (a > 128) {
+                                    // 其他非透明像素 → 染成和文字同色
+                                    pixels[i] = fgInt
+                                }
+                            }
+                            copy.setPixels(pixels, 0, copy.width, 0, 0, copy.width, copy.height)
+                            BitmapPainter(copy.asImageBitmap())
+                        }
                     }
                     if (appIcon != null) {
                         Image(
-                            bitmap = appIcon.asImageBitmap(),
+                            painter = appIcon,
                             contentDescription = "Logo",
-                            modifier = Modifier.size(88.dp),
+                            modifier = Modifier.size(100.dp),
                         )
                     }
                     Spacer(modifier = Modifier.height(16.dp))
@@ -139,7 +234,7 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
                         style = TextStyle(
                             fontSize = 34.sp,
                             fontWeight = FontWeight.Black,
-                            color = MiuixTheme.colorScheme.onSurface,
+                            color = headerFg,
                         ),
                     )
                     Spacer(modifier = Modifier.height(8.dp))
@@ -151,7 +246,7 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
                             text = "v$currentVersion",
                             style = TextStyle(
                                 fontSize = 16.sp,
-                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                color = headerFg,
                             ),
                         )
                         when (releaseStatus) {
@@ -160,12 +255,6 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
                             else -> {}
                         }
                     }
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "舞萌 DX 查分 / 推分工具 · Compose + miuix-glass",
-                        style = MiuixTheme.textStyles.body2,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    )
                 }
             }
 
@@ -193,8 +282,8 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
             item(key = "dev_card") {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     AvatarArrowRow(
-                        title = "TiG-Kira",
-                        summary = "开发者 · github.com/TiG-Kira",
+                        title = "极犽",
+                        summary = "@TiG-Kira",
                         avatarUrl = "https://github.com/TiG-Kira.png",
                         onClick = { openUrl(context, "https://github.com/TiG-Kira") },
                     )
@@ -339,6 +428,7 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
                     )
                 }
             }
+        }
         }
     }
 
