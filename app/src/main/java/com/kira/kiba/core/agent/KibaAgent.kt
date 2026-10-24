@@ -3,6 +3,7 @@ package com.kira.kiba.core.agent
 import android.content.Context
 import android.util.Log
 import com.kira.kiba.core.account.DivingFishAccount
+import com.kira.kiba.core.utils.Constants
 import com.kira.kiba.core.best50.ImageSaver
 import com.kira.kiba.core.best50.MemeImageBuilder
 import com.kira.kiba.core.db.AppDataBase
@@ -507,56 +508,105 @@ class KibaAgent(private val context: Context) {
                     "登录后我会按你的 Best 50 缺口给出针对性建议。"
             )
         }
-        // 曲库先取：宴会场判定需要（流派/六位数 id）
+        // 曲库先取：宴会场判定（流派/六位数 id）与 SD/DX 类型判定需要
         val songs = withContext(Dispatchers.IO) {
             runCatching {
                 AppDataBase.getInstance().songDao().getAllSongsList()
             }.getOrDefault(emptyList())
         }
         val titleById = songs.associate { it.id to it.title }
+        val typeById = songs.associate { it.id to it.type }
         // 宴会场谱面不获 Rating（官方设定）：流派 = 宴会場、六位数 id 段、或等级带「?」（如 14?）
         val utageIds = utageSongIds(songs)
 
-        // 1) 已打谱面：理论 ra 上限（SSS+ 100.5%）与当前 ra 的增益。
-        //    成绩记录里也会混入宴会场谱面（等级带「?」），一并排除。
-        val gains = records
-            .filter { !it.level.contains("?") && it.songId !in utageIds }
-            .map { r ->
-                val maxRa = floor(r.ds * 1.005).toInt()
-                Triple(r, (maxRa - r.ra).coerceAtLeast(0), maxRa)
-            }.sortedByDescending { it.second }
+        // 成绩里混入的宴会场谱面（等级带「?」）不参与 Rating 计算，一并排除
+        val played = records.filter { !it.level.contains("?") && it.songId !in utageIds }
 
-        // 2) 未打的高定数谱面（按 ds 取前 10）
-        val playedKeys = records.map { it.songId to it.levelIndex }.toSet()
+        // ── Best 50 地板：优先查分器数据，退回本地记录（SD→B35，DX→B15，均按 ra 降序取尾）──
+        val b50 = DivingFishAccount.best50()
+        val b35 = b50.old.ifEmpty {
+            played.filter { it.type == Constants.CHART_TYPE_SD }.sortedByDescending { it.ra }.take(35)
+        }
+        val b15 = b50.new.ifEmpty {
+            played.filter { it.type == Constants.CHART_TYPE_DX }.sortedByDescending { it.ra }.take(15)
+        }
+        val b35Floor = b35.lastOrNull()?.ra
+        val b15Floor = b15.lastOrNull()?.ra
+        if (b35Floor == null && b15Floor == null) {
+            return AgentReply("还没有 Best 50 成绩数据，先去打几首再来看推分建议吧。")
+        }
+
+        // 当前成绩索引：songId + 难度 → 记录
+        val recordByKey = played.associateBy { it.songId to it.levelIndex }
+
         val charts = withContext(Dispatchers.IO) {
             runCatching {
                 AppDataBase.getInstance().chartDao().getAllChartsList()
             }.getOrDefault(emptyList())
         }
-        val unplayed = charts
+
+        // ── 候选：SSS+（100.5%）理论上限 ra 高于对应列表地板、且本曲还没拿到该 ra 的谱面。
+        //    新曲（DX）对标 B15 地板，旧曲（SD）对标 B35 地板；打上去就能入榜 / 抬线。
+        data class Cand(
+            val songId: Int,
+            val levelIndex: Int,
+            val level: String,
+            val ds: Double,
+            val isDx: Boolean,
+            val potential: Int,
+            val floor: Int,
+            val current: RecordEntity?,
+        )
+
+        val candidates = charts
             .filter { !isUtageChart(it, utageIds) }
-            .filter { (it.songId to it.difficultyType.ordinal) !in playedKeys }
-            .sortedByDescending { it.ds }
+            .mapNotNull { c ->
+                val floor = when {
+                    typeById[c.songId] == Constants.CHART_TYPE_DX -> b15Floor
+                    typeById[c.songId] == Constants.CHART_TYPE_SD -> b35Floor
+                    else -> null
+                } ?: return@mapNotNull null
+                val potential = floor(c.ds * 1.005).toInt()
+                if (potential <= floor) return@mapNotNull null
+                val current = recordByKey[c.songId to c.difficultyType.ordinal]
+                // 本曲已拿到该 ra（贴着上限）→ 没有提升空间；未达到才推荐
+                if (current != null && current.ra >= potential) return@mapNotNull null
+                Cand(
+                    songId = c.songId,
+                    levelIndex = c.difficultyType.ordinal,
+                    level = c.level,
+                    ds = c.ds,
+                    isDx = typeById[c.songId] == Constants.CHART_TYPE_DX,
+                    potential = potential,
+                    floor = floor,
+                    current = current,
+                )
+            }
+            .sortedByDescending { it.potential }
             .take(10)
 
         val sb = StringBuilder()
-        sb.append("推分推荐（按增益排序）：\n\n【提升现有成绩】\n")
-        gains.filter { it.second > 0 }.take(8).forEach { (r, gain, maxRa) ->
-            sb.append(
-                "· ${r.title} [${difficultyLabel(r.levelIndex)} ${r.level}] " +
-                    "%.4f%% → ra ${r.ra}（上限 $maxRa，可再 +$gain）\n".format(r.achievements)
-            )
-        }
-        if (gains.none { it.second > 0 }) sb.append("· 你的 B50 已全部贴近理论上限，很强。\n")
-        sb.append("\n【未打的高定数谱面】\n")
-        if (unplayed.isEmpty()) {
-            sb.append("· 没有找到未打谱面（曲库可能未更新）。\n")
+        sb.append("推分推荐（基于 Best 50 地板）：\n")
+        sb.append("· B35 地板 ra ${b35Floor} · B15 地板 ra ${b15Floor}\n\n")
+        if (candidates.isEmpty()) {
+            sb.append("· 暂无合适目标：高于地板的谱面你都贴着理论上限了，去冲更高定数的新谱面吧。")
         } else {
-            unplayed.forEach { c ->
+            candidates.forEach { c ->
                 sb.append(
                     "· ${titleById[c.songId] ?: "id ${c.songId}"} " +
-                        "[${difficultyLabel(c.difficultyType.ordinal)} ${c.level}] 定数 ${c.ds}\n"
+                        "[${difficultyLabel(c.levelIndex)} ${c.level}] 定数 ${c.ds}\n"
                 )
+                val cur = c.current
+                if (cur == null) {
+                    sb.append(
+                        "  未游玩 → SSS+ 可得 ra ${c.potential}，顶替${if (c.isDx) "B15" else "B35"}地板（+${c.potential - c.floor}）\n"
+                    )
+                } else {
+                    val gain = c.potential - cur.ra
+                    sb.append(
+                        "  当前 %.4f%%（ra ${cur.ra}）→ SSS+ 上限 ra ${c.potential}，还可 +$gain\n".format(cur.achievements)
+                    )
+                }
             }
         }
         return AgentReply(sb.toString().trimEnd())
@@ -1162,7 +1212,7 @@ class KibaAgent(private val context: Context) {
             ),
             AgentSkill(
                 "push_rating", "推荐推分曲目",
-                "按增益排序给出推分建议，并列出尚未挑战的高定数谱面",
+                "基于 Best 50 的 B35/B15 地板 Rating，推荐能顶替地板的谱面（含未打与未达上限的已打谱面）",
             ),
             AgentSkill(
                 "random_song", "随机来一首",
