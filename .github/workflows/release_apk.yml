@@ -47,9 +47,17 @@ jobs:
         env:
           KIBA_KEYSTORE_PASSWORD: ${{ secrets.KIBA_KEYSTORE_PASSWORD }}
           KIBA_KEY_ALIAS: ${{ secrets.KIBA_KEY_ALIAS }}
-          KIBA_KEY_PASSWORD: ${{ secrets.KIBA_KEY_PASSWORD }}
           KIBA_KEYSTORE_TYPE: ${{ env.KIBA_KEYSTORE_TYPE }}
-        run: ./gradlew assembleRelease --no-daemon
+        run: |
+          # PKCS12 强制 store 密码 == key 密码；用已验证可打开 store 的口令派生 key 口令，
+          # 避免独立的 KIBA_KEY_PASSWORD 口令不一致导致 "Get Key failed / final block not properly padded"。
+          if [ "$KIBA_KEYSTORE_TYPE" = "PKCS12" ]; then
+            export KIBA_KEY_PASSWORD="$KIBA_KEYSTORE_PASSWORD"
+          else
+            export KIBA_KEY_PASSWORD="${{ secrets.KIBA_KEY_PASSWORD }}"
+          fi
+          echo "store type=$KIBA_KEYSTORE_TYPE"
+          ./gradlew assembleRelease --no-daemon
 
       - name: Resolve version
         id: ver
