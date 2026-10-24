@@ -27,6 +27,10 @@ object AgentSession {
         val b50: KibaAgent.Best50Info? = null,
         /** 梗图等图片产物的 Uri 字符串（可能已失效，加载失败则忽略）。 */
         val imageUri: String = "",
+        /** 深度思考（reasoning）内容，单独成卡展示，不混进正文。 */
+        val reasoning: String = "",
+        /** 流式输出中：正文还没收尾。 */
+        val streaming: Boolean = false,
     )
 
     private val gson = Gson()
@@ -52,6 +56,41 @@ object AgentSession {
     fun add(turn: Turn) {
         ensureLoaded()
         _turns.value = _turns.value + turn
+        persist()
+    }
+
+    /**
+     * 流式输出：把增量追加到最后一条（Agent）记录上。
+     * 不落盘（避免高频写 SP），流式结束后由 [finishStream] 收尾。
+     */
+    fun appendToLast(text: String = "", reasoning: String = "") {
+        ensureLoaded()
+        val list = _turns.value
+        val last = list.lastOrNull() ?: return
+        if (last.fromUser) return
+        _turns.value = list.dropLast(1) + last.copy(
+            text = last.text + text,
+            reasoning = last.reasoning + reasoning,
+            streaming = true,
+        )
+    }
+
+    /** 整体替换最后一条（用于流式结束后补上卡片类数据）。 */
+    fun replaceLast(turn: Turn) {
+        ensureLoaded()
+        val list = _turns.value
+        if (list.isEmpty()) return
+        _turns.value = list.dropLast(1) + turn
+        persist()
+    }
+
+    /** 流式结束：清掉 streaming 标记并落盘。 */
+    fun finishStream() {
+        ensureLoaded()
+        val list = _turns.value
+        val last = list.lastOrNull() ?: return
+        if (!last.streaming) return
+        _turns.value = list.dropLast(1) + last.copy(streaming = false)
         persist()
     }
 

@@ -42,6 +42,11 @@ object Best50ImageBuilder {
 
     private const val TAG = "Best50Image"
 
+    /** 最近一次失败原因（供 UI 提示，便于真机定位）。 */
+    @Volatile
+    var lastError: String = ""
+        private set
+
     // ── 上游常量 ──
     private const val ITEM_W = 246
     private const val ITEM_H = 132
@@ -113,10 +118,14 @@ object Best50ImageBuilder {
     ): ByteArray? = withContext(Dispatchers.IO) {
         chartCache.clear()
         charts.forEach { chartCache[it.songId to it.difficultyType.ordinal] = it }
+        lastError = ""
         runCatching {
             val base = decode(context, "kiba_b50")
                 ?.copy(Bitmap.Config.ARGB_8888, true)
-                ?: return@withContext null
+                ?: run {
+                    lastError = "底板 b50.png 缺失"
+                    return@withContext null
+                }
             val canvas = Canvas(base)
 
             val ratingForHeader = if (rating > 0) {
@@ -125,7 +134,7 @@ object Best50ImageBuilder {
                 old.sumOf { computeRa(it.ds, it.achievements, true) } +
                     new.sumOf { computeRa(it.ds, it.achievements, true) }
             }
-            drawHeader(context, canvas, nickname, ratingForHeader)
+            runCatching { drawHeader(context, canvas, nickname, ratingForHeader) }
 
             // ── 旧曲（35）──
             val sdSize = 35
@@ -133,14 +142,14 @@ object Best50ImageBuilder {
                 val i = num / 5
                 val j = num % 5
                 if (i + 1 < ROWS.size) {
-                    drawTile(context, canvas, COLUMNS[j] + 4, ROWS[i + 1] + 4, r, num, old.size)
+                    runCatching { drawTile(context, canvas, COLUMNS[j] + 4, ROWS[i + 1] + 4, r, num, old.size) }
                 }
             }
             // 空位补 noimage（上游用 cover/1000.png）
             for (num in old.size until sdSize) {
                 val i = num / 5
                 val j = num % 5
-                if (i + 1 < ROWS.size) drawEmptyTile(context, canvas, COLUMNS[j] + 4, ROWS[i + 1] + 4)
+                if (i + 1 < ROWS.size) runCatching { drawEmptyTile(context, canvas, COLUMNS[j] + 4, ROWS[i + 1] + 4) }
             }
 
             // ── 新曲（15）──
@@ -149,13 +158,13 @@ object Best50ImageBuilder {
                 val i = num / 5
                 val j = num % 5
                 if (i + 1 < ROWS.size) {
-                    drawTile(context, canvas, COLUMNS[j] + 4, ROWS[i + 1] + DX_OFFSET, r, num, new.size)
+                    runCatching { drawTile(context, canvas, COLUMNS[j] + 4, ROWS[i + 1] + DX_OFFSET, r, num, new.size) }
                 }
             }
             for (num in new.size until dxSize) {
                 val i = num / 5
                 val j = num % 5
-                if (i + 1 < ROWS.size) drawEmptyTile(context, canvas, COLUMNS[j] + 4, ROWS[i + 1] + DX_OFFSET)
+                if (i + 1 < ROWS.size) runCatching { drawEmptyTile(context, canvas, COLUMNS[j] + 4, ROWS[i + 1] + DX_OFFSET) }
             }
 
             // ── 底部 Rating.png 的四个大数字 ──
@@ -194,6 +203,7 @@ object Best50ImageBuilder {
             Log.i(TAG, "built ${base.width}x${base.height} sd=$totalSd dx=$totalDx")
             out.toByteArray()
         }.onFailure {
+            lastError = "${it.javaClass.simpleName}: ${it.message}"
             Log.w(TAG, "build failed", it)
         }.getOrNull()
     }
@@ -383,14 +393,26 @@ object Best50ImageBuilder {
 
     // ---------- 素材与绘制工具 ----------
 
-    /** 按名字取 drawable（资源名全部小写）。 */
+    /**
+     * 按名字取 drawable（资源名全部小写）。
+     *
+     * 必须 inMutable=true：`decodeResource` 默认返回不可变位图，
+     * 直接 `Canvas(bitmap)` 会抛 `IllegalStateException: Immutable bitmap passed to Canvas constructor`
+     * （Rating.png / 小对话框 / 称号条 都要在上面写字）。
+     */
     private fun decode(context: Context, name: String): Bitmap? = runCatching {
         val id = context.resources.getIdentifier(name, "drawable", context.packageName)
         if (id == 0) {
             Log.w(TAG, "drawable missing: $name")
             return null
         }
-        BitmapFactory.decodeResource(context.resources, id)
+        val opts = BitmapFactory.Options().apply {
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+            inMutable = true
+            inScaled = false
+        }
+        BitmapFactory.decodeResource(context.resources, id, opts)
+            ?: BitmapFactory.decodeResource(context.resources, id)?.copy(Bitmap.Config.ARGB_8888, true)
     }.getOrNull()
 
     private val fontCache = mutableMapOf<String, Typeface?>()

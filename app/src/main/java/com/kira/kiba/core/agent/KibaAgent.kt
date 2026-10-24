@@ -104,6 +104,90 @@ class KibaAgent(private val context: Context) {
         return llmWithSkills(text)
     }
 
+    /**
+     * 流式聊天入口：**只走 LLM**，正文 / 思考过程通过 [onChunk] 增量回传。
+     * 流程同 [llmWithSkills]：模型可调用技能，最多 3 轮；只是每轮都流式。
+     */
+    suspend fun handleStream(
+        input: String,
+        onChunk: suspend (KibaLlm.StreamChunk) -> Unit,
+    ): AgentReply {
+        val text = input.trim()
+        if (text.isEmpty()) return AgentReply("说点什么吧。")
+        if (!KibaLlm.isConfigured()) {
+            return AgentReply(
+                "当前未配置 LLM，无法自由提问。\n" +
+                    "请点上方技能卡直接使用（Best 50 / 推分 / 随机 / 查歌 / 运势 / 猜歌…），" +
+                    "或到「设置 → Agent 模型配置」开启对话能力。",
+                skills = SKILLS,
+            )
+        }
+        val messages = mutableListOf(
+            KibaLlm.Message.system(
+                SpUtil.getLlmSystemPrompt() + "\n\n" + localContext() + "\n\n" + skillHint()
+            )
+        )
+        messages += AgentSession.llmHistory(maxTurns = 8)
+        messages += KibaLlm.Message.user(text)
+
+        val tools = SKILLS.map { KibaLlm.ToolDef(it.id, it.summary, it.params) }
+        var collected = AgentReply("")
+
+        repeat(3) { round ->
+            val streamed = KibaLlm.chatStream(messages, tools, onChunk)
+            if (streamed.isFailure) {
+                // 服务端不支持 SSE：退回一次性请求，结果整块回传（不影响功能）
+                val single = KibaLlm.chat(messages, tools).getOrElse {
+                    return AgentReply("LLM 调用失败：${it.message}", skills = SKILLS)
+                }
+                onChunk(KibaLlm.StreamChunk(text = single.text, reasoning = single.reasoning))
+                if (single.toolCalls.isEmpty()) {
+                    return AgentReply(single.text.ifBlank { "（模型没有返回内容）" })
+                }
+                return llmWithSkills(text)
+            }
+            val result = streamed.getOrThrow()
+            if (result.toolCalls.isEmpty()) {
+                return AgentReply(
+                    result.text.ifBlank { collected.text.ifBlank { "（模型没有返回内容）" } },
+                    songs = collected.songs,
+                    records = collected.records,
+                    skills = collected.skills,
+                    b50 = collected.b50,
+                    imageUri = collected.imageUri,
+                )
+            }
+            for (call in result.toolCalls) {
+                val reply = runToolCall(call.name, call.arguments, text)
+                collected = AgentReply(
+                    text = collected.text + reply.text,
+                    songs = collected.songs + reply.songs,
+                    records = collected.records + reply.records,
+                    skills = collected.skills + reply.skills,
+                    b50 = collected.b50 ?: reply.b50,
+                    imageUri = collected.imageUri.ifBlank { reply.imageUri },
+                )
+                messages.add(KibaLlm.Message.assistant("[调用技能 ${call.name}]"))
+                messages.add(
+                    KibaLlm.Message.user(
+                        "技能 ${call.name} 返回如下（这是本地真实数据，请据此用自然语言回答用户）：\n" + reply.text
+                    )
+                )
+            }
+            if (round == 2) {
+                return AgentReply(
+                    collected.text.ifBlank { "已完成技能调用。" },
+                    songs = collected.songs,
+                    records = collected.records,
+                    skills = collected.skills,
+                    b50 = collected.b50,
+                    imageUri = collected.imageUri,
+                )
+            }
+        }
+        return collected
+    }
+
     /** 直接执行某个技能（技能卡点击专用，不经过 LLM）。 */
     suspend fun runSkill(id: String, arg: String = ""): AgentReply = when (id) {
         "best50" -> best50()
@@ -387,12 +471,12 @@ class KibaAgent(private val context: Context) {
             }.getOrDefault(emptyList())
         }
         val titleById = songs.associate { it.id to it.title }
-        // 宴会場歌曲不获 Rating（官方设定），不作为推分目标
-        val utageSongIds = songs.filter { it.genre == GENRE_UTAGE }.map { it.id }.toSet()
+        // 宴会场谱面不获 Rating（官方设定），不作为推分目标：
+        // 流派 = 宴会場、难度 = UTAGE、或等级带「?」（如 13?）
+        val utageIds = utageSongIds(songs)
         val unplayed = charts
-            .filter { it.difficultyType != DifficultyType.UTAGE && it.difficultyType != DifficultyType.UTAGE_PLAYER2 }
+            .filter { !isUtageChart(it, utageIds) }
             .filter { (it.songId to it.difficultyType.ordinal) !in playedKeys }
-            .filter { it.songId !in utageSongIds }
             .sortedByDescending { it.ds }
             .take(10)
 
@@ -420,18 +504,32 @@ class KibaAgent(private val context: Context) {
     }
 
     private suspend fun randomSong(arg: String = ""): AgentReply {
-        val song = withContext(Dispatchers.IO) {
-            runCatching { AppDataBase.getInstance().songDao().randomSong() }.getOrNull()
-        } ?: return AgentReply("曲库还是空的，请先到「设置 → 曲库更新」同步曲库。")
-        val charts = withContext(Dispatchers.IO) {
-            runCatching {
-                AppDataBase.getInstance().chartDao().getChartsBySongId(song.id)
-            }.getOrDefault(emptyList())
+        // 随机也排除宴会场（流派 = 宴会場，或谱面等级带「?」）：这类谱面不获 Rating
+        var song: SongDataEntity? = null
+        var charts: List<ChartEntity> = emptyList()
+        withContext(Dispatchers.IO) {
+            repeat(12) {
+                val picked = runCatching {
+                    AppDataBase.getInstance().songDao().randomSong()
+                }.getOrNull() ?: return@repeat
+                val cs = runCatching {
+                    AppDataBase.getInstance().chartDao().getChartsBySongId(picked.id)
+                }.getOrDefault(emptyList())
+                val utage = picked.genre == GENRE_UTAGE ||
+                    cs.isNotEmpty() && cs.all { it.level.contains("?") }
+                if (!utage) {
+                    song = picked
+                    charts = cs
+                    return@withContext
+                }
+            }
         }
+        val target = song
+            ?: return AgentReply("曲库还是空的，请先到「设置 → 曲库更新」同步曲库。")
         val top = charts.maxByOrNull { it.ds }
         val sb = StringBuilder()
-        sb.append("随机选曲：${song.title}\n")
-        sb.append("曲师：${song.artist}　流派：${song.genre}　类型：${song.type}\n")
+        sb.append("随机选曲：${target.title}\n")
+        sb.append("曲师：${target.artist}　流派：${target.genre}　类型：${target.type}\n")
         if (top != null) {
             sb.append(
                 "最高难度：[${difficultyLabel(top.difficultyType.ordinal)} ${top.level}] 定数 ${top.ds}\n"
@@ -440,7 +538,7 @@ class KibaAgent(private val context: Context) {
         sb.append("祝 greatness！")
         return AgentReply(
             sb.toString(),
-            songs = listOf(song.toAgentSong(top)),
+            songs = listOf(target.toAgentSong(top)),
         )
     }
 
@@ -586,10 +684,9 @@ class KibaAgent(private val context: Context) {
         }
         val titleById = songs.associate { it.id to it.title }
         val artistById = songs.associate { it.id to it.artist }
-        val utageIds = songs.filter { it.genre == GENRE_UTAGE }.map { it.id }.toSet()
+        val utageIds = utageSongIds(songs)
         val matched = charts
-            .filter { it.difficultyType != DifficultyType.UTAGE && it.difficultyType != DifficultyType.UTAGE_PLAYER2 }
-            .filter { it.songId !in utageIds }
+            .filter { !isUtageChart(it, utageIds) }
             .filter { it.ds >= lo && it.ds <= hi }
             .sortedByDescending { it.ds }
             .take(30)
@@ -813,9 +910,12 @@ class KibaAgent(private val context: Context) {
             }.getOrDefault(emptyList())
         }
         val bySong = charts.groupBy { it.songId }
+        val utageIds = utageSongIds(songs)
         val pool = songs.filter { s ->
-            // 宴会場歌曲不获 Rating，排除
+            // 宴会场（流派 = 宴会場，或谱面等级带「?」）不获 Rating，排除
             if (s.genre == GENRE_UTAGE) return@filter false
+            val cs = bySong[s.id].orEmpty()
+            if (cs.isNotEmpty() && cs.all { isUtageChart(it, utageIds) }) return@filter false
             val typeOk = when {
                 wantDx && wantSd -> true
                 wantDx -> s.type.contains("DX", true)
@@ -909,6 +1009,22 @@ class KibaAgent(private val context: Context) {
 
     private fun fmtRange(lo: Double, hi: Double): String =
         if (lo == hi) "${"%.2f".format(lo)}" else "${"%.2f".format(lo)} - ${"%.2f".format(hi)}"
+
+    /**
+     * 宴会场谱面判定（官方设定这类谱面不获 Rating，推分/随机/定数类技能一律排除）：
+     * - 歌曲流派 = 宴会場；
+     * - 谱面难度为 UTAGE / UTAGE_PLAYER2；
+     * - **等级里带「?」**（如 13?）—— 这是宴会场谱面的标志，等级字段本身没有别的区分方式。
+     */
+    private fun isUtageChart(chart: ChartEntity, utageSongIds: Set<Int>): Boolean =
+        chart.difficultyType == DifficultyType.UTAGE ||
+            chart.difficultyType == DifficultyType.UTAGE_PLAYER2 ||
+            chart.songId in utageSongIds ||
+            chart.level.contains("?")
+
+    /** 宴会場歌曲 id 集合（genre 判定）。 */
+    private fun utageSongIds(songs: List<SongDataEntity>): Set<Int> =
+        songs.filter { it.genre == GENRE_UTAGE }.map { it.id }.toSet()
 
     /** 取出文本里的中文难度词本身（绿/黄/红/紫/白），用于「紫799」这类粘连写法的切分。 */
     private fun parseDifficultyWord(arg: String): String =

@@ -133,30 +133,39 @@ fun AgentScreen(
         }
     }
 
-    /** 发送消息 → 全量走 LLM。 */
+    /** 发送消息 → 全量走 LLM（流式输出：正文边收边显示，思考过程单独成卡）。 */
     fun send(text: String) {
         val trimmed = text.trim()
         if (trimmed.isEmpty() || thinking) return
         AgentSession.add(AgentSession.Turn(fromUser = true, text = trimmed))
+        // 先插一条空的 Agent 记录，流式往里追加
+        AgentSession.add(AgentSession.Turn(fromUser = false, text = "", streaming = true))
         input = ""
         thinking = true
         scope.launch {
-            val reply = runCatching { agent.handle(trimmed) }.getOrElse {
-                KibaAgent.AgentReply("出错了：${it.message ?: "未知错误"}")
+            val reply = runCatching {
+                agent.handleStream(trimmed) { chunk ->
+                    AgentSession.appendToLast(text = chunk.text, reasoning = chunk.reasoning)
+                }
+            }.getOrElse {
+                KibaAgent.AgentReply("出错了：${it.message ?: "未知错误"}", skills = KibaAgent.SKILLS)
+            }
+            AgentSession.finishStream()
+            // 技能数据（歌曲 / B50 / 梗图）等非流式产物，合并到最后一条
+            val last = AgentSession.turns.value.lastOrNull()
+            if (last != null && !last.fromUser) {
+                AgentSession.replaceLast(
+                    last.copy(
+                        songs = reply.songs,
+                        skills = reply.skills,
+                        b50 = reply.b50,
+                        imageUri = reply.imageUri.ifBlank { last.imageUri },
+                    )
+                )
             }
             thinking = false
-            AgentSession.add(
-                AgentSession.Turn(
-                    fromUser = false,
-                    text = reply.text,
-                    songs = reply.songs,
-                    skills = reply.skills,
-                    b50 = reply.b50,
-                    imageUri = reply.imageUri,
-                )
-            )
-            val last = AgentSession.turns.value.lastIndex
-            if (last >= 0) listState.animateScrollToItem(last)
+            val idx = AgentSession.turns.value.lastIndex
+            if (idx >= 0) listState.animateScrollToItem(idx)
         }
     }
 
@@ -336,6 +345,11 @@ private fun SkillStrip(
 @Composable
 private fun ChatBubble(msg: AgentSession.Turn, onOpenSong: (Int) -> Unit) {
     Column(modifier = Modifier.fillMaxWidth()) {
+        // 深度思考单独成卡，不和正文混在一起
+        if (msg.reasoning.isNotBlank()) {
+            ReasoningCard(text = msg.reasoning, streaming = msg.streaming)
+            Spacer(Modifier.height(8.dp))
+        }
         if (msg.text.isNotBlank()) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -396,6 +410,34 @@ private fun ChatBubble(msg: AgentSession.Turn, onOpenSong: (Int) -> Unit) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp)),
+            )
+        }
+    }
+}
+
+/** 深度思考（reasoning）：弱化样式的独立卡片，标题「深度思考」。 */
+@Composable
+private fun ReasoningCard(text: String, streaming: Boolean) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                MiuixTheme.colorScheme.surfaceVariant,
+                RoundedCornerShape(12.dp),
+            ),
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+            Text(
+                text = if (streaming) "深度思考中…" else "深度思考",
+                style = MiuixTheme.textStyles.footnote1,
+                color = MiuixTheme.colorScheme.primary,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = text,
+                style = MiuixTheme.textStyles.footnote2,
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                maxLines = if (streaming) 12 else Int.MAX_VALUE,
             )
         }
     }

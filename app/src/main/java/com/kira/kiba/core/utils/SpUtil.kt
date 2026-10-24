@@ -242,7 +242,8 @@ object SpUtil {
     const val LLM_DEFAULT_BASE_URL = "https://api.openai.com/v1"
     const val LLM_DEFAULT_MODEL = "gpt-4o-mini"
     const val LLM_DEFAULT_TEMPERATURE = 0.7f
-    const val LLM_DEFAULT_MAX_TOKENS = 1024
+    // 推理类模型会先吐一大段 reasoning_content，1024 会把正文直接截断，默认给足
+    const val LLM_DEFAULT_MAX_TOKENS = 4096
     const val LLM_DEFAULT_SYSTEM_PROMPT =
         "你是 Kiba，舞萌（maimai DX）玩家的 AI 助手。回答简洁、准确，优先使用中文。" +
             "涉及舞萌机制（Rating 计算、定数、达成率、DX 分数）时按官方口径说明。\n\n" +
@@ -309,7 +310,15 @@ object SpUtil {
         userInfoPrefs.edit { putString(KEY_LLM_SYSTEM_PROMPT, prompt) }
     }
 
-    fun getLlmMaxTokens(): Int = userInfoPrefs.getInt(KEY_LLM_MAX_TOKENS, LLM_DEFAULT_MAX_TOKENS)
+    fun getLlmMaxTokens(): Int {
+        val v = userInfoPrefs.getInt(KEY_LLM_MAX_TOKENS, LLM_DEFAULT_MAX_TOKENS)
+        // 旧默认 1024 对推理模型太紧：reasoning 吐完正文就被截断。老用户自动抬到新默认。
+        if (v == 1024) {
+            setLlmMaxTokens(LLM_DEFAULT_MAX_TOKENS)
+            return LLM_DEFAULT_MAX_TOKENS
+        }
+        return v
+    }
 
     fun setLlmMaxTokens(tokens: Int) {
         userInfoPrefs.edit { putInt(KEY_LLM_MAX_TOKENS, tokens.coerceIn(64, 8192)) }

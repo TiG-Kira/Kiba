@@ -38,7 +38,10 @@ object Best50ImageService {
             nickname = nickname,
             rating = rating,
             charts = charts,
-        ) ?: return@withContext "生成失败：图片绘制异常"
+        ) ?: return@withContext buildString {
+            append("生成失败：图片绘制异常")
+            Best50ImageBuilder.lastError.takeIf { it.isNotBlank() }?.let { append("（$it）") }
+        }
 
         val name = "Kiba_Best50_${System.currentTimeMillis()}.png"
         val uri = ImageSaver.savePng(context, bytes, name)

@@ -86,6 +86,14 @@ object KibaLlm {
     data class ChatResult(
         val text: String = "",
         val toolCalls: List<ToolCall> = emptyList(),
+        /** 深度思考（reasoning_content / reasoning）内容，单独展示用。 */
+        val reasoning: String = "",
+    )
+
+    /** 流式增量：正文与思考过程分开回传。 */
+    data class StreamChunk(
+        val text: String = "",
+        val reasoning: String = "",
     )
 
     private data class ChatRequest(
@@ -95,6 +103,7 @@ object KibaLlm {
         @SerializedName("max_tokens") val maxTokens: Int,
         val tools: List<Map<String, Any>>? = null,
         @SerializedName("tool_choice") val toolChoice: String? = null,
+        val stream: Boolean = false,
     )
 
     private data class ToolCallDto(
@@ -199,7 +208,8 @@ object KibaLlm {
                 }
                 val calls = parseToolCalls(text)
                 val content = extractContent(text)
-                if (calls.isEmpty() && content.isBlank()) {
+                val reasoning = extractReasoning(text)
+                if (calls.isEmpty() && content.isBlank() && reasoning.isBlank()) {
                     // 报错带上响应原文片段，便于定位是哪种非标准结构
                     val snippet = text.replace(Regex("\\s+"), " ").take(220)
                     throw LlmError.Server(
@@ -207,7 +217,7 @@ object KibaLlm {
                         "响应缺少 content 字段（原文：$snippet）",
                     )
                 }
-                ChatResult(text = content, toolCalls = calls)
+                ChatResult(text = content, toolCalls = calls, reasoning = reasoning)
             }
         }.onFailure { e ->
             if (e is LlmError) {
@@ -309,6 +319,146 @@ object KibaLlm {
             }
         }
 
+        return ""
+    }
+
+    /**
+     * 流式对话（OpenAI SSE）：逐块回传正文与思考过程，结束返回完整结果。
+     *
+     * 覆盖的增量字段：
+     * - `choices[].delta.content` —— 正文
+     * - `choices[].delta.reasoning_content` / `reasoning` —— 深度思考
+     * - `choices[].delta.tool_calls[]` —— 工具调用（按 index 累积 name / arguments）
+     *
+     * 服务端不支持流式（返回非 SSE）时自动退回一次性解析，不影响功能。
+     */
+    suspend fun chatStream(
+        messages: List<Message>,
+        tools: List<ToolDef> = emptyList(),
+        onChunk: suspend (StreamChunk) -> Unit,
+    ): Result<ChatResult> = withContext(Dispatchers.IO) {
+        if (!isConfigured()) return@withContext Result.failure(LlmError.NotConfigured())
+        runCatching {
+            val body = ChatRequest(
+                model = SpUtil.getLlmModel().ifBlank { SpUtil.LLM_DEFAULT_MODEL },
+                messages = messages,
+                temperature = SpUtil.getLlmTemperature(),
+                maxTokens = SpUtil.getLlmMaxTokens(),
+                tools = if (tools.isEmpty()) null else tools.map { tool ->
+                    mapOf(
+                        "type" to "function",
+                        "function" to mapOf(
+                            "name" to tool.name,
+                            "description" to tool.description,
+                            "parameters" to mapOf(
+                                "type" to "object",
+                                "properties" to tool.parameters.associate { p ->
+                                    p.name to mapOf("type" to p.type, "description" to p.description)
+                                },
+                                "required" to tool.parameters.filter { it.required }.map { it.name },
+                            ),
+                        ),
+                    )
+                },
+                toolChoice = if (tools.isEmpty()) null else "auto",
+                stream = true,
+            )
+            val requestBuilder = Request.Builder()
+                .url(normalizeChatUrl(SpUtil.getLlmBaseUrl()))
+                .header("Accept", "text/event-stream")
+                .post(gson.toJson(body).toRequestBody("application/json; charset=utf-8".toMediaType()))
+            val key = SpUtil.getLlmApiKey()
+            if (key.isNotBlank()) requestBuilder.header("Authorization", "Bearer $key")
+            client.newCall(requestBuilder.build()).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val t = response.body?.string().orEmpty()
+                    val apiMsg = runCatching {
+                        gson.fromJson(t, ChatResponse::class.java)?.error?.message
+                    }.getOrNull().orEmpty()
+                    throw when (response.code) {
+                        401, 403 -> LlmError.Unauthorized(apiMsg.ifBlank { "HTTP ${response.code}" })
+                        404 -> LlmError.NotFound(apiMsg.ifBlank { "HTTP ${response.code}" })
+                        429 -> LlmError.RateLimited(apiMsg.ifBlank { "HTTP ${response.code}" })
+                        else -> LlmError.Server(response.code, apiMsg.ifBlank { t.take(120) })
+                    }
+                }
+                val source = response.body?.source()
+                    ?: throw LlmError.Server(response.code, "空响应体")
+                val textSb = StringBuilder()
+                val reasonSb = StringBuilder()
+                val calls = linkedMapOf<Int, MutableMap<String, String>>()
+                var sawData = false
+                while (!source.exhausted()) {
+                    val line = source.readUtf8Line() ?: break
+                    if (!line.startsWith("data:")) continue
+                    val payload = line.removePrefix("data:").trim()
+                    if (payload.isEmpty() || payload == "[DONE]") continue
+                    sawData = true
+                    val obj = runCatching {
+                        JsonParser.parseString(payload).asJsonObject
+                    }.getOrNull() ?: continue
+                    val choices = obj.getAsJsonArray("choices") ?: continue
+                    for (c in choices) {
+                        val co = c.asJsonObject
+                        val delta = co.getAsJsonObject("delta") ?: co.getAsJsonObject("message") ?: continue
+                        val dText = delta.get("content")?.takeIf { !it.isJsonNull }?.asString.orEmpty()
+                        val dReason = (
+                            delta.get("reasoning_content")?.takeIf { !it.isJsonNull }
+                                ?: delta.get("reasoning")
+                            )?.takeIf { !it.isJsonNull }?.asString.orEmpty()
+                        if (dText.isNotEmpty()) {
+                            textSb.append(dText)
+                            onChunk(StreamChunk(text = dText))
+                        }
+                        if (dReason.isNotEmpty()) {
+                            reasonSb.append(dReason)
+                            onChunk(StreamChunk(reasoning = dReason))
+                        }
+                        delta.getAsJsonArray("tool_calls")?.forEach { tc ->
+                            val t = tc.asJsonObject
+                            val idx = t.get("index")?.asInt ?: 0
+                            val slot = calls.getOrPut(idx) { mutableMapOf() }
+                            t.get("id")?.takeIf { !it.isJsonNull }?.asString?.let { slot["id"] = it }
+                            t.getAsJsonObject("function")?.let { fn ->
+                                fn.get("name")?.takeIf { !it.isJsonNull }?.asString?.let {
+                                    slot["name"] = (slot["name"].orEmpty() + it)
+                                }
+                                fn.get("arguments")?.takeIf { !it.isJsonNull }?.asString?.let {
+                                    slot["arguments"] = slot["arguments"].orEmpty() + it
+                                }
+                            }
+                        }
+                    }
+                }
+                if (!sawData) {
+                    // 不是 SSE（服务端忽略 stream 参数）：本次按非流式处理
+                    throw LlmError.Server(200, "服务端未返回流式数据")
+                }
+                val toolCalls = calls.entries.sortedBy { it.key }.map { (_, v) ->
+                    ToolCall(
+                        id = v["id"].orEmpty(),
+                        name = v["name"].orEmpty(),
+                        arguments = v["arguments"].orEmpty(),
+                    )
+                }
+                ChatResult(text = textSb.toString(), toolCalls = toolCalls, reasoning = reasonSb.toString())
+            }
+        }.onFailure { e ->
+            if (e is LlmError) Log.w(TAG, "stream failed: ${e.message}")
+            else Log.w(TAG, "stream failed", e)
+        }
+    }
+
+    /** 从响应体提取深度思考（reasoning_content / reasoning），用于非流式兜底。 */
+    internal fun extractReasoning(body: String): String {
+        val root = runCatching { JsonParser.parseString(body).asJsonObject }.getOrNull() ?: return ""
+        val arr = root.getAsJsonArray("choices") ?: return ""
+        for (choice in arr) {
+            val msg = choice.asJsonObject.getAsJsonObject("message") ?: continue
+            listOf("reasoning_content", "reasoning").forEach { key ->
+                msg.get(key)?.takeIf { !it.isJsonNull }?.asString?.let { if (it.isNotBlank()) return it }
+            }
+        }
         return ""
     }
 

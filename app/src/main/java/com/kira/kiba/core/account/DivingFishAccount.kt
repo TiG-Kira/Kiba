@@ -135,7 +135,8 @@ object DivingFishAccount {
         @SerializedName("fs") val fs: String = "",
         @SerializedName("rate") val rate: String = "",
         @SerializedName("ra") val ra: Int = 0,
-        @SerializedName("dx_score") val dxScore: Int = 0,
+        // 水鱼 /player/records 返回的是驼峰 dxScore（不是 dx_score），两种都兼容
+        @SerializedName(value = "dxScore", alternate = ["dx_score"]) val dxScore: Int = 0,
         @SerializedName("achievements") val achievements: Double = 0.0,
         @SerializedName("ds") val ds: Double = 0.0,
         @SerializedName("level") val level: String = "",

@@ -10,74 +10,87 @@ import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
+import android.graphics.Rect
 import android.graphics.Shader
 import android.graphics.Typeface
 import kotlin.math.roundToInt
 
 /**
  * 梗图生成器 —— 移植自 KibaBot 的两个图片命令：
- * - 「低情商 X 高情商 Y」：`src/plugins/image.py` + `src/libraries/image.py`
- *   模板 `high_eq_image.png`（左右各 400px），黑底白字居中，单边不超过 15 字。
- * - 「gocho A B」：`src/libraries/gosen_choyen.py`
- *   红字 / 银字两层渐变描边文字，最后整体水平斜切 0.4。
+ * - 「低情商 X 高情商 Y」：`plugins/image.py` + `libraries/image.py`
+ *   模板 `high_eq_image.png` 800×640，左右各 400px，文字压在 y=360（0.5625 处），
+ *   黑底白字、单边 ≤15 字，超过 390px 宽则按比例缩字号。
+ * - 「gocho A B」：`libraries/gosen_choyen.py`
+ *   红 / 银两组“多层渐变描边字”，红字在上、银字在下错位叠放，最后整体水平斜切 0.4。
  *
  * 字体：Bot 用 msyh / msyhbd，这里分别退到 HOS.ttf / HOS_Bold.ttf。
  */
 object MemeImageBuilder {
 
-    /** 低情商 / 高情商（模板左右两半，各 400px 宽，文字基线 y=360）。 */
+    /** 低情商 / 高情商（模板 800×640）。 */
     fun buildLowHighEq(context: Context, left: String, right: String): Bitmap? = runCatching {
         val id = context.resources.getIdentifier("kiba_high_eq_image", "drawable", context.packageName)
         if (id == 0) return null
-        val img = BitmapFactory.decodeResource(context.resources, id).copy(Bitmap.Config.ARGB_8888, true)
+        val img = decodeMutable(context, id) ?: return null
         val canvas = Canvas(img)
         val font = runCatching { Typeface.createFromAsset(context.assets, "fonts/HOS.ttf") }.getOrNull()
-        drawHalf(canvas, left, 0, font, img.width)
-        drawHalf(canvas, right, 400, font, img.width)
+        val half = img.width / 2f
+        // Bot 固定 400 宽、y=360，按模板实际宽度等比换算
+        val scale = img.width / 800f
+        val baseY = img.height * (360f / 640f)
+        drawHalf(canvas, left, 0f, half, baseY, 48f * scale, 390f * scale, font)
+        drawHalf(canvas, right, half, half, baseY, 48f * scale, 390f * scale, font)
         img
     }.getOrNull()
 
-    /** 对应 Bot 的 draw_text(img, text, offset_x)。 */
-    private fun drawHalf(canvas: Canvas, text: String, offsetX: Int, font: Typeface?, imgW: Int) {
+    /** 对应 Bot 的 draw_text(img, text, offset_x)：半区居中、超宽自动缩字号。 */
+    private fun drawHalf(
+        canvas: Canvas,
+        text: String,
+        offsetX: Float,
+        halfWidth: Float,
+        topY: Float,
+        baseSize: Float,
+        maxWidth: Float,
+        font: Typeface?,
+    ) {
         if (text.isBlank()) return
-        val probe = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            textSize = 48f
-            this.typeface = font
-        }
-        var width = probe.measureText(text)
-        val size = if (width > 390) {
-            (390 * 48f / width).also { }
-        } else {
-            48f
-        }
+        var size = baseSize
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             textSize = size
             this.typeface = font
             color = Color.WHITE
         }
-        width = paint.measureText(text)
-        val height = paint.fontMetrics.descent - paint.fontMetrics.ascent
-        val x = if (width <= 390) (400 - width) / 2 else 5f
-        // 黑底条
-        val rect = Paint().apply { color = Color.BLACK }
+        var width = paint.measureText(text)
+        if (width > maxWidth) {
+            size = baseSize * maxWidth / width
+            paint.textSize = size
+            width = paint.measureText(text)
+        }
+        val fm = paint.fontMetrics
+        val textH = fm.descent - fm.ascent
+        val x = offsetX + (halfWidth - width) / 2f
+        val baseline = topY - fm.ascent
+
+        // 黑底条（宽度略放宽，贴合 Bot 的 -2/+2）
+        val pad = size * 0.06f
         canvas.drawRect(
-            x + offsetX - 2, 360f,
-            x + 2 + width + offsetX, 360f + height * 1.2f,
-            rect,
+            x - pad, topY,
+            x + width + pad, topY + textH * 1.2f,
+            Paint().apply { color = Color.BLACK },
         )
-        val baseline = 360f - paint.fontMetrics.ascent
-        canvas.drawText(text, x + offsetX, baseline, paint)
+        canvas.drawText(text, x, baseline, paint)
     }
 
-    /** gocho：红字 + 银字，整体斜切 0.4。 */
+    /** gocho：红字 + 银字，整体斜切 0.4，最后裁掉空白。 */
     fun buildGocho(context: Context, red: String, silver: String): Bitmap? = runCatching {
-        val font = runCatching {
+        val bold = runCatching {
             Typeface.createFromAsset(context.assets, "fonts/HOS_Bold.ttf")
         }.getOrNull()
         val rText = "  $red"
         val sText = "  $silver"
-        val r = layeredText(rText, RED_LAYERS, font, redFill = true)
-        val s = layeredText(sText, SILVER_LAYERS, font, redFill = false)
+        val r = layeredText(rText, RED_LAYERS, bold)
+        val s = layeredText(sText, SILVER_LAYERS, bold)
         val offset = maxOf(0, (r.width - s.width / 2.0 - 60).roundToInt())
         val w = maxOf(r.width, s.width + offset)
         val h = r.height + s.height
@@ -86,36 +99,38 @@ object MemeImageBuilder {
         c.drawColor(Color.WHITE)
         c.drawBitmap(r, 0f, 0f, null)
         c.drawBitmap(s, offset.toFloat(), r.height.toFloat(), null)
-        // 整体水平斜切（PIL AFFINE (1, 0.4, 0, 0, 1, 0)）
-        val sheared = Bitmap.createBitmap((w + 0.4f * h).roundToInt(), h, Bitmap.Config.ARGB_8888)
+        // 裁边 → 斜切 → 再裁边，得到和 Bot 一样紧凑的图
+        val trimmed = trimWhite(base)
+        val shearedW = (trimmed.width + 0.4f * trimmed.height).roundToInt()
+        val sheared = Bitmap.createBitmap(shearedW, trimmed.height, Bitmap.Config.ARGB_8888)
         val sc = Canvas(sheared)
         sc.drawColor(Color.WHITE)
-        val matrix = Matrix().apply { setSkew(0.4f, 0f) }
-        sc.drawBitmap(base, matrix, Paint(Paint.ANTI_ALIAS_FLAG))
-        sheared
+        sc.drawBitmap(trimmed, Matrix().apply { setSkew(0.4f, 0f) }, Paint(Paint.ANTI_ALIAS_FLAG))
+        trimWhite(sheared)
     }.getOrNull()
 
     /**
-     * 逐层叠加渐变文字：每一层是「可选描边 + 竖直渐变填充」，
-     * 按 Bot 的顺序叠到同一张图上（尺寸取最大层，居中贴）。
+     * 逐层叠渐变文字：每层 = 可选描边 + 竖直渐变填充，画在**同一尺寸**画布上，
+     * 画布高度按字体度量算，保证不被裁掉（之前裁掉整行就是没算 descent）。
      */
-    private fun layeredText(
-        text: String,
-        layers: List<Layer>,
-        font: Typeface?,
-        redFill: Boolean,
-    ): Bitmap {
+    private fun layeredText(text: String, layers: List<Layer>, font: Typeface?): Bitmap {
         val probe = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             textSize = FONT_SIZE
             this.typeface = font
         }
-        val tw = probe.measureText(text).roundToInt() + 40
-        val th = (FONT_SIZE * 1.4f).roundToInt() + 40
-        val out = Bitmap.createBitmap(tw, th, Bitmap.Config.ARGB_8888)
+        val fm = probe.fontMetrics
+        val pad = 46f
+        val textW = probe.measureText(text)
+        val glyphH = fm.descent - fm.ascent
+        val w = (textW + pad * 2).roundToInt()
+        val h = (glyphH + pad * 2).roundToInt()
+        val baseline = pad - fm.ascent
+
+        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val c = Canvas(out)
-        val baseline = (FONT_SIZE + 20f) - probe.fontMetrics.ascent
+
         for (layer in layers) {
-            val layerBmp = Bitmap.createBitmap(tw, th, Bitmap.Config.ARGB_8888)
+            val layerBmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
             val lc = Canvas(layerBmp)
             val maskPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 textSize = FONT_SIZE
@@ -124,27 +139,69 @@ object MemeImageBuilder {
                 style = if (layer.stroke > 0) Paint.Style.FILL_AND_STROKE else Paint.Style.FILL
                 strokeWidth = layer.stroke.toFloat()
                 strokeJoin = Paint.Join.ROUND
+                strokeCap = Paint.Cap.ROUND
             }
-            lc.drawText(text, 20f, baseline, maskPaint)
-            // 竖直渐变填充，按文字 alpha 裁剪
+            lc.drawText(text, pad, baseline, maskPaint)
             val gradPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 shader = LinearGradient(
-                    0f, layer.offset.toFloat(), 0f, th.toFloat(),
+                    0f, layer.offset.toFloat(), 0f, h.toFloat(),
                     layer.colors, layer.stops, Shader.TileMode.CLAMP,
                 )
                 xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_IN)
             }
-            lc.drawRect(0f, 0f, tw.toFloat(), th.toFloat(), gradPaint)
-            val dx = ((tw - layerBmp.width) / 2f)
-            val dy = ((th - layerBmp.height) / 2f) + layer.shiftY
-            c.drawBitmap(layerBmp, dx + layer.shiftX, dy, null)
+            lc.drawRect(0f, 0f, w.toFloat(), h.toFloat(), gradPaint)
+            c.drawBitmap(layerBmp, layer.shiftX, layer.shiftY, null)
         }
         return out
     }
 
+    /** 去掉四周纯白边（Bot 的图是紧贴文字的）。 */
+    private fun trimWhite(src: Bitmap): Bitmap {
+        var left = src.width
+        var top = src.height
+        var right = -1
+        var bottom = -1
+        val step = 1
+        val pixels = IntArray(src.width * src.height)
+        src.getPixels(pixels, 0, src.width, 0, 0, src.width, src.height)
+        for (y in 0 until src.height step step) {
+            for (x in 0 until src.width step step) {
+                val c = pixels[y * src.width + x]
+                val a = (c shr 24) and 0xFF
+                val r = (c shr 16) and 0xFF
+                val g = (c shr 8) and 0xFF
+                val b = c and 0xFF
+                val isWhite = a < 16 || (r > 245 && g > 245 && b > 245)
+                if (!isWhite) {
+                    if (x < left) left = x
+                    if (x > right) right = x
+                    if (y < top) top = y
+                    if (y > bottom) bottom = y
+                }
+            }
+        }
+        if (right < 0 || bottom < 0) return src
+        val m = 6
+        val l = (left - m).coerceAtLeast(0)
+        val t = (top - m).coerceAtLeast(0)
+        val r = (right + m).coerceAtMost(src.width - 1)
+        val bo = (bottom + m).coerceAtMost(src.height - 1)
+        return Bitmap.createBitmap(src, l, t, r - l + 1, bo - t + 1)
+    }
+
+    private fun decodeMutable(context: Context, id: Int): Bitmap? {
+        val opts = BitmapFactory.Options().apply {
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+            inMutable = true
+            inScaled = false
+        }
+        return BitmapFactory.decodeResource(context.resources, id, opts)
+            ?: BitmapFactory.decodeResource(context.resources, id)?.copy(Bitmap.Config.ARGB_8888, true)
+    }
+
     private const val FONT_SIZE = 100f
 
-    /** 一层：渐变色标 + 描边宽度 + 位移（对应 PIL 的 transform 平移）。 */
+    /** 一层：渐变色标 + 描边宽度 + 渐变起点 + 位移。 */
     private data class Layer(
         val colors: IntArray,
         val stops: FloatArray,
@@ -160,7 +217,7 @@ object MemeImageBuilder {
 
     private fun c(r: Int, g: Int, b: Int) = Color.rgb(r, g, b)
 
-    /** Bot red_text 的层序。 */
+    /** Bot red_text 的层序（黑描边 → 银白高光 → 黄橙渐变 → 红渐变）。 */
     private val RED_LAYERS: List<Layer> by lazy {
         listOf(
             Layer(c(0, 0, 0), stroke = 17, offset = 20, shiftX = -4f, shiftY = -3f),
@@ -197,7 +254,7 @@ object MemeImageBuilder {
         )
     }
 
-    /** Bot sliver_text 的层序。 */
+    /** Bot sliver_text 的层序（黑描边 → 银白渐变 → 冷蓝高光）。 */
     private val SILVER_LAYERS: List<Layer> by lazy {
         listOf(
             Layer(c(0, 0, 0), stroke = 17, offset = 20, shiftX = -4f, shiftY = -3f),

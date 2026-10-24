@@ -67,9 +67,12 @@ fun LoginScreen(
     var oauthCode by remember { mutableStateOf("") }
     var deviceAuth by remember { mutableStateOf<DivingFishAccount.DeviceAuth?>(null) }
 
-    // 登录成功（任一路径）→ 自动退出本页
-    LaunchedEffect(account.bound) {
-        if (account.bound) onLoginSuccess()
+    // 只有「本次进入后真正发起过登录」且已登录，才自动退出本页。
+    // 否则在已登录状态点「重新登录 / 切换账户」时，bound 一进来就是 true，
+    // 会立刻被弹回上一页，表现为入口点了没反应。
+    var submitted by remember { mutableStateOf(false) }
+    LaunchedEffect(account.bound, submitted) {
+        if (submitted && account.bound) onLoginSuccess()
     }
 
     Scaffold(
@@ -138,6 +141,7 @@ fun LoginScreen(
                                 onClick = {
                                     passwordBusy = true
                                     passwordError = null
+                                    submitted = true
                                     scope.launch {
                                         DivingFishAccount.loginWithPassword(username, password)
                                             .onSuccess { /* bound 后自动退出 */ }
@@ -180,6 +184,7 @@ fun LoginScreen(
                                     onClick = {
                                         oauthBusy = true
                                         oauthError = null
+                                        submitted = true
                                         scope.launch {
                                             DivingFishAccount.startDeviceAuth()
                                                 .onSuccess { deviceAuth = it }
@@ -217,6 +222,7 @@ fun LoginScreen(
                                     onClick = {
                                         oauthBusy = true
                                         oauthError = null
+                                        submitted = true
                                         scope.launch {
                                             DivingFishAccount.finishDeviceAuth(oauthCode)
                                                 .onFailure { e -> oauthError = e.message }
