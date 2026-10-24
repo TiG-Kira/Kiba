@@ -507,11 +507,24 @@ class KibaAgent(private val context: Context) {
                     "登录后我会按你的 Best 50 缺口给出针对性建议。"
             )
         }
-        // 1) 已打谱面：理论 ra 上限（SSS+ 100.5%）与当前 ra 的增益
-        val gains = records.map { r ->
-            val maxRa = floor(r.ds * 1.005).toInt()
-            Triple(r, (maxRa - r.ra).coerceAtLeast(0), maxRa)
-        }.sortedByDescending { it.second }
+        // 曲库先取：宴会场判定需要（流派/六位数 id）
+        val songs = withContext(Dispatchers.IO) {
+            runCatching {
+                AppDataBase.getInstance().songDao().getAllSongsList()
+            }.getOrDefault(emptyList())
+        }
+        val titleById = songs.associate { it.id to it.title }
+        // 宴会场谱面不获 Rating（官方设定）：流派 = 宴会場、六位数 id 段、或等级带「?」（如 14?）
+        val utageIds = utageSongIds(songs)
+
+        // 1) 已打谱面：理论 ra 上限（SSS+ 100.5%）与当前 ra 的增益。
+        //    成绩记录里也会混入宴会场谱面（等级带「?」），一并排除。
+        val gains = records
+            .filter { !it.level.contains("?") && it.songId !in utageIds }
+            .map { r ->
+                val maxRa = floor(r.ds * 1.005).toInt()
+                Triple(r, (maxRa - r.ra).coerceAtLeast(0), maxRa)
+            }.sortedByDescending { it.second }
 
         // 2) 未打的高定数谱面（按 ds 取前 10）
         val playedKeys = records.map { it.songId to it.levelIndex }.toSet()
@@ -520,15 +533,6 @@ class KibaAgent(private val context: Context) {
                 AppDataBase.getInstance().chartDao().getAllChartsList()
             }.getOrDefault(emptyList())
         }
-        val songs = withContext(Dispatchers.IO) {
-            runCatching {
-                AppDataBase.getInstance().songDao().getAllSongsList()
-            }.getOrDefault(emptyList())
-        }
-        val titleById = songs.associate { it.id to it.title }
-        // 宴会场谱面不获 Rating（官方设定），不作为推分目标：
-        // 流派 = 宴会場、难度 = UTAGE、或等级带「?」（如 13?）
-        val utageIds = utageSongIds(songs)
         val unplayed = charts
             .filter { !isUtageChart(it, utageIds) }
             .filter { (it.songId to it.difficultyType.ordinal) !in playedKeys }
