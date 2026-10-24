@@ -54,7 +54,6 @@ fun SettingsScreen(
     val context = LocalContext.current
     val themeMode by KibaState.themeMode.collectAsState()
     val dynamicColor by KibaState.dynamicColor.collectAsState()
-    val account by DivingFishAccount.state.collectAsState()
     val syncState by SongDataSync.state.collectAsState()
     val updateAvailable by SongDataSync.updateAvailable.collectAsState()
     var llmOn by remember { mutableStateOf(SpUtil.isLlmEnabled()) }
@@ -179,22 +178,6 @@ fun SettingsScreen(
                 }
             }
 
-            // ── 查分器 ──
-            item(key = "account_title") { SectionTitle("查分器") }
-            item(key = "account_card") {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    ArrowPreference(
-                        title = "查分器账户",
-                        summary = if (account.bound) {
-                            "已登录：${account.nickname.ifBlank { "查分器用户" }}（Rating ${account.rating}）"
-                        } else {
-                            "未登录 — 请在「我」页面通过 OAuth 授权或账号密码登录"
-                        },
-                        onClick = null,
-                    )
-                }
-            }
-
             // ── 关于 ──
             item(key = "about_title") { SectionTitle("关于") }
             item(key = "about_card") {
@@ -233,7 +216,9 @@ private fun CoverSourceDialog(
     OverlayDialog(
         show = true,
         title = "自定义封面源",
-        summary = "填写图床前缀，例：https://your-mirror/maimai-mobile/img/Music/",
+        summary = "指定一个自建的封面图床前缀来替换默认图源。" +
+            "填入后 Kiba 会优先用「前缀 + 封面文件名」取图，" +
+            "例：https://your-mirror/maimai-mobile/img/Music/ 。留空则使用内置候选链。",
         onDismissRequest = onDismiss,
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {

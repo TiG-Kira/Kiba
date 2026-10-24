@@ -15,9 +15,10 @@ object MaimaiStats {
      * 进度条目（对齐上游 MaimaiData checklist 的判定维度）：
      * - [played] 已游玩
      * - [fc] 极（Full Combo）
-     * - [sss] 将（SSS 及以上）
+     * - [sss] 将（SSS 及以上，含 SSS+）
      * - [ap] 神（AP / AP+）
      * - [fdx] FDX（Full Combo DX / FULL SYNC）
+     * - 细档：[geS] >=S、[geSP] >=S+、[geSS] >=SS、[geSSP] >=SS+、[geSSS] >=SSS、[sssp] SSS+
      */
     data class ProgressItem(
         val key: String,
@@ -27,6 +28,12 @@ object MaimaiStats {
         val sss: Int = 0,
         val ap: Int = 0,
         val fdx: Int = 0,
+        val geS: Int = 0,
+        val geSP: Int = 0,
+        val geSS: Int = 0,
+        val geSSP: Int = 0,
+        val geSSS: Int = 0,
+        val sssp: Int = 0,
     ) {
         val ratio: Float get() = if (total == 0) 0f else played.toFloat() / total
     }
@@ -50,6 +57,12 @@ object MaimaiStats {
                         sss = songRecords.count { rs -> rs.any { it.isSss } },
                         ap = songRecords.count { rs -> rs.any { it.isAp } },
                         fdx = songRecords.count { rs -> rs.any { it.isFdx } },
+                        geS = songRecords.count { rs -> rs.any { it.reaches(JudgeTier.S) } },
+                        geSP = songRecords.count { rs -> rs.any { it.reaches(JudgeTier.SP) } },
+                        geSS = songRecords.count { rs -> rs.any { it.reaches(JudgeTier.SS) } },
+                        geSSP = songRecords.count { rs -> rs.any { it.reaches(JudgeTier.SSP) } },
+                        geSSS = songRecords.count { rs -> rs.any { it.reaches(JudgeTier.SSS) } },
+                        sssp = songRecords.count { rs -> rs.any { it.reaches(JudgeTier.SSSP) } },
                     )
                 }
                 .sortedBy { it.key }
@@ -78,6 +91,12 @@ object MaimaiStats {
                         sss = recs.count { it.isSss },
                         ap = recs.count { it.isAp },
                         fdx = recs.count { it.isFdx },
+                        geS = recs.count { it.reaches(JudgeTier.S) },
+                        geSP = recs.count { it.reaches(JudgeTier.SP) },
+                        geSS = recs.count { it.reaches(JudgeTier.SS) },
+                        geSSP = recs.count { it.reaches(JudgeTier.SSP) },
+                        geSSS = recs.count { it.reaches(JudgeTier.SSS) },
+                        sssp = recs.count { it.reaches(JudgeTier.SSSP) },
                     )
                 }
                 // levelSortKey 返回 Pair（非 Comparable），拆成两个 selector 分别比较

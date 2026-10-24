@@ -45,7 +45,6 @@ import com.kira.kiba.ui.common.ChartTypeChip
 import com.kira.kiba.ui.common.CoverFrame
 import com.kira.kiba.ui.common.DifficultyChip
 import com.kira.kiba.ui.common.EmptyStateCard
-import com.kira.kiba.ui.common.HGap
 import com.kira.kiba.ui.common.difficultyColor
 import com.kira.kiba.ui.common.difficultyLabel
 import com.kira.kiba.ui.common.pageContentPadding
@@ -69,7 +68,9 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  * - 立即更新 → [KibaState.refreshSongData] 下载 + 入库，Room LiveData 自动推送，列表即刷新；
  * - 顶部「曲库数据」卡常驻展示：当前版本 / 歌曲数 / 同步状态 / 下载进度。
  *
- * @param searchTrigger 顶栏搜索按钮每次点击 +1，页面据此聚焦搜索框（0 不聚焦）。
+ * 搜索栏默认隐藏：点顶栏搜索按钮展开，再点收起（搜索逻辑不变）。
+ *
+ * @param searchTrigger 顶栏搜索按钮每次点击 +1，页面据此切换搜索栏展开 / 收起。
  */
 @Composable
 fun SongsScreen(
@@ -79,10 +80,21 @@ fun SongsScreen(
 ) {
     val context = LocalContext.current
     var query by remember { mutableStateOf("") }
+    var searchVisible by remember { mutableStateOf(false) }
     val searchFocusRequester = remember { FocusRequester() }
+    var lastTrigger by remember { mutableStateOf(0) }
 
     LaunchedEffect(searchTrigger) {
-        if (searchTrigger > 0) searchFocusRequester.requestFocus()
+        if (searchTrigger > 0 && searchTrigger != lastTrigger) {
+            lastTrigger = searchTrigger
+            searchVisible = !searchVisible
+            if (searchVisible) {
+                // 展开后聚焦输入框
+                runCatching { searchFocusRequester.requestFocus() }
+            } else {
+                query = ""
+            }
+        }
     }
 
     val repo = remember {
@@ -144,16 +156,19 @@ fun SongsScreen(
             contentPadding = pageContentPadding(),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            item(key = "search") {
-                TextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    label = "搜索歌曲 / 别名 / ID",
-                    useLabelAsPlaceholder = true,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .focusRequester(searchFocusRequester),
-                )
+            // 搜索栏（默认隐藏，顶栏搜索按钮切换）
+            if (searchVisible) {
+                item(key = "search") {
+                    TextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        label = "搜索歌曲 / 别名 / ID",
+                        useLabelAsPlaceholder = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(searchFocusRequester),
+                    )
+                }
             }
 
             // 曲库数据卡：版本 / 歌曲数 / 检查更新 / 下载进度
@@ -312,7 +327,12 @@ private fun SongDataUpdateDialog(
     }
 }
 
-/** 歌曲卡片：封面 + 标题 + 副标题（曲师 · 分类）+ 副标题下方的 SD/DX 与各难度等级。 */
+/**
+ * 歌曲卡片：封面 + 标题 + 副标题（曲师 · 分类）+ 副标题下方的 SD/DX 与各难度等级。
+ *
+ * 徽标（tag）换行策略：miuix BasicComponent 的中间列宽度会被封面与右侧区域挤压，
+ * 这里统一用 FlowRow 承载徽标，宽度不足时自动换行，不再把徽标挤到卡片边缘。
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SongCard(
@@ -328,10 +348,11 @@ fun SongCard(
         BasicComponent(
             title = song.songData.title,
             summary = buildString {
-                val charter = topChart?.charter?.takeIf { it.isNotBlank() && it != "-" }
-                if (charter != null) {
-                    append("谱师 ")
-                    append(charter)
+                // 曲师 = 歌曲艺术家（artist），不是谱师（charter）
+                val artist = song.songData.artist.takeIf { it.isNotBlank() && it != "-" }
+                if (artist != null) {
+                    append("曲师 ")
+                    append(artist)
                     append(" · ")
                 }
                 append(song.songData.genre)
@@ -344,8 +365,9 @@ fun SongCard(
                 )
             },
             bottomAction = {
-                // SD / DX + 各难度等级，放在副标题下方
+                // SD / DX + 各难度等级，放在副标题下方；FlowRow 保证放不下时自动换行
                 FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {

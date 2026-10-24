@@ -134,6 +134,19 @@ private fun ProgressScreen(
                             JudgePill("神 AP", items.sumOf { it.ap })
                             JudgePill("FDX", items.sumOf { it.fdx })
                         }
+                        Spacer(Modifier.height(8.dp))
+                        // 评级细档：>=S / >=S+ / >=SS / >=SS+ / >=SSS / SSS+
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            JudgePill(">=S", items.sumOf { it.geS })
+                            JudgePill(">=S+", items.sumOf { it.geSP })
+                            JudgePill(">=SS", items.sumOf { it.geSS })
+                            JudgePill(">=SS+", items.sumOf { it.geSSP })
+                            JudgePill(">=SSS", items.sumOf { it.geSSS })
+                            JudgePill("SSS+", items.sumOf { it.sssp })
+                        }
                     }
                 }
             }
@@ -172,6 +185,12 @@ private fun ProgressScreen(
                                 JudgePill("将 SSS+", item.sss)
                                 JudgePill("神 AP", item.ap)
                                 JudgePill("FDX", item.fdx)
+                                JudgePill(">=S", item.geS)
+                                JudgePill(">=S+", item.geSP)
+                                JudgePill(">=SS", item.geSS)
+                                JudgePill(">=SS+", item.geSSP)
+                                JudgePill(">=SSS", item.geSSS)
+                                JudgePill("SSS+", item.sssp)
                             }
                         }
                     }

@@ -2,6 +2,8 @@ package com.kira.kiba.ui.me
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -14,33 +16,46 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.produceState
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.kira.kiba.core.account.DivingFishAccount
 import com.kira.kiba.core.db.entity.RecordEntity
+import com.kira.kiba.core.model.DifficultyType
+import kotlinx.coroutines.launch
 import com.kira.kiba.ui.common.EmptyStateCard
 import com.kira.kiba.ui.common.HGap
+import com.kira.kiba.ui.common.InfoPill
 import com.kira.kiba.ui.common.difficultyColor
 import com.kira.kiba.ui.common.difficultyLabel
 import com.kira.kiba.ui.common.pageContentPadding
-import com.kira.kiba.core.model.DifficultyType
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
  * Best 50 页（官方口径 sd 35 + dx 15，ra 之和即 DX Rating）。
  * 数据源：绑定查分器后水鱼服务端下发的官方 B50；未绑定时引导去「我」页面授权。
+ *
+ * 每行是可点击的歌曲卡：点击进入该歌曲的歌曲详情页。
  */
 @Composable
-fun Best50Screen(scrollBehavior: ScrollBehavior) {
+fun Best50Screen(
+    scrollBehavior: ScrollBehavior,
+    onOpenSong: (songId: Int) -> Unit = {},
+    onSaveImage: suspend () -> String? = { null },
+) {
     val b50 by produceState(initialValue = DivingFishAccount.Best50()) {
         value = DivingFishAccount.best50()
     }
@@ -48,6 +63,12 @@ fun Best50Screen(scrollBehavior: ScrollBehavior) {
     val old = b50.old
     val new = b50.new
     val total = b50.rating
+
+    // ── 保存图片到相册 ──
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var saving by remember { mutableStateOf(false) }
+    var saveMsg by remember { mutableStateOf<String?>(null) }
 
     Scaffold(
         modifier = Modifier
@@ -73,6 +94,46 @@ fun Best50Screen(scrollBehavior: ScrollBehavior) {
                     )
                 }
             } else {
+                item(key = "save") {
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = when {
+                                    saving -> "正在生成图片…"
+                                    saveMsg != null -> saveMsg!!
+                                    else -> "生成 Best 50 图片"
+                                },
+                                style = MiuixTheme.textStyles.body2,
+                                color = if (saveMsg?.contains("失败") == true) {
+                                    MiuixTheme.colorScheme.primary
+                                } else {
+                                    MiuixTheme.colorScheme.onSurface
+                                },
+                                modifier = Modifier.weight(1f),
+                            )
+                            TextButton(
+                                text = if (saving) "生成中" else "保存到相册",
+                                enabled = !saving && (old.isNotEmpty() || new.isNotEmpty()),
+                                onClick = {
+                                    if (!saving) {
+                                        saving = true
+                                        saveMsg = null
+                                        scope.launch {
+                                            val msg = onSaveImage()
+                                            saveMsg = msg ?: "生成失败：缺少成绩数据"
+                                            saving = false
+                                        }
+                                    }
+                                },
+                            )
+                        }
+                    }
+                }
                 item(key = "summary") {
                     Card(modifier = Modifier.fillMaxWidth()) {
                         Row(
@@ -115,7 +176,12 @@ fun Best50Screen(scrollBehavior: ScrollBehavior) {
                     }
                     new.forEachIndexed { index, r ->
                         item(key = "b50_new_$index") {
-                            Best50Row(rank = index + 1, record = r, tag = "新")
+                            Best50Row(
+                                rank = index + 1,
+                                record = r,
+                                tag = "新",
+                                onClick = { onOpenSong(r.songId) },
+                            )
                         }
                     }
                 }
@@ -130,7 +196,12 @@ fun Best50Screen(scrollBehavior: ScrollBehavior) {
                     }
                     old.forEachIndexed { index, r ->
                         item(key = "b50_old_$index") {
-                            Best50Row(rank = index + 1, record = r, tag = "旧")
+                            Best50Row(
+                                rank = index + 1,
+                                record = r,
+                                tag = "旧",
+                                onClick = { onOpenSong(r.songId) },
+                            )
                         }
                     }
                 }
@@ -139,12 +210,17 @@ fun Best50Screen(scrollBehavior: ScrollBehavior) {
     }
 }
 
+/**
+ * Best 50 行：序号 + 歌名 + 徽标行（难度 / 达成率 / 新旧 tag）+ ra。
+ * 点击进入歌曲详情；徽标用 FlowRow，宽度不足自动换行不挤到卡片边缘。
+ */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun Best50Row(rank: Int, record: RecordEntity, tag: String) {
+private fun Best50Row(rank: Int, record: RecordEntity, tag: String, onClick: () -> Unit) {
     val diffColor = difficultyColor(
         DifficultyType.entries.getOrElse(record.levelIndex) { DifficultyType.UTAGE }
     )
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(modifier = Modifier.fillMaxWidth(), onClick = onClick) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -162,15 +238,21 @@ private fun Best50Row(rank: Int, record: RecordEntity, tag: String) {
                     text = record.title,
                     style = MiuixTheme.textStyles.body1,
                     color = MiuixTheme.colorScheme.onSurface,
+                    maxLines = 2,
                 )
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    text = "[${difficultyLabel(record.levelIndex)} ${record.level}] " +
-                        "%.4f%%".format(record.achievements) +
-                        "　· $tag",
-                    style = MiuixTheme.textStyles.footnote2,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                )
+                Spacer(Modifier.height(3.dp))
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    com.kira.kiba.ui.common.DifficultyChip(
+                        text = "${difficultyLabel(record.levelIndex)} ${record.level}",
+                        color = diffColor,
+                    )
+                    InfoPill("%.2f%%".format(record.achievements))
+                    InfoPill(tag)
+                }
             }
             HGap()
             Column(horizontalAlignment = Alignment.End) {
@@ -192,9 +274,15 @@ private fun Best50Row(rank: Int, record: RecordEntity, tag: String) {
 /**
  * 成绩记录页（查分器更新）：全量成绩 + 顶栏刷新按钮。
  * 刷新 = [com.kira.kiba.core.state.KibaState.refreshRecords]（水鱼服务端重新拉取）。
+ *
+ * 每行是可点击的歌曲卡：点击进入该歌曲的歌曲详情页。
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun RecordsScreen(scrollBehavior: ScrollBehavior) {
+fun RecordsScreen(
+    scrollBehavior: ScrollBehavior,
+    onOpenSong: (songId: Int) -> Unit = {},
+) {
     val account by DivingFishAccount.state.collectAsState()
     val records by produceState(initialValue = emptyList<RecordEntity>()) {
         value = runCatching {
@@ -258,7 +346,10 @@ fun RecordsScreen(scrollBehavior: ScrollBehavior) {
             }
             items@ list.sortedByDescending { it.ra }.forEachIndexed { index, r ->
                 item(key = "rec_${r.songId}_${r.levelIndex}") {
-                    Card(modifier = Modifier.fillMaxWidth()) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = { onOpenSong(r.songId) },
+                    ) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -276,16 +367,26 @@ fun RecordsScreen(scrollBehavior: ScrollBehavior) {
                                     text = r.title,
                                     style = MiuixTheme.textStyles.body1,
                                     color = MiuixTheme.colorScheme.onSurface,
+                                    maxLines = 2,
                                 )
-                                Spacer(Modifier.height(2.dp))
-                                Text(
-                                    text = "[${difficultyLabel(r.levelIndex)} ${r.level}] " +
-                                        "%.4f%%".format(r.achievements) +
-                                        "　DX ${r.dxScore}" +
-                                        if (r.fc.isNotBlank()) "　FC ${r.fc}" else "",
-                                    style = MiuixTheme.textStyles.footnote2,
-                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                                )
+                                Spacer(Modifier.height(3.dp))
+                                FlowRow(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    com.kira.kiba.ui.common.DifficultyChip(
+                                        text = "${difficultyLabel(r.levelIndex)} ${r.level}",
+                                        color = difficultyColor(
+                                            DifficultyType.entries.getOrElse(r.levelIndex) {
+                                                DifficultyType.UTAGE
+                                            }
+                                        ),
+                                    )
+                                    InfoPill("%.2f%%".format(r.achievements))
+                                    InfoPill("DX ${r.dxScore}")
+                                    if (r.fc.isNotBlank()) InfoPill("FC ${r.fc}")
+                                }
                             }
                             HGap()
                             Text(

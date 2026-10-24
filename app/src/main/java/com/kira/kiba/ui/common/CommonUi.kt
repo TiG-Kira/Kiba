@@ -341,3 +341,41 @@ fun VGap(height: androidx.compose.ui.unit.Dp = PageItemSpacing) = Spacer(Modifie
 /** 小横间距工具。 */
 @Composable
 fun HGap(width: androidx.compose.ui.unit.Dp = 6.dp) = Spacer(Modifier.width(width))
+
+/** 信息小胶囊（成就率 / DX 分 / 判定标记等），FlowRow 承载时自动换行。 */
+@Composable
+fun InfoPill(text: String, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .background(
+                MiuixTheme.colorScheme.onSurface.copy(alpha = 0.06f),
+                RoundedCornerShape(6.dp),
+            )
+            .padding(horizontal = 7.dp, vertical = 2.dp),
+    ) {
+        Text(
+            text = text,
+            style = MiuixTheme.textStyles.footnote2,
+            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+        )
+    }
+}
+
+/** 「已完成」标记（进度明细页）。 */
+@Composable
+fun DoneTag(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .background(
+                MiuixTheme.colorScheme.primary.copy(alpha = 0.16f),
+                RoundedCornerShape(4.dp),
+            )
+            .padding(horizontal = 5.dp, vertical = 1.dp),
+    ) {
+        Text(
+            text = "已完成",
+            style = MiuixTheme.textStyles.footnote2,
+            color = MiuixTheme.colorScheme.primary,
+        )
+    }
+}

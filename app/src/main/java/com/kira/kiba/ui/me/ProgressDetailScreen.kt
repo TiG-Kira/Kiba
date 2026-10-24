@@ -29,6 +29,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.unit.dp
 import com.kira.kiba.core.model.DifficultyType
+import com.kira.kiba.core.stats.JudgeTier
+import com.kira.kiba.core.stats.judgeTier
 import com.kira.kiba.core.stats.ProgressDetail
 import com.kira.kiba.core.stats.isAp
 import com.kira.kiba.core.stats.isFc
@@ -36,6 +38,8 @@ import com.kira.kiba.core.stats.isFdx
 import com.kira.kiba.core.stats.isSss
 import com.kira.kiba.ui.common.CoverFrame
 import com.kira.kiba.ui.common.DifficultyChip
+import com.kira.kiba.ui.common.DoneTag
+import com.kira.kiba.ui.common.InfoPill
 import com.kira.kiba.ui.common.EmptyStateCard
 import com.kira.kiba.ui.common.difficultyColor
 import com.kira.kiba.ui.common.difficultyLabel
@@ -59,6 +63,7 @@ fun ProgressDetailScreen(
     groupType: ProgressDetail.GroupType,
     groupKey: String,
     scrollBehavior: ScrollBehavior,
+    onOpenSong: (songId: Int) -> Unit = {},
 ) {
     var difficulty by remember { mutableStateOf<DifficultyType?>(DifficultyType.MASTER) }
     var filter by remember { mutableStateOf(ProgressDetail.JudgeFilter.ALL) }
@@ -119,14 +124,18 @@ fun ProgressDetailScreen(
                         }
                         Spacer(Modifier.height(10.dp))
 
-                        // 判定筛选
+                        // 判定筛选：传统三档（极 / 将 / 神）+ 评级细档（>=S … SSS+）
                         Text(
                             text = "判定",
                             style = MiuixTheme.textStyles.footnote2,
                             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                         )
                         Spacer(Modifier.height(6.dp))
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
                             ProgressDetail.JudgeFilter.entries.forEach { f ->
                                 SelectPill(
                                     text = f.label,
@@ -151,6 +160,7 @@ fun ProgressDetailScreen(
                         item = item,
                         done = item.satisfies(filter),
                         filter = filter,
+                        onClick = { onOpenSong(item.song.id) },
                     )
                 }
             }
@@ -164,9 +174,10 @@ private fun ProgressDetailRow(
     item: ProgressDetail.Item,
     done: Boolean,
     filter: ProgressDetail.JudgeFilter,
+    onClick: () -> Unit,
 ) {
     val diffColor = difficultyColor(item.difficulty)
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(modifier = Modifier.fillMaxWidth(), onClick = onClick) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -186,6 +197,8 @@ private fun ProgressDetailRow(
                         text = item.title,
                         style = MiuixTheme.textStyles.body1,
                         color = MiuixTheme.colorScheme.onSurface,
+                        maxLines = 2,
+                        modifier = Modifier.weight(1f, fill = false),
                     )
                     if (done) {
                         Spacer(Modifier.width(6.dp))
@@ -193,7 +206,11 @@ private fun ProgressDetailRow(
                     }
                 }
                 Spacer(Modifier.height(3.dp))
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
                     DifficultyChip(
                         text = "${difficultyLabel(item.difficulty)} ${item.level}",
                         color = diffColor,
@@ -202,29 +219,16 @@ private fun ProgressDetailRow(
                     item.record?.let { r ->
                         if (r.isAp) InfoPill("神")
                         else if (r.isFc) InfoPill("极")
-                        else if (r.isSss) InfoPill("将")
+                        // 将档显示具体评级（SSS / SSS+ 等），不再笼统写「将」
+                        r.judgeTier?.let { tier ->
+                            if (tier >= JudgeTier.SSS) InfoPill(tier.label)
+                        }
                         if (r.isFdx) InfoPill("FDX")
                         InfoPill("%.2f%%".format(r.achievements))
                     }
                 }
             }
         }
-    }
-}
-
-/** 「已完成」标记。 */
-@Composable
-private fun DoneTag() {
-    Box(
-        modifier = Modifier
-            .background(MiuixTheme.colorScheme.primary.copy(alpha = 0.16f), RoundedCornerShape(4.dp))
-            .padding(horizontal = 5.dp, vertical = 1.dp),
-    ) {
-        Text(
-            text = "已完成",
-            style = MiuixTheme.textStyles.footnote2,
-            color = MiuixTheme.colorScheme.primary,
-        )
     }
 }
 
@@ -257,17 +261,3 @@ private fun SelectPill(text: String, selected: Boolean, onClick: () -> Unit) {
 }
 
 /** 小信息胶囊。 */
-@Composable
-private fun InfoPill(text: String) {
-    Box(
-        modifier = Modifier
-            .background(MiuixTheme.colorScheme.onSurface.copy(alpha = 0.06f), RoundedCornerShape(6.dp))
-            .padding(horizontal = 7.dp, vertical = 2.dp),
-    ) {
-        Text(
-            text = text,
-            style = MiuixTheme.textStyles.footnote2,
-            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-        )
-    }
-}

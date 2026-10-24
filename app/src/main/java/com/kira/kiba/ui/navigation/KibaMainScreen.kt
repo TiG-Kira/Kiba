@@ -1,6 +1,14 @@
 package com.kira.kiba.ui.navigation
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -15,13 +23,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.kira.kiba.core.account.DivingFishAccount
+import com.kira.kiba.core.best50.Best50ImageService
 import com.kira.kiba.core.state.KibaState
 import com.kira.kiba.ui.agent.AgentScreen
 import com.kira.kiba.ui.agent.LlmConfigScreen
 import com.kira.kiba.ui.me.Best50Screen
+import com.kira.kiba.ui.me.FavoritesScreen
 import com.kira.kiba.ui.me.LevelProgressScreen
 import com.kira.kiba.ui.me.LoginScreen
 import com.kira.kiba.ui.me.MeScreen
@@ -149,6 +161,11 @@ sealed interface KibaSubPage {
         override val title: String = "DX 分数转换"
     }
 
+    /** 我的收藏（收藏的歌曲列表）。 */
+    data object Favorites : KibaSubPage {
+        override val title: String = "我的收藏"
+    }
+
     /** 关于。 */
     data object About : KibaSubPage {
         override val title: String = "关于"
@@ -167,6 +184,7 @@ private val GLASS_NAV_HEIGHT = 54.dp
 
 @Composable
 fun KibaMainScreen() {
+    val context = LocalContext.current
     val tabs = KibaTab.values()
     var selectedTab by remember { mutableStateOf(KibaTab.Songs) }
 
@@ -257,79 +275,124 @@ fun KibaMainScreen() {
                     .layerBackdrop(glassNavBackdrop)
             ) {
                 val sub = subPage
-                if (sub != null) {
-                    when (sub) {
-                        is KibaSubPage.SongDetail -> SongDetailScreen(
-                            songId = sub.songId,
-                            scrollBehavior = scrollBehavior,
-                            onOpenChart = { songId, difficultyOrdinal ->
-                                subPage = KibaSubPage.ChartDetail(songId, difficultyOrdinal)
-                            },
-                        )
-                        is KibaSubPage.ChartDetail -> ChartDetailScreen(
-                            songId = sub.songId,
-                            difficultyOrdinal = sub.difficultyOrdinal,
-                            scrollBehavior = scrollBehavior,
-                        )
-                        is KibaSubPage.Best50 -> Best50Screen(scrollBehavior = scrollBehavior)
-                        is KibaSubPage.Records -> RecordsScreen(scrollBehavior = scrollBehavior)
-                        is KibaSubPage.VersionProgress -> VersionProgressScreen(
-                            scrollBehavior = scrollBehavior,
-                            onOpenDetail = { type, key ->
-                                subPage = KibaSubPage.ProgressDetail(type, key)
-                            },
-                        )
-                        is KibaSubPage.LevelProgress -> LevelProgressScreen(
-                            scrollBehavior = scrollBehavior,
-                            onOpenDetail = { type, key ->
-                                subPage = KibaSubPage.ProgressDetail(type, key)
-                            },
-                        )
-                        is KibaSubPage.LlmConfig -> LlmConfigScreen(scrollBehavior = scrollBehavior)
-                        is KibaSubPage.Login -> LoginScreen(
-                            scrollBehavior = scrollBehavior,
-                            onLoginSuccess = { subPage = null },
-                        )
-                        is KibaSubPage.ProgressDetail -> ProgressDetailScreen(
-                            groupType = sub.groupType,
-                            groupKey = sub.groupKey,
-                            scrollBehavior = scrollBehavior,
-                        )
-                        is KibaSubPage.DxConverter -> DxConverterScreen(scrollBehavior = scrollBehavior)
-                        is KibaSubPage.MachineUpdate -> MachineUpdateScreen(scrollBehavior = scrollBehavior)
-                        is KibaSubPage.About -> AboutScreen(scrollBehavior = scrollBehavior)
-                    }
-                } else {
-                    when (selectedTab) {
-                        KibaTab.Songs -> SongsScreen(
-                            scrollBehavior = scrollBehavior,
-                            searchTrigger = songsSearchTrigger,
-                            onSongClick = { song ->
-                                subPage = KibaSubPage.SongDetail(song.songData.id)
-                            },
-                        )
-                        KibaTab.Agent -> AgentScreen(
-                            scrollBehavior = scrollBehavior,
-                            onOpenSong = { songId -> subPage = KibaSubPage.SongDetail(songId) },
-                        )
-                        KibaTab.Me -> MeScreen(
-                            scrollBehavior = scrollBehavior,
-                            onOpenLogin = { subPage = KibaSubPage.Login },
-                            onOpenBest50 = { subPage = KibaSubPage.Best50 },
-                            onOpenRecords = { subPage = KibaSubPage.Records },
-                            onOpenVersionProgress = { subPage = KibaSubPage.VersionProgress },
-                            onOpenLevelProgress = { subPage = KibaSubPage.LevelProgress },
-                            onOpenProgressDetail = { type, key ->
-                                subPage = KibaSubPage.ProgressDetail(type, key)
-                            },
-                            onOpenDxConverter = { subPage = KibaSubPage.DxConverter },
-                        )
-                        KibaTab.Settings -> SettingsScreen(
-                            scrollBehavior = scrollBehavior,
-                            onOpenLlmConfig = { subPage = KibaSubPage.LlmConfig },
-                            onOpenMachineUpdate = { subPage = KibaSubPage.MachineUpdate },
-                            onOpenAbout = { subPage = KibaSubPage.About },
-                        )
+                // 页面切换动画：Tab 间淡入淡出 + 轻微横向位移；二级页面从右滑入、返回时滑出
+                AnimatedContent(
+                    targetState = sub ?: selectedTab,
+                    transitionSpec = {
+                        val isSub = targetState is KibaSubPage
+                        val forward = targetState != initialState
+                        if (isSub) {
+                            if (forward) {
+                                (slideInHorizontally(tween(260)) { it / 4 } + fadeIn(tween(200)))
+                                    .togetherWith(fadeOut(tween(160)))
+                            } else {
+                                (fadeIn(tween(200)))
+                                    .togetherWith(slideOutHorizontally(tween(240)) { it / 4 } + fadeOut(tween(200)))
+                            }
+                        } else {
+                            (fadeIn(tween(200)) + slideInHorizontally(tween(240)) { it / 8 })
+                                .togetherWith(fadeOut(tween(160)))
+                        }
+                    },
+                    label = "kiba-page",
+                ) { target ->
+                    when (target) {
+                        is KibaSubPage -> when (target) {
+                            is KibaSubPage.SongDetail -> SongDetailScreen(
+                                songId = target.songId,
+                                scrollBehavior = scrollBehavior,
+                                onOpenChart = { songId, difficultyOrdinal ->
+                                    subPage = KibaSubPage.ChartDetail(songId, difficultyOrdinal)
+                                },
+                            )
+                            is KibaSubPage.ChartDetail -> ChartDetailScreen(
+                                songId = target.songId,
+                                difficultyOrdinal = target.difficultyOrdinal,
+                                scrollBehavior = scrollBehavior,
+                            )
+                            is KibaSubPage.Best50 -> Best50Screen(
+                                scrollBehavior = scrollBehavior,
+                                onOpenSong = { songId -> subPage = KibaSubPage.SongDetail(songId) },
+                                onSaveImage = {
+                                    val b50 = DivingFishAccount.best50()
+                                    val account = DivingFishAccount.state.value
+                                    Best50ImageService.generateAndSave(
+                                        context = context,
+                                        old = b50.old,
+                                        new = b50.new,
+                                        nickname = account.nickname.ifBlank { "Kiba" },
+                                        rating = b50.rating,
+                                    )
+                                },
+                            )
+                            is KibaSubPage.Records -> RecordsScreen(
+                                scrollBehavior = scrollBehavior,
+                                onOpenSong = { songId -> subPage = KibaSubPage.SongDetail(songId) },
+                            )
+                            is KibaSubPage.VersionProgress -> VersionProgressScreen(
+                                scrollBehavior = scrollBehavior,
+                                onOpenDetail = { type, key ->
+                                    subPage = KibaSubPage.ProgressDetail(type, key)
+                                },
+                            )
+                            is KibaSubPage.LevelProgress -> LevelProgressScreen(
+                                scrollBehavior = scrollBehavior,
+                                onOpenDetail = { type, key ->
+                                    subPage = KibaSubPage.ProgressDetail(type, key)
+                                },
+                            )
+                            is KibaSubPage.LlmConfig -> LlmConfigScreen(scrollBehavior = scrollBehavior)
+                            is KibaSubPage.Login -> LoginScreen(
+                                scrollBehavior = scrollBehavior,
+                                onLoginSuccess = { subPage = null },
+                            )
+                            is KibaSubPage.ProgressDetail -> ProgressDetailScreen(
+                                groupType = target.groupType,
+                                groupKey = target.groupKey,
+                                scrollBehavior = scrollBehavior,
+                                onOpenSong = { songId -> subPage = KibaSubPage.SongDetail(songId) },
+                            )
+                            is KibaSubPage.DxConverter -> DxConverterScreen(scrollBehavior = scrollBehavior)
+                            is KibaSubPage.MachineUpdate -> MachineUpdateScreen(scrollBehavior = scrollBehavior)
+                            is KibaSubPage.Favorites -> FavoritesScreen(
+                                scrollBehavior = scrollBehavior,
+                                onOpenSong = { song -> subPage = KibaSubPage.SongDetail(song.songData.id) },
+                            )
+                            is KibaSubPage.About -> AboutScreen(scrollBehavior = scrollBehavior)
+                        }
+
+                        else -> when (target) {
+                            KibaTab.Songs -> SongsScreen(
+                                scrollBehavior = scrollBehavior,
+                                searchTrigger = songsSearchTrigger,
+                                onSongClick = { song ->
+                                    subPage = KibaSubPage.SongDetail(song.songData.id)
+                                },
+                            )
+                            KibaTab.Agent -> AgentScreen(
+                                scrollBehavior = scrollBehavior,
+                                onOpenSong = { songId -> subPage = KibaSubPage.SongDetail(songId) },
+                            )
+                            KibaTab.Me -> MeScreen(
+                                scrollBehavior = scrollBehavior,
+                                onOpenLogin = { subPage = KibaSubPage.Login },
+                                onOpenBest50 = { subPage = KibaSubPage.Best50 },
+                                onOpenRecords = { subPage = KibaSubPage.Records },
+                                onOpenVersionProgress = { subPage = KibaSubPage.VersionProgress },
+                                onOpenLevelProgress = { subPage = KibaSubPage.LevelProgress },
+                                onOpenProgressDetail = { type, key ->
+                                    subPage = KibaSubPage.ProgressDetail(type, key)
+                                },
+                                onOpenDxConverter = { subPage = KibaSubPage.DxConverter },
+                                onOpenFavorites = { subPage = KibaSubPage.Favorites },
+                            )
+                            KibaTab.Settings -> SettingsScreen(
+                                scrollBehavior = scrollBehavior,
+                                onOpenLlmConfig = { subPage = KibaSubPage.LlmConfig },
+                                onOpenMachineUpdate = { subPage = KibaSubPage.MachineUpdate },
+                                onOpenAbout = { subPage = KibaSubPage.About },
+                            )
+                        }
                     }
                 }
             }

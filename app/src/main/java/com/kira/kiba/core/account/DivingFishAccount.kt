@@ -269,6 +269,9 @@ object DivingFishAccount {
             }.onSuccess { cookie ->
                 SpUtil.saveDivingFishJwt(cookie)
                 SpUtil.setDivingFishBound(true)
+                // 同步写入原版登录凭据：机台成绩更新（VPN 抓包上传）需要用户名 + 密码，
+                // 否则「我」页显示已登录但机台页显示"未登录"，两处状态不一致。
+                SpUtil.putLoginInfo(user, password, cookie)
                 _state.value = AccountState(bound = true, loading = true)
                 refreshRecords()
             }.onFailure { e ->
@@ -396,6 +399,8 @@ object DivingFishAccount {
         SpUtil.setDivingFishBound(false)
         SpUtil.saveDivingFishJwt("")
         SpUtil.saveDivingFishOAuthNickname("")
+        // 一并清除原版登录凭据，保证「我」页与机台更新页状态同步
+        SpUtil.putLoginInfo("", "", "")
         _state.value = AccountState()
     }
 

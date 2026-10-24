@@ -18,14 +18,29 @@ object ProgressDetail {
     /** 分类维度。 */
     enum class GroupType { VERSION, LEVEL }
 
-    /** 判定筛选。 */
-    enum class JudgeFilter(val label: String) {
+    /**
+     * 判定筛选。
+     *
+     * 传统三档：极（FC）/ 将（SSS 及以上）/ 神（AP / AP+）。
+     * 细档：>=S / >=S+ / >=SS / >=SS+ / >=SSS / SSS+（该档及以上，含该档）。
+     */
+    enum class JudgeFilter(val label: String, val tier: JudgeTier? = null) {
         ALL("全部"),
         UNPLAYED("未游玩"),
         PLAYED("已游玩"),
         FC("极"),
         SSS("将"),
         AP("神"),
+        GE_S(">=S", JudgeTier.S),
+        GE_SP(">=S+", JudgeTier.SP),
+        GE_SS(">=SS", JudgeTier.SS),
+        GE_SSP(">=SS+", JudgeTier.SSP),
+        GE_SSS(">=SSS", JudgeTier.SSS),
+        SSSP("SSS+", JudgeTier.SSSP),
+        ;
+
+        /** 是否属于「细档评级」筛选（>= 某档）。 */
+        val isTierFilter: Boolean get() = tier != null
     }
 
     /** 一条明细（歌曲 + 该难度谱面 + 本地成绩）。 */
@@ -51,6 +66,8 @@ object ProgressDetail {
                 JudgeFilter.FC -> r != null && r.isFc
                 JudgeFilter.SSS -> r != null && r.isSss
                 JudgeFilter.AP -> r != null && r.isAp
+                // 细档：达到该评级或更高
+                else -> r != null && filter.tier != null && r.reaches(filter.tier)
             }
         }
     }
