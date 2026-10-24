@@ -1,0 +1,58 @@
+name: Release APK
+
+# 触发：推送 v* 标签，或手动触发（输入版本号）。
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release 版本号（例如 0.1.0）'
+        required: true
+        default: '0.1.0'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # 私钥不入库：CI 从 Secrets 取 base64 解码为 app/kiba-release.jks
+      - name: Decode signing keystore
+        run: |
+          echo "${{ secrets.KIBA_KEYSTORE_BASE64 }}" | base64 -d > app/kiba-release.jks
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build release APK
+        env:
+          KIBA_KEYSTORE_PASSWORD: ${{ secrets.KIBA_KEYSTORE_PASSWORD }}
+          KIBA_KEY_ALIAS: ${{ secrets.KIBA_KEY_ALIAS }}
+          KIBA_KEY_PASSWORD: ${{ secrets.KIBA_KEY_PASSWORD }}
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Resolve version
+        id: ver
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          echo "version=${TAG:-${{ github.event.inputs.version }}}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.version }}
+          name: Kiba ${{ steps.ver.outputs.version }}
+          files: app/build/outputs/apk/release/*.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
