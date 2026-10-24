@@ -545,51 +545,46 @@ class KibaAgent(private val context: Context) {
             }.getOrDefault(emptyList())
         }
 
-        // ── 候选：SSS+（100.5%）理论上限 ra 高于对应列表地板、且本曲还没拿到该 ra 的谱面。
-        //    新曲（DX）对标 B15 地板，旧曲（SD）对标 B35 地板；打上去就能入榜 / 抬线。
-        data class Cand(
-            val songId: Int,
-            val levelIndex: Int,
-            val level: String,
-            val ds: Double,
-            val isDx: Boolean,
-            val potential: Int,
-            val floor: Int,
-            val current: RecordEntity?,
-        )
-
+        // ── 候选：按官方 Rating 档位表全面计算（floor 口径，DX/SD 两套乘数，与上游一致）。
+        //    对每个谱面找「最低的、ra 能超过对应地板的档位」作为目标：
+        //    新曲（DX）对标 B15 地板，旧曲（SD）对标 B35 地板；
+        //    且要求本曲还没打到该档位（打到了就没有提升空间）。
         val candidates = charts
             .filter { !isUtageChart(it, utageIds) }
             .mapNotNull { c ->
-                val floor = when {
-                    typeById[c.songId] == Constants.CHART_TYPE_DX -> b15Floor
-                    typeById[c.songId] == Constants.CHART_TYPE_SD -> b35Floor
-                    else -> null
-                } ?: return@mapNotNull null
-                val potential = floor(c.ds * 1.005).toInt()
-                if (potential <= floor) return@mapNotNull null
+                val songType = typeById[c.songId] ?: return@mapNotNull null
+                val isDx = songType == Constants.CHART_TYPE_DX
+                val floor = (if (isDx) b15Floor else b35Floor) ?: return@mapNotNull null
                 val current = recordByKey[c.songId to c.difficultyType.ordinal]
-                // 本曲已拿到该 ra（贴着上限）→ 没有提升空间；未达到才推荐
-                if (current != null && current.ra >= potential) return@mapNotNull null
+                val target = (if (isDx) RA_TIERS_DX else RA_TIERS_SD)
+                    .firstOrNull { (boundary, mult) ->
+                        tierRa(c.ds, boundary, mult) > floor &&
+                            (current == null || current.achievements < boundary - 1e-9)
+                    }
+                    ?: return@mapNotNull null
+                val potential = tierRa(c.ds, target.first, target.second)
                 Cand(
                     songId = c.songId,
                     levelIndex = c.difficultyType.ordinal,
                     level = c.level,
                     ds = c.ds,
-                    isDx = typeById[c.songId] == Constants.CHART_TYPE_DX,
+                    isDx = isDx,
+                    tierAch = target.first,
                     potential = potential,
                     floor = floor,
+                    gap = target.first - (current?.achievements ?: 0.0),
                     current = current,
                 )
             }
-            .sortedByDescending { it.potential }
+            // 达成率差距小的（最近一档有分的）优先，同差距下潜在 ra 高的优先
+            .sortedWith(compareBy({ it.gap }, { -it.potential }))
             .take(10)
 
         val sb = StringBuilder()
         sb.append("推分推荐（基于 Best 50 地板）：\n")
         sb.append("· B35 地板 ra ${b35Floor} · B15 地板 ra ${b15Floor}\n\n")
         if (candidates.isEmpty()) {
-            sb.append("· 暂无合适目标：高于地板的谱面你都贴着理论上限了，去冲更高定数的新谱面吧。")
+            sb.append("· 暂无合适目标：高于地板的谱面你都贴着档位上限了，去冲更高定数的新谱面吧。")
         } else {
             candidates.forEach { c ->
                 sb.append(
@@ -597,19 +592,75 @@ class KibaAgent(private val context: Context) {
                         "[${difficultyLabel(c.levelIndex)} ${c.level}] 定数 ${c.ds}\n"
                 )
                 val cur = c.current
+                val rank = rankName(c.tierAch)
+                val listName = if (c.isDx) "B15" else "B35"
                 if (cur == null) {
                     sb.append(
-                        "  未游玩 → SSS+ 可得 ra ${c.potential}，顶替${if (c.isDx) "B15" else "B35"}地板（+${c.potential - c.floor}）\n"
+                        "  未游玩 → 达成 %.1f%%（%s）得 ra ${c.potential}，顶替$listName 地板（+${c.potential - c.floor}）\n"
+                            .format(c.tierAch, rank)
                     )
                 } else {
-                    val gain = c.potential - cur.ra
                     sb.append(
-                        "  当前 %.4f%%（ra ${cur.ra}）→ SSS+ 上限 ra ${c.potential}，还可 +$gain\n".format(cur.achievements)
+                        "  当前 %.4f%%（ra ${cur.ra}）→ 还差 %.2f%% 达成 %.1f%%（%s）得 ra ${c.potential}，还可 +${c.potential - cur.ra}\n"
+                            .format(cur.achievements, c.gap, c.tierAch, rank)
                     )
                 }
             }
         }
         return AgentReply(sb.toString().trimEnd())
+    }
+
+    /** 推分候选：谱面 + 目标档位 + 潜在 ra + 与地板/当前成绩的关系。 */
+    private data class Cand(
+        val songId: Int,
+        val levelIndex: Int,
+        val level: String,
+        val ds: Double,
+        val isDx: Boolean,
+        /** 目标档位的达成率下限（如 100.5）。 */
+        val tierAch: Double,
+        /** 该档位下的单曲 ra。 */
+        val potential: Int,
+        /** 对应列表的地板 ra。 */
+        val floor: Int,
+        /** 距目标档位的达成率差距（百分点）。 */
+        val gap: Double,
+        /** 当前成绩（未游玩为 null）。 */
+        val current: RecordEntity?,
+    )
+
+    /** 单曲 Rating 档位表（与上游 diving-fish computeRa 完全一致，floor 口径）：达成率下限 → 乘数。 */
+    private val RA_TIERS_DX = listOf(
+        100.5 to 22.4, 100.0 to 21.6, 99.5 to 21.1, 99.0 to 20.8,
+        98.0 to 20.0, 97.0 to 20.0, 94.0 to 16.8, 90.0 to 15.2,
+        80.0 to 13.6, 75.0 to 12.0, 70.0 to 11.2, 60.0 to 9.6, 50.0 to 8.0,
+    )
+    private val RA_TIERS_SD = listOf(
+        100.5 to 14.0, 100.0 to 13.5, 99.5 to 13.2, 99.0 to 13.0,
+        98.0 to 12.7, 97.0 to 12.5, 94.0 to 10.5, 90.0 to 9.5,
+        80.0 to 8.5, 75.0 to 7.5, 70.0 to 7.0, 60.0 to 6.0, 50.0 to 5.0,
+    )
+
+    /** 档位达成率下限 → 达成率（floor 口径）：floor(定数 × 达成率/100 × 乘数)。 */
+    private fun tierRa(ds: Double, tierAch: Double, mult: Double): Int =
+        floor(ds * (tierAch.coerceAtMost(100.5) / 100.0) * mult).toInt()
+
+    /** 档位达成率下限 → 评级名（官方档位）。 */
+    private fun rankName(tierAch: Double): String = when (tierAch) {
+        100.5 -> "SSS+"
+        100.0 -> "SSS"
+        99.5 -> "SS+"
+        99.0 -> "SS"
+        98.0 -> "S+"
+        97.0 -> "S"
+        94.0 -> "AAA"
+        90.0 -> "AA"
+        80.0 -> "A"
+        75.0 -> "BBB"
+        70.0 -> "BB"
+        60.0 -> "B"
+        50.0 -> "C"
+        else -> "%.1f%%".format(tierAch)
     }
 
     private suspend fun randomSong(arg: String = ""): AgentReply {
