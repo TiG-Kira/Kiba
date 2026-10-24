@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- 查分器登录态等敏感数据不进备份 -->
+    <exclude domain="sharedpref" path="kiba_prober.xml" />
+    <exclude domain="database" path="kiba_room.db" />
+</full-backup-content>

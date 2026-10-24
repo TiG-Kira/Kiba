@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="gekichuni">#808080</color>
+    <color name="gekichuni_stroke">#808080</color>
+    <color name="maimai">#808080</color>
+    <color name="maimai_stroke">#808080</color>
+    <color name="mmd_player_rtsong_adv_dark">#808080</color>
+    <color name="mmd_player_rtsong_adv_main">#808080</color>
+    <color name="mmd_player_rtsong_bsc_dark">#808080</color>
+    <color name="mmd_player_rtsong_bsc_main">#808080</color>
+    <color name="mmd_player_rtsong_exp_dark">#808080</color>
+    <color name="mmd_player_rtsong_exp_main">#808080</color>
+    <color name="mmd_player_rtsong_mst_dark">#808080</color>
+    <color name="mmd_player_rtsong_mst_main">#808080</color>
+    <color name="mmd_player_rtsong_rem_dark">#808080</color>
+    <color name="mmd_player_rtsong_rem_main">#808080</color>
+    <color name="pop">#808080</color>
+    <color name="pop_stroke">#808080</color>
+    <color name="touhou">#808080</color>
+    <color name="touhou_stroke">#808080</color>
+    <color name="utage">#808080</color>
+    <color name="utage_stroke">#808080</color>
+    <color name="variety">#808080</color>
+    <color name="variety_stroke">#808080</color>
+    <color name="vocal">#808080</color>
+    <color name="vocal_stroke">#808080</color>
+</resources>

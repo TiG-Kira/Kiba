@@ -1,0 +1,47 @@
+# Built application files
+*.apk
+*.aar
+*.ap_
+*.aab
+
+# Keystore / signing — NEVER commit plaintext keystore or local.properties
+*.jks
+*.keystore
+kiba-release.jks
+local.properties
+app/kiba-release.jks
+
+# Files for the ART/Dalvik VM
+*.dex
+
+# Java class files
+*.class
+
+# Generated files
+bin/
+gen/
+out/
+release/
+
+# Gradle files
+.gradle/
+build/
+app/build/
+*/build/
+captures/
+.externalNativeBuild/
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.DS_Store
+Thumbs.db
+
+# Log/OS
+*.log
+/captures
+
+# WorkBuddy
+.workbuddy/

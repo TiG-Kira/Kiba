@@ -1,0 +1,66 @@
+<resources>
+    <string name="app_name">Kiba</string>
+
+    <!-- 导航 -->
+    <string name="nav_songs">曲目</string>
+    <string name="nav_agent">Agent</string>
+    <string name="nav_me">我</string>
+    <string name="nav_settings">设置</string>
+
+    <!-- 我 -->
+    <string name="me_login_guide_title">登录查分器账户</string>
+    <string name="me_login_guide_desc">登录后查看实时 Rating、昵称与 Best 50</string>
+    <string name="me_tap_to_login">点击登录</string>
+    <string name="me_rating">Rating</string>
+    <string name="me_nickname">昵称</string>
+    <string name="me_change_account">更换账户</string>
+    <string name="me_rating_detail">查分详情</string>
+    <string name="me_version_progress">版本进度</string>
+    <string name="me_level_progress">等级进度</string>
+    <string name="me_dx_convert">DX 分数转换</string>
+    <string name="me_best50">Best 50</string>
+    <string name="me_not_logged_in">未登录</string>
+
+    <!-- 查分 -->
+    <string name="prober_login_title">查分器登录</string>
+    <string name="prober_loading">正在拉取查分数据…</string>
+    <string name="prober_proxy_update">查分器代理更新</string>
+    <string name="prober_update_checking">正在检查代理更新…</string>
+    <string name="prober_update_available">发现新版本：%1$s</string>
+    <string name="prober_update_none">已是最新版本</string>
+
+    <!-- Agent -->
+    <string name="agent_title">Kiba Agent</string>
+    <string name="agent_hint">问我任何舞萌相关问题，例如：推荐几首推分曲 / 查 Best 50 / 某章谜题怎么解</string>
+    <string name="agent_input_hint">输入消息…</string>
+    <string name="agent_send">发送</string>
+    <string name="agent_error_network">网络异常，无法联网获取信息。已切换为本地知识库回答。</string>
+    <string name="agent_error_unauthorized">未授权读取查分数据，仅基于公开信息回答。可在「我」中登录并授权。</string>
+    <string name="agent_auth_read_data">允许 Agent 读取我的查分数据</string>
+
+    <!-- 曲目 -->
+    <string name="songs_search_hint">搜索曲目 / 别名 / ID</string>
+    <string name="songs_title">曲目</string>
+
+    <!-- 设置 -->
+    <string name="settings_title">设置</string>
+    <string name="settings_about">关于</string>
+    <string name="settings_data">数据</string>
+    <string name="settings_agent">Agent</string>
+    <string name="settings_appearance">外观</string>
+    <string name="settings_web_search">联网搜索</string>
+    <string name="settings_llm_endpoint">大模型接口（OpenAI 兼容）</string>
+    <string name="settings_llm_api_key">接口密钥</string>
+    <string name="settings_proxy">查分器代理</string>
+    <string name="settings_dilrabear_credit">图标：扁平化迪拉熊（舞萌 DX 官方吉祥物，SEGA 授权形象）</string>
+
+    <!-- 通用 -->
+    <string name="common_cancel">取消</string>
+    <string name="common_confirm">确定</string>
+    <string name="common_loading">加载中…</string>
+    <string name="common_retry">重试</string>
+    <string name="glass_nav_bar_fallback_toast">玻璃导航栏不可用，已回退到经典导航栏</string>
+    <string name="file_saved_to_path">file_saved_to_path</string>
+    <string name="image_generation_error">image_generation_error</string>
+    <string name="maimaidx_achievement_desc">maimaidx_achievement_desc</string>
+</resources>

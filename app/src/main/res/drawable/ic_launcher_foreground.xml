@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 扁平化简化版迪拉熊（Dilrabear）自适应图标前景。
+     细节美术后续由用户替换，此处为可编译的占位矢量（全部使用 path，兼容 AAPT2）。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 耳朵 -->
+    <path android:fillColor="#FFFFFF" android:pathData="M21,34 a13,13 0 1,0 26,0 a13,13 0 1,0 -26,0 z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M61,34 a13,13 0 1,0 26,0 a13,13 0 1,0 -26,0 z" />
+    <path android:fillColor="#A29BFE" android:pathData="M28,34 a6,6 0 1,0 12,0 a6,6 0 1,0 -12,0 z" />
+    <path android:fillColor="#A29BFE" android:pathData="M68,34 a6,6 0 1,0 12,0 a6,6 0 1,0 -12,0 z" />
+    <!-- 头部 -->
+    <path android:fillColor="#FFFFFF" android:pathData="M24,60 a30,30 0 1,0 60,0 a30,30 0 1,0 -60,0 z" />
+    <!-- 口鼻区域 -->
+    <path android:fillColor="#EDE9FF" android:pathData="M45,68 a9,8 0 1,0 18,0 a9,8 0 1,0 -18,0 z" />
+    <!-- 眼睛 -->
+    <path android:fillColor="#2D2A5A" android:pathData="M41.4,56 a3.6,3.6 0 1,0 7.2,0 a3.6,3.6 0 1,0 -7.2,0 z" />
+    <path android:fillColor="#2D2A5A" android:pathData="M59.4,56 a3.6,3.6 0 1,0 7.2,0 a3.6,3.6 0 1,0 -7.2,0 z" />
+    <!-- 鼻子 -->
+    <path android:fillColor="#2D2A5A" android:pathData="M51,64 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0 z" />
+</vector>
