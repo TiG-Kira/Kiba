@@ -29,8 +29,8 @@ android {
         // miuix 0.9.4 各模块（blur/ui/icons/preference）要求 minSdk >= 33
         minSdk = 33
         targetSdk = 37
-        versionCode = 5
-        versionName = "0.2.2"
+        versionCode = 6
+        versionName = "0.2.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
@@ -161,6 +161,9 @@ dependencies {
     implementation("io.reactivex.rxjava2:rxandroid:2.1.1")
     implementation("com.squareup.okhttp3:okhttp:4.9.3")
     implementation("com.squareup.okhttp3:logging-interceptor:3.12.13")
+
+    // 机台成绩更新（VPN 方案）：本地 HTTP 跳转服务
+    implementation("org.nanohttpd:nanohttpd:2.2.0")
 
     // 测试
     testImplementation("junit:junit:4.13.2")

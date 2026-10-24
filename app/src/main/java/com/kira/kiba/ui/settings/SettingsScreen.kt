@@ -3,6 +3,7 @@ package com.kira.kiba.ui.settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.Composable
@@ -22,6 +23,7 @@ import com.kira.kiba.core.state.KibaState
 import com.kira.kiba.core.utils.SpUtil
 import com.kira.kiba.ui.common.SectionTitle
 import com.kira.kiba.ui.common.pageContentPadding
+import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.DropdownItem
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
@@ -36,6 +38,7 @@ import top.yukonga.miuix.kmp.preference.SwitchPreference
 fun SettingsScreen(
     scrollBehavior: ScrollBehavior,
     onOpenLlmConfig: () -> Unit,
+    onOpenMachineUpdate: () -> Unit,
     onOpenAbout: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -61,66 +64,80 @@ fun SettingsScreen(
         ) {
             // ── 外观 ──
             item(key = "appearance_title") { SectionTitle("外观") }
-            item(key = "theme") {
-                OverlaySpinnerPreference(
-                    items = listOf(
-                        DropdownItem(text = "跟随系统"),
-                        DropdownItem(text = "浅色"),
-                        DropdownItem(text = "深色"),
-                    ),
-                    selectedIndex = themeMode.ordinal,
-                    title = "主题",
-                    summary = when (themeMode) {
-                        KibaState.ThemeMode.System -> "跟随系统"
-                        KibaState.ThemeMode.Light -> "浅色"
-                        KibaState.ThemeMode.Dark -> "深色"
-                    },
-                    onSelectedIndexChange = { index ->
-                        KibaState.ThemeMode.values().getOrNull(index)?.let { KibaState.setThemeMode(it) }
-                    },
-                )
-            }
-            item(key = "dynamic_color") {
-                SwitchPreference(
-                    checked = dynamicColor,
-                    onCheckedChange = { KibaState.setDynamicColor(it) },
-                    title = "动态取色",
-                    summary = if (dynamicColor) "已开启（跟随壁纸取色）" else "已关闭",
-                )
+            item(key = "appearance_card") {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    OverlaySpinnerPreference(
+                        items = listOf(
+                            DropdownItem(text = "跟随系统"),
+                            DropdownItem(text = "浅色"),
+                            DropdownItem(text = "深色"),
+                        ),
+                        selectedIndex = themeMode.ordinal,
+                        title = "主题",
+                        summary = when (themeMode) {
+                            KibaState.ThemeMode.System -> "跟随系统"
+                            KibaState.ThemeMode.Light -> "浅色"
+                            KibaState.ThemeMode.Dark -> "深色"
+                        },
+                        onSelectedIndexChange = { index ->
+                            KibaState.ThemeMode.values().getOrNull(index)
+                                ?.let { KibaState.setThemeMode(it) }
+                        },
+                    )
+                    SwitchPreference(
+                        checked = dynamicColor,
+                        onCheckedChange = { KibaState.setDynamicColor(it) },
+                        title = "动态取色",
+                        summary = if (dynamicColor) "已开启（跟随壁纸取色）" else "已关闭",
+                    )
+                }
             }
 
             // ── Agent ──
             item(key = "agent_title") { SectionTitle("Agent") }
-            item(key = "llm_switch") {
-                SwitchPreference(
-                    checked = llmOn,
-                    onCheckedChange = {
-                        llmOn = it
-                        SpUtil.setLlmEnabled(it)
-                    },
-                    title = "启用 LLM 对话",
-                    summary = if (llmOn) {
-                        "Agent 优先调用配置的模型回答开放问题"
-                    } else {
-                        "Agent 仅使用本地逻辑与网页搜索"
-                    },
-                )
+            item(key = "agent_card") {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    SwitchPreference(
+                        checked = llmOn,
+                        onCheckedChange = {
+                            llmOn = it
+                            SpUtil.setLlmEnabled(it)
+                        },
+                        title = "启用 LLM 对话",
+                        summary = if (llmOn) {
+                            "Agent 优先调用配置的模型回答开放问题"
+                        } else {
+                            "Agent 仅使用本地逻辑与网页搜索"
+                        },
+                    )
+                    ArrowPreference(
+                        title = "Agent 模型配置",
+                        summary = if (llmOn) {
+                            "${SpUtil.getLlmBaseUrl()} · ${SpUtil.getLlmModel()}"
+                        } else {
+                            "配置任意 OpenAI 兼容端点（官方 / 中转 / 本地 ollama）"
+                        },
+                        onClick = onOpenLlmConfig,
+                    )
+                }
             }
-            item(key = "llm_config") {
-                ArrowPreference(
-                    title = "Agent 模型配置",
-                    summary = if (llmOn) {
-                        "${SpUtil.getLlmBaseUrl()} · ${SpUtil.getLlmModel()}"
-                    } else {
-                        "配置任意 OpenAI 兼容端点（官方 / 中转 / 本地 ollama）"
-                    },
-                    onClick = onOpenLlmConfig,
-                )
+
+            // ── 查分器工具 ──
+            item(key = "tool_title") { SectionTitle("查分器工具") }
+            item(key = "tool_card") {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    ArrowPreference(
+                        title = "机台成绩更新",
+                        summary = "VPN 抓包方案：在机台 WiFi 下把成绩同步到水鱼",
+                        onClick = onOpenMachineUpdate,
+                    )
+                }
             }
 
             // ── 数据 ──
             item(key = "data_title") { SectionTitle("数据") }
-            item(key = "song_update") {
+            item(key = "data_card") {
+                Card(modifier = Modifier.fillMaxWidth()) {
                 ArrowPreference(
                     title = "曲库更新",
                     summary = when (val s = syncState) {
@@ -141,30 +158,35 @@ fun SettingsScreen(
                         }
                     },
                 )
+                }
             }
 
             // ── 查分器 ──
             item(key = "account_title") { SectionTitle("查分器") }
-            item(key = "account_state") {
-                ArrowPreference(
-                    title = "查分器账户",
-                    summary = if (account.bound) {
-                        "已登录：${account.nickname.ifBlank { "查分器用户" }}（Rating ${account.rating}）"
-                    } else {
-                        "未登录 — 请在「我」页面通过 OAuth 授权或账号密码登录"
-                    },
-                    onClick = null,
-                )
+            item(key = "account_card") {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    ArrowPreference(
+                        title = "查分器账户",
+                        summary = if (account.bound) {
+                            "已登录：${account.nickname.ifBlank { "查分器用户" }}（Rating ${account.rating}）"
+                        } else {
+                            "未登录 — 请在「我」页面通过 OAuth 授权或账号密码登录"
+                        },
+                        onClick = null,
+                    )
+                }
             }
 
             // ── 关于 ──
             item(key = "about_title") { SectionTitle("关于") }
-            item(key = "about") {
-                ArrowPreference(
-                    title = "关于 Kiba",
-                    summary = "版本 ${BuildConfig.VERSION_NAME} · 基于 MaimaiData 二次开发",
-                    onClick = onOpenAbout,
-                )
+            item(key = "about_card") {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    ArrowPreference(
+                        title = "关于 Kiba",
+                        summary = "版本 ${BuildConfig.VERSION_NAME} · 基于 MaimaiData 二次开发",
+                        onClick = onOpenAbout,
+                    )
+                }
             }
         }
     }

@@ -17,6 +17,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -27,7 +30,9 @@ import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.SubcomposeAsyncImage
+import androidx.compose.foundation.Image
+import coil.compose.AsyncImagePainter
+import coil.compose.rememberAsyncImagePainter
 import com.kira.kiba.R
 import com.kira.kiba.core.model.DifficultyType
 import com.kira.kiba.core.network.MaimaiDataClient
@@ -91,11 +96,12 @@ private fun genreStrokeRes(genre: String): Int = when (genre) {
 }
 
 /**
- * 歌曲封面加载（双源级联，对齐原版 MaimaiData）：
- * 1. 官网图床 `maimaidx.jp` + songdata.json 的 imageUrl（原版列表同源，覆盖最全）；
- * 2. 水鱼 CDN `diving-fish.com/covers/%05d.png`（原版详情同源；**五位数补零**，
- *    漏补老歌全部 404 白图）；
- * 3. 都失败 → 流派色块 + 音符占位。
+ * 歌曲封面加载（多候选链）：
+ * 1. 水鱼 CDN （原版同源，文件名是去掉版本前缀的曲号，五位数补零）；
+ * 2. 水鱼 CDN 其余候选号（DX 2024+ 曲用版本前缀 id 存图，需再试序号形态）；
+ * 3. 舞萌官网图床 （DX 新曲唯一来源，
+ *    国内可能不可达，此时落回占位图）。
+ * 全部失败 → 流派色块 + 音符占位。
  */
 @Composable
 fun CoverFrame(
@@ -106,12 +112,20 @@ fun CoverFrame(
     size: androidx.compose.ui.unit.Dp = 52.dp,
 ) {
     val stroke = colorResource(genreStrokeRes(genre))
-    val primaryUrl = remember(songId, imageUrl) {
-        if (imageUrl.isNotBlank()) MaimaiDataClient.IMAGE_BASE_URL + imageUrl else null
-    }
-    val fallbackUrl = remember(songId) {
-        MaimaiDataClient.DIVING_FISH_COVER_URL + "%05d".format(songId) + ".png"
-    }
+    val candidates = remember(songId, imageUrl) { coverCandidates(songId, imageUrl) }
+    var index by remember(candidates) { mutableStateOf(0) }
+    val painter = rememberAsyncImagePainter(
+        model = candidates.getOrNull(index),
+        onError = {
+            if (index < candidates.lastIndex) index = index + 1
+        },
+    )
+    val failed = (painter.state as? AsyncImagePainter.State)?.let {
+        it is AsyncImagePainter.State.Error
+    } ?: false
+    val loaded = (painter.state as? AsyncImagePainter.State)?.let {
+        it is AsyncImagePainter.State.Success
+    } ?: false
 
     Box(
         modifier = modifier
@@ -119,39 +133,38 @@ fun CoverFrame(
             .clip(RoundedCornerShape(10.dp))
             .border(2.dp, stroke, RoundedCornerShape(10.dp))
     ) {
-        val inner = Modifier
-            .fillMaxSize()
-            .padding(2.dp)
-            .clip(RoundedCornerShape(8.dp))
-        when {
-            primaryUrl != null -> SubcomposeAsyncImage(
-                model = primaryUrl,
+        if (loaded && !failed) {
+            Image(
+                painter = painter,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
-                loading = { CoverPlaceholder(stroke = stroke, size = size, modifier = inner) },
-                error = {
-                    SubcomposeAsyncImage(
-                        model = fallbackUrl,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        loading = { CoverPlaceholder(stroke = stroke, size = size, modifier = inner) },
-                        error = { CoverPlaceholder(stroke = stroke, size = size, modifier = inner) },
-                        modifier = inner,
-                    )
-                },
-                modifier = inner,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(2.dp)
+                    .clip(RoundedCornerShape(8.dp)),
             )
-
-            else -> SubcomposeAsyncImage(
-                model = fallbackUrl,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                loading = { CoverPlaceholder(stroke = stroke, size = size, modifier = inner) },
-                error = { CoverPlaceholder(stroke = stroke, size = size, modifier = inner) },
-                modifier = inner,
-            )
+        } else {
+            CoverPlaceholder(stroke = stroke, size = size)
         }
     }
+}
+
+/** 封面候选 URL 链（水鱼 CDN 多种编号形态 → 官网图床）。 */
+private fun coverCandidates(songId: Int, imageUrl: String): List<String> {
+    val list = mutableListOf<String>()
+    fun pushCd(id: Int) {
+        val url = MaimaiDataClient.DIVING_FISH_COVER_URL + "%05d".format(id) + ".png"
+        if (url !in list) list.add(url)
+    }
+    pushCd(songId)
+    val mod10k = songId % 10000
+    if (mod10k != songId) pushCd(mod10k)
+    val mod100k = songId % 100000
+    if (mod100k != songId && mod100k != mod10k) pushCd(mod100k)
+    if (imageUrl.isNotBlank()) {
+        list.add(MaimaiDataClient.IMAGE_BASE_URL + imageUrl)
+    }
+    return list
 }
 
 /** 封面占位：流派色半透明底 + 音符。 */
@@ -162,7 +175,11 @@ private fun CoverPlaceholder(
     modifier: Modifier = Modifier,
 ) {
     Box(
-        modifier = modifier.background(stroke.copy(alpha = 0.15f)),
+        modifier = modifier
+            .fillMaxSize()
+            .padding(2.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(stroke.copy(alpha = 0.15f)),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
@@ -176,12 +193,12 @@ private fun CoverPlaceholder(
 
 /** 难度枚举 → 舞萌标准色。 */
 fun difficultyColor(type: DifficultyType): Color = when (type) {
-    DifficultyType.BASIC -> Color(0xFF1FAF60)
-    DifficultyType.ADVANCED -> Color(0xFFFF8A00)
-    DifficultyType.EXPERT -> Color(0xFFFF4D6A)
-    DifficultyType.MASTER -> Color(0xFF9B4DFF)
-    DifficultyType.REMASTER -> Color(0xFFF06292)
-    else -> Color(0xFF9E9E9E)
+    DifficultyType.BASIC -> Color(0xFF6FD43D)      // 原版 basic
+    DifficultyType.ADVANCED -> Color(0xFFF8B709)   // 原版 advanced
+    DifficultyType.EXPERT -> Color(0xFFFF818D)     // 原版 expert
+    DifficultyType.MASTER -> Color(0xFF9F51DC)     // 原版 master
+    DifficultyType.REMASTER -> Color(0xFFCB5EEA)   // 原版 remaster
+    else -> Color(0xFFB12876)                     // 原版 utage
 }
 
 /** 难度枚举 → 短标签。 */
@@ -211,18 +228,27 @@ fun DifficultyChip(
     color: Color,
     modifier: Modifier = Modifier,
 ) {
+    // 原版等级徽章样式（MaimaiData level_*_bg）：实色底 + 白色内描边
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(6.dp))
-            .background(color.copy(alpha = 0.14f))
-            .padding(horizontal = 7.dp, vertical = 2.dp),
+            .background(color)
+            .padding(1.5.dp),
     ) {
-        Text(
-            text = text,
-            color = color,
-            fontSize = 11.sp,
-            textAlign = TextAlign.Center,
-        )
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(4.dp))
+                .border(1.dp, Color.White.copy(alpha = 0.85f), RoundedCornerShape(4.dp))
+                .padding(horizontal = 6.dp, vertical = 2.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = text,
+                color = Color.White,
+                fontSize = 11.sp,
+                textAlign = TextAlign.Center,
+            )
+        }
     }
 }
 

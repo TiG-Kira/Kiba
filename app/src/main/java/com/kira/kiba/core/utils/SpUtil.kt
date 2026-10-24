@@ -277,4 +277,18 @@ object SpUtil {
     fun setLlmMaxTokens(tokens: Int) {
         userInfoPrefs.edit { putInt(KEY_LLM_MAX_TOKENS, tokens.coerceIn(64, 8192)) }
     }
+
+    // ================= VPN 成绩更新（机台抓包）=================
+
+    private const val KEY_VPN_DIFFICULTIES = "vpn_difficulties"
+
+    /** 要通过 VPN 方案更新的难度索引集合（空 = 默认全部）。 */
+    fun getVpnDifficulties(): Set<Int> {
+        val raw = userInfoPrefs.getStringSet(KEY_VPN_DIFFICULTIES, emptySet()) ?: emptySet()
+        return raw.mapNotNull { it.toIntOrNull() }.toSet()
+    }
+
+    fun setVpnDifficulties(difficulties: Set<Int>) {
+        userInfoPrefs.edit { putStringSet(KEY_VPN_DIFFICULTIES, difficulties.map { it.toString() }.toSet()) }
+    }
 }

@@ -32,6 +32,7 @@ import com.kira.kiba.ui.settings.AboutScreen
 import com.kira.kiba.ui.settings.SettingsScreen
 import com.kira.kiba.ui.songdetail.ChartDetailScreen
 import com.kira.kiba.ui.tools.DxConverterScreen
+import com.kira.kiba.ui.tools.MachineUpdateScreen
 import com.kira.kiba.ui.songdetail.SongDetailScreen
 import com.kira.kiba.ui.songs.SongsScreen
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
@@ -136,6 +137,11 @@ sealed interface KibaSubPage {
         val groupKey: String,
     ) : KibaSubPage {
         override val title: String = groupKey
+    }
+
+    /** 机台成绩更新（VPN 抓包方案）。 */
+    data object MachineUpdate : KibaSubPage {
+        override val title: String = "机台成绩更新"
     }
 
     /** DX 分数转换（判定数量 → 达成率 / Rating）。 */
@@ -290,6 +296,7 @@ fun KibaMainScreen() {
                             scrollBehavior = scrollBehavior,
                         )
                         is KibaSubPage.DxConverter -> DxConverterScreen(scrollBehavior = scrollBehavior)
+                        is KibaSubPage.MachineUpdate -> MachineUpdateScreen(scrollBehavior = scrollBehavior)
                         is KibaSubPage.About -> AboutScreen(scrollBehavior = scrollBehavior)
                     }
                 } else {
@@ -317,6 +324,7 @@ fun KibaMainScreen() {
                         KibaTab.Settings -> SettingsScreen(
                             scrollBehavior = scrollBehavior,
                             onOpenLlmConfig = { subPage = KibaSubPage.LlmConfig },
+                            onOpenMachineUpdate = { subPage = KibaSubPage.MachineUpdate },
                             onOpenAbout = { subPage = KibaSubPage.About },
                         )
                     }

@@ -63,4 +63,6 @@
     <string name="file_saved_to_path">file_saved_to_path</string>
     <string name="image_generation_error">image_generation_error</string>
     <string name="maimaidx_achievement_desc">maimaidx_achievement_desc</string>
+    <string name="vpn_connected_status">已连接</string>
+    <string name="vpn_disconnected_status">已断开</string>
 </resources>
