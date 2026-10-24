@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 自适应图标背景：深蓝底（白色线稿前景压在上面）。 -->
+<!-- 自适应图标背景：原图主题深蓝底（白色线稿前景压在上面）。 -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
-    <solid android:color="#131E33" />
+    <solid android:color="#04295F" />
 </shape>
