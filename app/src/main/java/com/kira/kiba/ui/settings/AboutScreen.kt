@@ -1,33 +1,103 @@
 package com.kira.kiba.ui.settings
 
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import coil.imageLoader
+import coil.request.ImageRequest
 import com.kira.kiba.BuildConfig
+import com.kira.kiba.core.update.ApkDownloader
+import com.kira.kiba.core.update.UpdateChecker
+import com.kira.kiba.core.update.UpdateResult
+import com.kira.kiba.core.utils.SpUtil
+import com.kira.kiba.ui.common.MarkdownContent
 import com.kira.kiba.ui.common.SectionTitle
 import com.kira.kiba.ui.common.pageContentPadding
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import top.yukonga.miuix.kmp.basic.Button
+import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.basic.TextButton
+import top.yukonga.miuix.kmp.overlay.OverlayDialog
+import top.yukonga.miuix.kmp.preference.ArrowPreference
+import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
- * 关于页：应用信息 / 数据来源 / 开源地址。
+ * 关于页（移植自 Termux Ultra 的关于页 + 软件更新逻辑）：
+ * 头部（图标 / 名称 / 版本 + 发布状态标签）、设备信息、开发者、检查更新
+ * （GitHub Releases，含下载与安装）、测试版更新开关、版本信息、数据来源等。
  */
 @Composable
 fun AboutScreen(scrollBehavior: ScrollBehavior) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    val updatePrefs = remember { context.getSharedPreferences(PREF_UPDATE, android.content.Context.MODE_PRIVATE) }
+
+    var checkingUpdate by remember { mutableStateOf(false) }
+    var updateResult by remember { mutableStateOf<UpdateResult?>(null) }
+    var showUpdateDialog by remember { mutableStateOf(false) }
+    var downloadingApk by remember { mutableStateOf(false) }
+    var downloadProgress by remember { mutableIntStateOf(0) }
+    var downloadedBytes by remember { mutableLongStateOf(0L) }
+    var totalBytes by remember { mutableLongStateOf(0L) }
+    var pendingInstallVersion by remember { mutableStateOf<String?>(null) }
+    var releaseStatus by remember { mutableStateOf<UpdateChecker.ReleaseStatus?>(null) }
+    var betaUpdateEnabled by remember { mutableStateOf(updatePrefs.getBoolean(KEY_ENABLE_BETA, false)) }
+    var showBetaWarningDialog by remember { mutableStateOf(false) }
+
+    val currentVersion = remember { BuildConfig.VERSION_NAME }
+
+    // 当前版本的发布状态：正式 / Beta / 未发布（内部构建）
+    LaunchedEffect(currentVersion) {
+        releaseStatus = UpdateChecker.getReleaseStatus(currentVersion)
+    }
+
     Scaffold(
         modifier = Modifier
             .fillMaxSize()
@@ -41,40 +111,102 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
             contentPadding = pageContentPadding(withNavBar = false),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            item(key = "app_title") { SectionTitle("应用") }
-            item(key = "app_card") {
+            // ── 头部：图标 + 名称 + 版本 + 状态标签 ──
+            item(key = "header") {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 36.dp, bottom = 10.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    val appIcon = remember {
+                        runCatching {
+                            android.graphics.BitmapFactory.decodeResource(
+                                context.resources, context.applicationInfo.icon,
+                            )
+                        }.getOrNull()
+                    }
+                    if (appIcon != null) {
+                        Image(
+                            bitmap = appIcon.asImageBitmap(),
+                            contentDescription = "Logo",
+                            modifier = Modifier.size(88.dp),
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "Kiba",
+                        style = TextStyle(
+                            fontSize = 34.sp,
+                            fontWeight = FontWeight.Black,
+                            color = MiuixTheme.colorScheme.onSurface,
+                        ),
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            text = "v$currentVersion",
+                            style = TextStyle(
+                                fontSize = 16.sp,
+                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            ),
+                        )
+                        when (releaseStatus) {
+                            UpdateChecker.ReleaseStatus.PRERELEASE -> StatusTag("Beta", MiuixTheme.colorScheme.error)
+                            UpdateChecker.ReleaseStatus.NOT_FOUND -> StatusTag("Internal", Color(0xFFFF9800))
+                            else -> {}
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "舞萌 DX 查分 / 推分工具 · Compose + miuix-glass",
+                        style = MiuixTheme.textStyles.body2,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    )
+                }
+            }
+
+            // ── 设备信息 ──
+            item(key = "device_title") { SectionTitle("设备") }
+            item(key = "device_card") {
                 Card(
-                modifier = Modifier.fillMaxWidth(),
-                cornerRadius = CardDefaults.CornerRadius,
+                    modifier = Modifier.fillMaxWidth(),
+                    cornerRadius = CardDefaults.CornerRadius,
                     insideMargin = CardDefaults.InsideMargin,
                 ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            text = "Kiba",
-                            style = MiuixTheme.textStyles.title3,
-                            color = MiuixTheme.colorScheme.onSurface,
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            text = "舞萌 DX 查分 / 推分工具 · Compose + miuix-glass",
-                            style = MiuixTheme.textStyles.body2,
-                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            text = "版本 ${BuildConfig.VERSION_NAME}（${BuildConfig.VERSION_CODE}）",
-                            style = MiuixTheme.textStyles.footnote1,
-                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                        )
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        InfoRow("设备型号", android.os.Build.MODEL)
+                        InfoRow("系统版本", "Android ${android.os.Build.VERSION.RELEASE}")
+                        InfoRow("内核版本", android.os.Build.DISPLAY)
                     }
                 }
             }
 
+            // ── 开发者 ──
+            item(key = "dev_title") { SectionTitle("开发者") }
+            item(key = "dev_card") {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    AvatarArrowRow(
+                        title = "TiG-Kira",
+                        summary = "开发者 · github.com/TiG-Kira",
+                        avatarUrl = "https://github.com/TiG-Kira.png",
+                        onClick = { openUrl(context, "https://github.com/TiG-Kira") },
+                    )
+                }
+            }
+
+            // ── 数据来源（保留原有文案）──
             item(key = "data_title") { SectionTitle("数据来源") }
             item(key = "data_card") {
                 Card(
-                modifier = Modifier.fillMaxWidth(),
-                cornerRadius = CardDefaults.CornerRadius,
+                    modifier = Modifier.fillMaxWidth(),
+                    cornerRadius = CardDefaults.CornerRadius,
                     insideMargin = CardDefaults.InsideMargin,
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
@@ -90,11 +222,98 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
                 }
             }
 
+            // ── 检查更新 ──
+            item(key = "update_title") { SectionTitle("软件更新") }
+            item(key = "update_card") {
+                val updateSummary = when {
+                    checkingUpdate -> "正在检查更新…"
+                    updateResult is UpdateResult.UpdateAvailable -> {
+                        if ((updateResult as UpdateResult.UpdateAvailable).isBeta) "发现测试版更新"
+                        else "发现新版本"
+                    }
+                    updateResult is UpdateResult.UpToDate -> "已是最新版本"
+                    else -> "检查 GitHub 上的最新版本"
+                }
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    ArrowPreference(
+                        title = "检查更新",
+                        summary = updateSummary,
+                        onClick = {
+                            if (!checkingUpdate) {
+                                checkingUpdate = true
+                                scope.launch {
+                                    updateResult = UpdateChecker.checkForUpdates(currentVersion, betaUpdateEnabled)
+                                    showUpdateDialog = true
+                                    checkingUpdate = false
+                                }
+                            }
+                        },
+                    )
+                    SwitchPreference(
+                        title = "接收测试版更新",
+                        summary = "检查更新时包含标记为 Pre-release 的测试版本",
+                        checked = betaUpdateEnabled,
+                        onCheckedChange = { enabled ->
+                            if (enabled) {
+                                betaUpdateEnabled = true
+                                showBetaWarningDialog = true
+                            } else {
+                                betaUpdateEnabled = false
+                                updatePrefs.edit().putBoolean(KEY_ENABLE_BETA, false).apply()
+                            }
+                        },
+                    )
+                }
+            }
+
+            // ── 版本信息 ──
+            item(key = "version_card") {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    cornerRadius = CardDefaults.CornerRadius,
+                    insideMargin = CardDefaults.InsideMargin,
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            text = "Kiba 版本",
+                            style = TextStyle(
+                                fontSize = 14.sp,
+                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            ),
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "v$currentVersion",
+                                style = TextStyle(
+                                    fontSize = 24.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MiuixTheme.colorScheme.onSurface,
+                                ),
+                            )
+                            if (releaseStatus == UpdateChecker.ReleaseStatus.NOT_FOUND) {
+                                Spacer(Modifier.width(8.dp))
+                                StatusTag("Internal", Color(0xFFFF9800))
+                            }
+                        }
+                        Text(
+                            text = "versionCode ${BuildConfig.VERSION_CODE}\n" +
+                                "更新包经 GitHub Release 分发，安装前会校验签名与版本。",
+                            style = MiuixTheme.textStyles.footnote1,
+                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        )
+                    }
+                }
+            }
+
+            // ── 致谢（保留原有文案）──
             item(key = "thanks_title") { SectionTitle("致谢") }
             item(key = "thanks_card") {
                 Card(
-                modifier = Modifier.fillMaxWidth(),
-                cornerRadius = CardDefaults.CornerRadius,
+                    modifier = Modifier.fillMaxWidth(),
+                    cornerRadius = CardDefaults.CornerRadius,
                     insideMargin = CardDefaults.InsideMargin,
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
@@ -109,28 +328,369 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
                 }
             }
 
+            // ── 开源（保留原有文案）──
             item(key = "oss_title") { SectionTitle("开源") }
             item(key = "oss_card") {
-                Card(
-                modifier = Modifier.fillMaxWidth(),
-                cornerRadius = CardDefaults.CornerRadius,
-                    insideMargin = CardDefaults.InsideMargin,
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            text = "github.com/TiG-Kira/Kiba",
-                            style = MiuixTheme.textStyles.body1,
-                            color = MiuixTheme.colorScheme.primary,
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            text = "问题反馈与功能建议欢迎提 issue。",
-                            style = MiuixTheme.textStyles.footnote1,
-                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                        )
-                    }
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    ArrowPreference(
+                        title = "github.com/TiG-Kira/Kiba",
+                        summary = "问题反馈与功能建议欢迎提 issue",
+                        onClick = { openUrl(context, "https://github.com/TiG-Kira/Kiba") },
+                    )
                 }
             }
         }
     }
+
+    // ── 更新对话框 ──
+    if (showUpdateDialog && updateResult != null) {
+        // 「安装权限授权往返」后重新校验并安装已下载的更新包
+        if (pendingInstallVersion != null && ApkDownloader.hasInstallPermission(context)) {
+            val apkFile = ApkDownloader.getDownloadedApkFile(context, pendingInstallVersion!!)
+            LaunchedEffect(pendingInstallVersion) {
+                // 授权往返期间产物可能被替换，安装前在后台重新校验一次
+                val verified = withContext(Dispatchers.IO) {
+                    ApkDownloader.verifyApkFile(context, apkFile).isSuccess
+                }
+                if (verified) {
+                    runCatching { ApkDownloader.installApk(context, apkFile) }
+                } else {
+                    withContext(Dispatchers.IO) { apkFile.delete() }
+                }
+                pendingInstallVersion = null
+                showUpdateDialog = false
+            }
+        }
+
+        val result = updateResult!!
+        OverlayDialog(
+            show = showUpdateDialog,
+            title = when (result) {
+                is UpdateResult.UpdateAvailable ->
+                    if (result.isBeta) "发现测试版更新" else "发现新版本"
+                is UpdateResult.UpToDate -> "已是最新版本"
+                is UpdateResult.CheckFailed -> "检查更新失败"
+            },
+            summary = when (result) {
+                is UpdateResult.UpdateAvailable -> {
+                    val preReleaseTag = if (result.isBeta) "（Beta）" else ""
+                    "当前版本：v${result.currentVersionName}\n最新版本：${result.latestVersionName}$preReleaseTag"
+                }
+                is UpdateResult.UpToDate -> "当前已是最新版本 v${result.currentVersionName}"
+                is UpdateResult.CheckFailed -> "无法连接 GitHub，请检查网络后重试"
+            },
+            onDismissRequest = { showUpdateDialog = false },
+            content = {
+                Column(modifier = Modifier.padding(top = 8.dp)) {
+                    // 有新版本时展示新版本的 Release Notes；已是最新版时展示当前版本自身的日志
+                    val notesToShow = when (result) {
+                        is UpdateResult.UpdateAvailable -> result.releaseNotes
+                        is UpdateResult.UpToDate -> result.releaseNotes
+                        is UpdateResult.CheckFailed -> ""
+                    }
+                    if (notesToShow.isNotBlank()) {
+                        Text(
+                            text = "更新日志",
+                            style = TextStyle(
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MiuixTheme.colorScheme.onSurface,
+                            ),
+                            modifier = Modifier.padding(bottom = 4.dp),
+                        )
+                        MarkdownContent(
+                            text = notesToShow,
+                            modifier = Modifier
+                                .padding(bottom = 16.dp)
+                                .heightIn(max = 200.dp)
+                                .verticalScroll(rememberScrollState()),
+                        )
+                    }
+                    if (downloadingApk) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 12.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = "正在下载更新…",
+                                    style = TextStyle(
+                                        fontSize = 14.sp,
+                                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                    ),
+                                )
+                                Text(
+                                    text = "$downloadProgress%",
+                                    style = TextStyle(
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MiuixTheme.colorScheme.primary,
+                                    ),
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(6.dp)
+                                    .clip(RoundedCornerShape(3.dp))
+                                    .background(MiuixTheme.colorScheme.surfaceVariant),
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth(downloadProgress / 100f)
+                                        .height(6.dp)
+                                        .background(MiuixTheme.colorScheme.primary),
+                                )
+                            }
+                            if (totalBytes > 0) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "${formatUpdateFileSize(downloadedBytes)} / ${formatUpdateFileSize(totalBytes)}",
+                                    style = TextStyle(
+                                        fontSize = 12.sp,
+                                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                    ),
+                                )
+                            }
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = if (result is UpdateResult.UpdateAvailable) {
+                            Arrangement.spacedBy(8.dp)
+                        } else {
+                            Arrangement.Center
+                        },
+                    ) {
+                        if (result is UpdateResult.UpdateAvailable) {
+                            TextButton(
+                                text = "稍后",
+                                onClick = { showUpdateDialog = false },
+                                modifier = Modifier.weight(1f),
+                                enabled = !downloadingApk,
+                            )
+                            TextButton(
+                                text = "手动下载",
+                                onClick = {
+                                    openUrl(context, result.releaseUrl)
+                                    showUpdateDialog = false
+                                },
+                                modifier = Modifier.weight(1f),
+                                enabled = !downloadingApk,
+                            )
+                            Button(
+                                onClick = {
+                                    downloadingApk = true
+                                    downloadProgress = 0
+                                    downloadedBytes = 0L
+                                    totalBytes = 0L
+                                    val downloadUrl = UpdateChecker.constructDownloadUrl(result.latestVersionName)
+                                    scope.launch(Dispatchers.IO) {
+                                        val downloadResult = ApkDownloader.downloadAndInstall(
+                                            context,
+                                            downloadUrl,
+                                            result.latestVersionName,
+                                        ) { progress, downloaded, total ->
+                                            downloadProgress = progress
+                                            downloadedBytes = downloaded
+                                            totalBytes = total
+                                        }
+                                        downloadingApk = false
+                                        if (downloadResult.isFailure) {
+                                            // 下载失败回退到浏览器手动下载
+                                            openUrl(context, result.releaseUrl)
+                                            showUpdateDialog = false
+                                        } else if (!ApkDownloader.hasInstallPermission(context)) {
+                                            pendingInstallVersion = result.latestVersionName
+                                        } else {
+                                            showUpdateDialog = false
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.buttonColors(
+                                    color = MiuixTheme.colorScheme.primary,
+                                ),
+                                enabled = !downloadingApk,
+                            ) {
+                                Text(text = "下载", fontWeight = FontWeight.Bold, color = Color.White)
+                            }
+                        } else {
+                            Button(
+                                onClick = { showUpdateDialog = false },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.buttonColors(
+                                    color = MiuixTheme.colorScheme.primary,
+                                ),
+                            ) {
+                                Text(text = "好的", fontWeight = FontWeight.Bold, color = Color.White)
+                            }
+                        }
+                    }
+                }
+            },
+        )
+    }
+
+    // ── 测试版开启警告 ──
+    OverlayDialog(
+        show = showBetaWarningDialog,
+        title = "开启测试版更新？",
+        summary = "测试版本（Pre-release）可能不稳定，存在崩溃或数据异常的风险。" +
+            "仅建议愿意帮忙尝鲜并反馈问题的用户开启。",
+        onDismissRequest = {
+            betaUpdateEnabled = false
+            showBetaWarningDialog = false
+        },
+        content = {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                TextButton(
+                    text = "取消",
+                    onClick = {
+                        betaUpdateEnabled = false
+                        showBetaWarningDialog = false
+                    },
+                    modifier = Modifier.weight(1f),
+                )
+                Button(
+                    onClick = {
+                        updatePrefs.edit().putBoolean(KEY_ENABLE_BETA, true).apply()
+                        showBetaWarningDialog = false
+                    },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        color = MiuixTheme.colorScheme.primary,
+                    ),
+                ) {
+                    Text(text = "开启", fontWeight = FontWeight.Bold, color = Color.White)
+                }
+            }
+        },
+    )
 }
+
+/** 版本状态小标签（Beta / Internal）。 */
+@Composable
+private fun StatusTag(text: String, tint: Color) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(tint.copy(alpha = 0.15f))
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+    ) {
+        Text(
+            text = text,
+            style = TextStyle(
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                color = tint,
+            ),
+        )
+    }
+}
+
+/** 设备信息行（值 + 标题）。 */
+@Composable
+private fun InfoRow(title: String, value: String) {
+    Column {
+        Text(
+            text = value,
+            style = TextStyle(
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+                color = MiuixTheme.colorScheme.onSurface,
+            ),
+        )
+        Text(
+            text = title,
+            style = TextStyle(
+                fontSize = 12.sp,
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            ),
+            modifier = Modifier.padding(top = 2.dp),
+        )
+    }
+}
+
+/** 带圆形头像的箭头行（开发者 / 贡献者）。 */
+@Composable
+private fun AvatarArrowRow(
+    title: String,
+    summary: String,
+    avatarUrl: String,
+    onClick: () -> Unit,
+) {
+    val context = LocalContext.current
+    var avatar by remember(avatarUrl) {
+        mutableStateOf<android.graphics.Bitmap?>(null)
+    }
+    LaunchedEffect(avatarUrl) {
+        val bmp = withContext(Dispatchers.IO) {
+            runCatching {
+                context.imageLoader.execute(
+                    ImageRequest.Builder(context)
+                        .data(avatarUrl)
+                        .allowHardware(false)
+                        .build()
+                ).drawable?.let { (it as? android.graphics.drawable.BitmapDrawable)?.bitmap }
+            }.getOrNull()
+        }
+        if (bmp != null) avatar = bmp
+    }
+    ArrowPreference(
+        title = title,
+        summary = summary,
+        onClick = onClick,
+        startAction = {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(MiuixTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center,
+            ) {
+                val bmp = avatar
+                if (bmp != null) {
+                    Image(
+                        bitmap = bmp.asImageBitmap(),
+                        contentDescription = "Avatar",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.size(40.dp),
+                    )
+                }
+            }
+        },
+    )
+}
+
+private fun openUrl(context: android.content.Context, url: String) {
+    runCatching {
+        context.startActivity(
+            android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)),
+        )
+    }
+}
+
+private fun formatUpdateFileSize(bytes: Long): String {
+    return when {
+        bytes < 1024 -> "$bytes B"
+        bytes < 1024 * 1024 -> "${(bytes / 1024.0).toInt()} KB"
+        bytes < 1024L * 1024 * 1024 -> "${(bytes / (1024.0 * 1024.0)).let { String.format("%.1f", it) }} MB"
+        else -> "${(bytes / (1024.0 * 1024.0 * 1024.0)).let { String.format("%.2f", it) }} GB"
+    }
+}
+
+private const val PREF_UPDATE = "update_preferences"
+private const val KEY_ENABLE_BETA = "enable_beta_update"

@@ -262,6 +262,10 @@ fun GlassTopAppBar(
     background: (@Composable BoxScope.() -> Unit)? = null,
     /** 展开态最小额外展开高度（px），用于封面背景完整露出。 */
     minExpansionPx: Int = 0,
+    /** 展开态把大标题/副标题贴到顶栏底部（叠在背景下部）。 */
+    largeTitleBottomAligned: Boolean = false,
+    /** 展开态大标题字重。 */
+    largeTitleFontWeight: androidx.compose.ui.text.font.FontWeight = androidx.compose.ui.text.font.FontWeight.Normal,
 ) {
     val isContentScrolled by remember(scrollBehavior) {
         derivedStateOf { scrollBehavior?.state?.let { it.contentOffset < 0f } ?: true }
@@ -297,6 +301,8 @@ fun GlassTopAppBar(
         onBlankTap = onBlankTap,
         background = background,
         minExpansionPx = minExpansionPx,
+        largeTitleBottomAligned = largeTitleBottomAligned,
+        largeTitleFontWeight = largeTitleFontWeight,
     )
 }
 
@@ -354,6 +360,10 @@ fun GlassTopAppBar(
     background: (@Composable BoxScope.() -> Unit)? = null,
     /** 展开态最小额外展开高度（px），用于封面背景完整露出。 */
     minExpansionPx: Int = 0,
+    /** 展开态把大标题/副标题贴到顶栏底部（叠在背景下部），距底边留空白。 */
+    largeTitleBottomAligned: Boolean = false,
+    /** 展开态大标题字重。 */
+    largeTitleFontWeight: androidx.compose.ui.text.font.FontWeight = androidx.compose.ui.text.font.FontWeight.Normal,
 ) {
     // Buttons carry their own horizontal margin (see [GlassTopAppBarDefaults.ButtonPadding]), so
     // the trailing row needs no spacing of its own; the wrapper only pins them to the end.
@@ -460,6 +470,8 @@ fun GlassTopAppBar(
                 bottomContent = bottomContent,
                 onBlankTap = onBlankTap,
                 minExpansionPx = minExpansionPx,
+                largeTitleBottomAligned = largeTitleBottomAligned,
+                largeTitleFontWeight = largeTitleFontWeight,
             )
         }
     }

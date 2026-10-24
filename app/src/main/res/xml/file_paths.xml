@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 应用内更新：FileProvider 只暴露私有 updates/ 目录下的更新包 -->
+<paths>
+    <files-path
+        name="updates"
+        path="updates/" />
+</paths>

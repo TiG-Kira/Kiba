@@ -109,16 +109,9 @@ object ProgressDetail {
                 )
             }
 
-            // 判定筛选：不符合条件的直接排除（未游玩筛选只留没成绩的）
-            val filtered = items.filter { item ->
-                when (filter) {
-                    JudgeFilter.ALL -> true
-                    else -> item.satisfies(filter)
-                }
-            }
-
-            // 排序：未完成在前（定数高到低），已完成的垫底
-            filtered.sortedWith(
+            // 判定筛选：不符合条件的也保留显示（比已完成的更优先），
+            // 满足条件的（已完成）垫底，未满足的置顶，组内按定数高到低。
+            items.sortedWith(
                 compareBy(
                     { if (it.satisfies(filter)) 1 else 0 },
                     { -it.ds },

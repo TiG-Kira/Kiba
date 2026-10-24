@@ -109,6 +109,18 @@ fun AgentScreen(
         }
     }
 
+    // 流式输出视口跟随：最后一条正在流式且其内容已在视野内（用户贴底阅读）时，
+    // 正文/思考每有增量就贴底；用户手动上滑翻历史时不再抢滚动。
+    val lastTurn = messages.lastOrNull()
+    LaunchedEffect(lastTurn?.text?.length, lastTurn?.reasoning?.length, lastTurn?.streaming) {
+        val turn = messages.lastOrNull() ?: return@LaunchedEffect
+        if (!turn.streaming) return@LaunchedEffect
+        val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: return@LaunchedEffect
+        if (lastVisible >= messages.lastIndex - 1) {
+            listState.scrollToItem(messages.lastIndex)
+        }
+    }
+
     /** 直接执行技能卡（不走 LLM）。[arg] 为带参技能的输入。 */
     fun runSkill(skill: KibaAgent.AgentSkill, arg: String = "") {
         if (thinking) return
@@ -142,6 +154,8 @@ fun AgentScreen(
         AgentSession.add(AgentSession.Turn(fromUser = false, text = "", streaming = true))
         input = ""
         thinking = true
+        // 立刻滚到底部露出新气泡，否则流式内容在屏幕外增长，看起来就像没流式
+        scope.launch { listState.scrollToItem(AgentSession.turns.value.lastIndex) }
         scope.launch {
             val reply = runCatching {
                 agent.handleStream(trimmed) { chunk ->

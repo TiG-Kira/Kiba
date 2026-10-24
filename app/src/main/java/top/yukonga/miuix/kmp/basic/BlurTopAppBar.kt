@@ -58,6 +58,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.layoutId
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
@@ -123,6 +124,10 @@ fun BlurTopAppBar(
     onBlankTap: (() -> Unit)? = null,
     /** 展开态最小额外展开高度（ songsDetail 封面背景等场景让顶栏完整露出封面）。 */
     minExpansionPx: Int = 0,
+    /** 展开态把大标题/副标题移到顶栏底部（封面等背景之下），而非紧跟折叠区。 */
+    largeTitleBottomAligned: Boolean = false,
+    /** 展开态大标题字重。 */
+    largeTitleFontWeight: FontWeight = FontWeight.Normal,
 ) {
     // Wrap the given actions in a Row.
     val actionsRow =
@@ -159,6 +164,8 @@ fun BlurTopAppBar(
         bottomContent = bottomContent,
         onBlankTap = onBlankTap,
         minExpansionPx = minExpansionPx,
+        largeTitleBottomAligned = largeTitleBottomAligned,
+        largeTitleFontWeight = largeTitleFontWeight,
     )
 }
 @Composable
@@ -188,6 +195,10 @@ private fun TopAppBarLayout(
      * 仅靠 largeTitle 文字高度不够。折叠完成后仍回到 CollapsedHeight。
      */
     minExpansionPx: Int = 0,
+    /** 展开态把大标题/副标题块贴到顶栏底部（叠在封面等背景的下部），距底边留 [BottomAlignedTitleGap]。 */
+    largeTitleBottomAligned: Boolean = false,
+    /** 展开态大标题字重。 */
+    largeTitleFontWeight: FontWeight = FontWeight.Normal,
 ) {
     // Producer lambdas — reads stay in layout/draw phases so scroll never recomposes this subtree.
     val scrolledOffset = remember(scrollBehavior) {
@@ -208,6 +219,9 @@ private fun TopAppBarLayout(
             1f - largeTitleFade()
         }
     }
+    // 展开态贴底标题块与顶栏底边（封面底缘）之间的空白。
+    val bottomAlignedGapPx = with(LocalDensity.current) { BottomAlignedTitleGap.roundToPx() }
+
     val updateHeightOffsetLimit = remember(scrollBehavior, minExpansionPx) {
         { height: Int ->
             scrollBehavior?.state?.let { state ->
@@ -293,7 +307,14 @@ private fun TopAppBarLayout(
             Box(
                 Modifier
                     .layoutId("largeTitle")
-                    .padding(top = TopAppBarDefaults.CollapsedHeight)
+                    // 贴底模式由 measure 阶段按 barHeight 定位，不再吃折叠区的 top padding。
+                    .then(
+                        if (!largeTitleBottomAligned) {
+                            Modifier.padding(top = TopAppBarDefaults.CollapsedHeight)
+                        } else {
+                            Modifier
+                        },
+                    )
                     .padding(horizontal = titlePadding)
                     .graphicsLayer {
                         alpha = largeTitleAlpha() * titleAlpha()
@@ -314,17 +335,24 @@ private fun TopAppBarLayout(
             ) {
                 Column(
                     modifier = Modifier
-                        .offset {
-                            val v = scrolledOffset()
-                            IntOffset(0, v.fastRoundToInt())
-                        }
+                        .then(
+                            // 贴底模式的位置由 barHeight 收缩带动，再叠加 offset 会双重移动。
+                            if (!largeTitleBottomAligned) {
+                                Modifier.offset {
+                                    val v = scrolledOffset()
+                                    IntOffset(0, v.fastRoundToInt())
+                                }
+                            } else {
+                                Modifier
+                            }
+                        )
                         .onSizeChanged { updateHeightOffsetLimit(it.height) },
                 ) {
                     Text(
                         text = largeTitle,
                         color = animatedLargeTitleColor,
                         fontSize = MiuixTheme.textStyles.title1.fontSize,
-                        fontWeight = FontWeight.Normal,
+                        fontWeight = largeTitleFontWeight,
                     )
                     if (subtitle.isNotEmpty()) {
                         Text(
@@ -481,13 +509,13 @@ private fun TopAppBarLayout(
                 y = verticalCenter - titlePlaceable.height / 2,
             )
 
-            // Small subtitle：居中在与 title 相同的安全区内部。
-            // 既不居中屏幕（会被右侧 actionIcons 挡），也不左对齐 baseX（视觉上不居中）。
+            // Small subtitle：居中于 title 的实际中心。title 可能被安全区钳制而偏离屏幕中心，
+            // 若按屏幕/安全区中点居中，两侧按钮宽度不同时副标题会与标题错位。
             smallSubtitlePlaceable?.let { sub ->
                 val subLeftSafe = navigationIconPlaceable.width
                 val subRightSafe = constraints.maxWidth - actionIconsPlaceable.width - sub.width
-                val subCenter = subLeftSafe + ((subRightSafe - subLeftSafe) / 2)
-                val subX = subCenter.coerceIn(subLeftSafe, subRightSafe)
+                val titleCenterX = baseX + titlePlaceable.width / 2
+                val subX = (titleCenterX - sub.width / 2).coerceIn(subLeftSafe, subRightSafe)
                 sub.placeRelative(
                     x = subX,
                     y = verticalCenter + titlePlaceable.height / 2,
@@ -501,7 +529,16 @@ private fun TopAppBarLayout(
             )
 
             // Large title (includes large subtitle in a Column)
-            largeTitlePlaceable.placeRelative(x = 0, y = 0)
+            // 贴底模式：展开态吸在顶栏底部（封面下缘之上留一段空白），随 barHeight 收缩上移淡出；
+            // 普通模式：固定 y=0，靠 Box 自带的 top padding 定在折叠区下方，Column 内部再随滚动上移。
+            largeTitlePlaceable.placeRelative(
+                x = 0,
+                y = if (largeTitleBottomAligned) {
+                    barHeight - largeTitlePlaceable.height - bottomAlignedGapPx
+                } else {
+                    0
+                },
+            )
 
             // Bottom content (pinned, below bar and subtitle)
             bottomContentPlaceable.placeRelative(x = 0, y = contentTop)
@@ -511,6 +548,9 @@ private fun TopAppBarLayout(
 
 // 上游私有常量，原与 TopAppBarLayout 同处 TopAppBar.kt，vendor 拆文件后需一并带走。
 private const val TITLE_WIDTH_FRACTION = 0.9
+
+// 贴底标题块（largeTitleBottomAligned）与顶栏底边之间的空白。
+private val BottomAlignedTitleGap: Dp = 16.dp
 
 // 收缩态副标题的可见下限：安全区窄于此宽度直接不显示（只留一个省略号没有意义）。
 private val SmallSubtitleMinWidth: Dp = 96.dp

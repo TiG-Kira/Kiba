@@ -559,27 +559,8 @@ class KibaAgent(private val context: Context) {
     }
 
     private suspend fun randomSong(arg: String = ""): AgentReply {
-        // 随机也排除宴会场（流派 = 宴会場，或谱面等级带「?」）：这类谱面不获 Rating
-        var song: SongDataEntity? = null
-        var charts: List<ChartEntity> = emptyList()
-        withContext(Dispatchers.IO) {
-            repeat(12) {
-                val picked = runCatching {
-                    AppDataBase.getInstance().songDao().randomSong()
-                }.getOrNull() ?: return@repeat
-                val cs = runCatching {
-                    AppDataBase.getInstance().chartDao().getChartsBySongId(picked.id)
-                }.getOrDefault(emptyList())
-                val utage = picked.genre == GENRE_UTAGE ||
-                    cs.isNotEmpty() && cs.all { it.level.contains("?") }
-                if (!utage) {
-                    song = picked
-                    charts = cs
-                    return@withContext
-                }
-            }
-        }
-        val target = song
+        // 随机也排除宴会场（流派 = 宴会場 / 六位数 id / 全谱面等级带「?」）：这类谱面不获 Rating
+        val (target, charts) = pickNonUtageSong()
             ?: return AgentReply("曲库还是空的，请先到「设置 → 曲库更新」同步曲库。")
         val top = charts.maxByOrNull { it.ds }
         val sb = StringBuilder()
@@ -684,16 +665,10 @@ class KibaAgent(private val context: Context) {
         val goodPick = good[rnd.nextInt(good.size)]
         val badPick = bad[rnd.nextInt(bad.size)]
 
-        val song = withContext(Dispatchers.IO) {
-            runCatching { AppDataBase.getInstance().songDao().randomSong() }.getOrNull()
-        }
-        val charts = song?.let {
-            withContext(Dispatchers.IO) {
-                runCatching {
-                    AppDataBase.getInstance().chartDao().getChartsBySongId(it.id)
-                }.getOrDefault(emptyList())
-            }
-        }.orEmpty()
+        // 今日推荐曲目同样排除宴会场（流派/六位数 id/全谱面等级带「?」）
+        val picked = pickNonUtageSong()
+        val song = picked?.first
+        val charts = picked?.second.orEmpty()
         val top = charts.maxByOrNull { it.ds }
 
         val sb = StringBuilder()
@@ -967,8 +942,8 @@ class KibaAgent(private val context: Context) {
         val bySong = charts.groupBy { it.songId }
         val utageIds = utageSongIds(songs)
         val pool = songs.filter { s ->
-            // 宴会场（流派 = 宴会場，或谱面等级带「?」）不获 Rating，排除
-            if (s.genre == GENRE_UTAGE) return@filter false
+            // 宴会场（流派 = 宴会場，或六位数 id，或谱面等级带「?」）不获 Rating，排除
+            if (s.genre == GENRE_UTAGE || s.id in 100000..999999) return@filter false
             val cs = bySong[s.id].orEmpty()
             if (cs.isNotEmpty() && cs.all { isUtageChart(it, utageIds) }) return@filter false
             val typeOk = when {
@@ -1077,24 +1052,54 @@ class KibaAgent(private val context: Context) {
             chart.songId in utageSongIds ||
             chart.level.contains("?")
 
-    /** 宴会場歌曲 id 集合（genre 判定）。 */
+    /**
+     * 宴会場歌曲 id 集合：genre = 宴会場，或 **id 为六位数**（100000-999999，
+     * 宴会场曲目 id 段，部分数据源 genre 字段缺失时靠 id 兜底）。
+     */
     private fun utageSongIds(songs: List<SongDataEntity>): Set<Int> =
-        songs.filter { it.genre == GENRE_UTAGE }.map { it.id }.toSet()
+        songs.filter { it.genre == GENRE_UTAGE || it.id in 100000..999999 }.map { it.id }.toSet()
+
+    /**
+     * 随机取一首非宴会场歌曲（含其谱面列表）：流派 = 宴会場、六位数 id（100000-999999，
+     * 宴会曲目 id 段）、或全部谱面等级带「?」都视为宴会场。重试 12 次仍命中则放弃。
+     */
+    private suspend fun pickNonUtageSong(): Pair<SongDataEntity, List<ChartEntity>>? {
+        var result: Pair<SongDataEntity, List<ChartEntity>>? = null
+        withContext(Dispatchers.IO) {
+            repeat(12) {
+                val picked = runCatching {
+                    AppDataBase.getInstance().songDao().randomSong()
+                }.getOrNull() ?: return@repeat
+                val cs = runCatching {
+                    AppDataBase.getInstance().chartDao().getChartsBySongId(picked.id)
+                }.getOrDefault(emptyList())
+                val utage = picked.genre == GENRE_UTAGE ||
+                    picked.id in 100000..999999 ||
+                    cs.isNotEmpty() && cs.all { it.level.contains("?") }
+                if (!utage) {
+                    result = picked to cs
+                    return@withContext
+                }
+            }
+        }
+        return result
+    }
 
     /** 取出文本里的中文难度词本身（绿/黄/红/紫/白），用于「紫799」这类粘连写法的切分。 */
     private fun parseDifficultyWord(arg: String): String =
         listOf("绿", "黄", "红", "紫", "白").firstOrNull { arg.contains(it) }.orEmpty()
 
-    /** 难度关键词（绿/黄/红/紫/白 + 英文名）→ DifficultyType。 */
+    /** 难度关键词（绿/黄/红/紫/白 + 英文名）→ DifficultyType。
+     *  注意：白谱 = Re:MASTER（宗师），宴会场谱面等级带「?」，不要混淆。 */
     private fun parseDifficultyKeyword(arg: String): DifficultyType? {
         val lower = arg.lowercase()
         return when {
             lower.contains("basic") || arg.contains("绿") -> DifficultyType.BASIC
             lower.contains("advanced") || arg.contains("黄") -> DifficultyType.ADVANCED
             lower.contains("expert") || arg.contains("红") -> DifficultyType.EXPERT
-            lower.contains("remaster") || lower.contains("re:master") -> DifficultyType.REMASTER
+            lower.contains("remaster") || lower.contains("re:master") ||
+                lower.contains("white") || arg.contains("白") -> DifficultyType.REMASTER
             lower.contains("master") || arg.contains("紫") -> DifficultyType.MASTER
-            lower.contains("white") || arg.contains("白") -> DifficultyType.UTAGE
             else -> null
         }
     }
@@ -1119,7 +1124,8 @@ class KibaAgent(private val context: Context) {
         2 -> "EXPERT"
         3 -> "MASTER"
         4 -> "Re:MASTER"
-        else -> "UTAGE"
+        5, 6 -> "UTAGE"
+        else -> "?"
     }
 
     companion object {

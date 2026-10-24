@@ -194,15 +194,28 @@ fun KibaMainScreen() {
     // 导航方向：true=前进入栈，false=后退出栈（驱动页面切换动画方向）
     var navForward by remember { mutableStateOf(true) }
 
+    // 顶栏塌缩行为：rememberSaveable 状态，切 tab / 进程恢复都不丢
+    val topAppBarState = rememberTopAppBarState()
+    val scrollBehavior: ScrollBehavior = MiuixScrollBehavior(topAppBarState)
+
+    // 每进入新页面（入栈/出栈/切 Tab）都把共享的顶栏状态归零：旧页面列表 state 已随
+    // AnimatedContent 销毁重建回顶，顶栏也必须回到展开态，否则折叠状态会泄漏到新页面。
+    fun resetTopBar() {
+        topAppBarState.contentOffset = 0f
+        topAppBarState.heightOffset = 0f
+    }
+
     fun pushPage(page: KibaSubPage) {
         navForward = true
         subStack = subStack + page
+        resetTopBar()
     }
 
     fun popPage() {
         if (subStack.isNotEmpty()) {
             navForward = false
             subStack = subStack.dropLast(1)
+            resetTopBar()
         }
     }
 
@@ -215,10 +228,6 @@ fun KibaMainScreen() {
         maxOf(WindowInsets.navigationBars.getBottom(density), 12.dp.roundToPx()).toDp()
     }
     val navBarBottomPadding = GLASS_NAV_HEIGHT + systemNavBarsHeight
-
-    // 顶栏塌缩行为：rememberSaveable 状态，切 tab / 进程恢复都不丢
-    val topAppBarState = rememberTopAppBarState()
-    val scrollBehavior: ScrollBehavior = MiuixScrollBehavior(topAppBarState)
 
     // 顶栏与底栏共用的取景层（miuix-blur）
     val glassNavBackdrop = rememberLayerBackdrop()
@@ -275,7 +284,13 @@ fun KibaMainScreen() {
                 GlassNavigationBar(
                     items = tabs.map { GlassNavigationItem(icon = tabIcon(it), label = it.title) },
                     selectedIndex = selectedTab.ordinal,
-                    onSelect = { index -> selectedTab = tabs.getOrElse(index) { selectedTab } },
+                    onSelect = { index ->
+                        val target = tabs.getOrElse(index) { selectedTab }
+                        if (target != selectedTab) {
+                            selectedTab = target
+                            resetTopBar() // 切 Tab = 进新页面：列表回顶 + 顶栏展开
+                        }
+                    },
                     backdrop = glassNavBackdrop,
                     modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = systemNavBarsHeight),
                 )

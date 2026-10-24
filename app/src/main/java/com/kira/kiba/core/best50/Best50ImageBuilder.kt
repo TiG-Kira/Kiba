@@ -83,14 +83,14 @@ object Best50ImageBuilder {
     private val SYNC_PIC = listOf("", "FS", "FSp", "FSD", "FSDp")
     private val FS_KEYS = listOf("", "fs", "fsp", "fsd", "fsdp")
 
-    /** 上游 diffpic。 */
+    /** 上游 diffpic：完整等级框（左侧难度彩条 + 黑框 + DX 分数条），盖在 mb 蒙版之上。 */
     private fun diffAsset(diff: Int): String = when (diff) {
-        0 -> "kiba_1bsc"
-        1 -> "kiba_1adv"
-        2 -> "kiba_1exp"
-        3 -> "kiba_1mst"
-        4 -> "kiba_1mst_re"
-        else -> "kiba_1mst"
+        0 -> "kiba_ui_pfc_ms_info02_bsc"
+        1 -> "kiba_ui_pfc_ms_info02_adv"
+        2 -> "kiba_ui_pfc_ms_info02_exp"
+        3 -> "kiba_ui_pfc_ms_info02_mst"
+        4 -> "kiba_ui_pfc_ms_info02_mst_re"
+        else -> "kiba_ui_pfc_ms_info02_mst"
     }
 
     private val http: OkHttpClient by lazy {
