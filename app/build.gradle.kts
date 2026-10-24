@@ -32,6 +32,10 @@ android {
     signingConfigs {
         create("release") {
             storeFile = file("kiba-release.jks")
+            // 现代 JDK(9+) keytool 默认产出 PKCS12 格式；即便扩展名是 .jks 也要按真实格式读取。
+            // storeType 由 CI 按魔数自动探测写入 env，本地可 -Pkiba.storeType=... 覆盖。
+            storeType = (project.findProperty("kiba.storeType")
+                ?: System.getenv("KIBA_KEYSTORE_TYPE") ?: "PKCS12").toString()
             storePassword = (project.findProperty("kiba.keystorePassword")
                 ?: System.getenv("KIBA_KEYSTORE_PASSWORD") ?: "").toString()
             keyAlias = (project.findProperty("kiba.keyAlias")

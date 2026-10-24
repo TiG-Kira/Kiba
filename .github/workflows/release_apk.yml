@@ -27,10 +27,18 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      # 私钥不入库：CI 从 Secrets 取 base64 解码为 app/kiba-release.jks
-      - name: Decode signing keystore
+      # 私钥不入库：CI 从 Secrets 取 base64 解码为 app/kiba-release.jks。
+      # 用 printf 避免 echo 追加换行导致 base64 污染；-i 忽略空白字符。
+      - name: Decode keystore & detect store type
         run: |
-          echo "${{ secrets.KIBA_KEYSTORE_BASE64 }}" | base64 -d > app/kiba-release.jks
+          printf '%s' "${{ secrets.KIBA_KEYSTORE_BASE64 }}" | base64 -d -i > app/kiba-release.jks
+          MAGIC=$(od -An -tx1 -N4 app/kiba-release.jks | tr -d ' \n')
+          if [ "$MAGIC" = "feedfeed" ]; then
+            echo "KIBA_KEYSTORE_TYPE=JKS" >> "$GITHUB_ENV"
+          else
+            echo "KIBA_KEYSTORE_TYPE=PKCS12" >> "$GITHUB_ENV"
+          fi
+          echo "keystore magic=$MAGIC type=$KIBA_KEYSTORE_TYPE size=$(stat -c%s app/kiba-release.jks)"
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
@@ -40,6 +48,7 @@ jobs:
           KIBA_KEYSTORE_PASSWORD: ${{ secrets.KIBA_KEYSTORE_PASSWORD }}
           KIBA_KEY_ALIAS: ${{ secrets.KIBA_KEY_ALIAS }}
           KIBA_KEY_PASSWORD: ${{ secrets.KIBA_KEY_PASSWORD }}
+          KIBA_KEYSTORE_TYPE: ${{ env.KIBA_KEYSTORE_TYPE }}
         run: ./gradlew assembleRelease --no-daemon
 
       - name: Resolve version
