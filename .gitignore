@@ -28,6 +28,7 @@ release/
 build/
 app/build/
 */build/
+.kotlin/
 captures/
 .externalNativeBuild/
 

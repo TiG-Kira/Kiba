@@ -53,7 +53,9 @@ object LlmParse {
     fun parseInlineToolCalls(text: String, knownTools: Set<String>): InlineToolCalls {
         if (text.isBlank() || knownTools.isEmpty()) return InlineToolCalls(emptyList(), text)
         val calls = mutableListOf<Call>()
-        var cleaned = text
+        // 先收集所有命中块，再**倒序**删除：
+        // removeRange 会让后面的字符左移，正序删除会让后续块的索引全部错位。
+        val hits = mutableListOf<Triple<Int, Int, Call>>()
         for ((start, end) in findJsonBlocks(text)) {
             val block = text.substring(start, end)
             val obj = runCatching { JsonParser.parseString(block).asJsonObject }.getOrNull() ?: continue
@@ -67,15 +69,21 @@ object LlmParse {
                 argsEl.isJsonPrimitive -> argsEl.asString
                 else -> argsEl.toString()
             }
-            calls += Call(id = "", name = name, arguments = arguments)
+            hits += Triple(start, end, Call(id = "", name = name, arguments = arguments))
+        }
+        var cleaned = text
+        // 倒序删除：removeRange 让后面的字符左移，正序删会让后续块的索引全部错位
+        hits.sortedByDescending { it.second }.forEach { (start, end, _) ->
             cleaned = cleaned.removeRange(start, end)
         }
+        // 调用按出现顺序返回
+        val ordered = hits.sortedBy { it.first }.map { it.third }
         // 清掉调用时常见的包裹残留（```json / <tool_call> 标签）
         cleaned = cleaned
             .replace(Regex("```(?:json)?\\s*```"), "")
             .replace(Regex("</?tool_call>"), "")
             .trim()
-        return InlineToolCalls(calls, cleaned)
+        return InlineToolCalls(ordered, cleaned)
     }
 
     /**
@@ -117,6 +125,36 @@ object LlmParse {
             }
         }
         return blocks
+    }
+
+    /**
+     * 检测「模型只是在描述打算调用哪些技能」。
+     *
+     * 有些模型 / 中转不支持 function calling，模型会写
+     * 「我打算调用 best50 和 push_rating 来获取数据」然后就没有下文了 ——
+     * 用户看到的是一句空话。识别出这些技能名就能兜底执行。
+     *
+     * 只在**没有真工具调用**时使用，且必须命中明确的「将要调用」语义，
+     * 避免把「根据查询结果 best50 总分是…」这种正常回答误判成空谈。
+     *
+     * @param knownSkillIds 已知技能 id 列表
+     */
+    fun detectNarratedSkills(text: String, knownSkillIds: List<String>): List<String> {
+        if (text.isBlank() || knownSkillIds.isEmpty()) return emptyList()
+        val lower = text.lowercase()
+        // 明确的「打算调用」语义（中英），而不是泛泛的「查询 / 获取」
+        val intentPatterns = listOf(
+            "should call", "shall call", "i'll call", "i will call", "let me call",
+            "need to call", "needs to call", "going to call", "going to invoke",
+            "i should invoke", "i'll invoke", "let me invoke", "i will invoke",
+            "打算调用", "准备调用", "应该调用", "我将调用", "我会调用", "需要调用",
+            "想要调用", "先调用", "调用一下", "调用工具", "使用工具",
+        )
+        if (intentPatterns.none { lower.contains(it) }) return emptyList()
+        return knownSkillIds.filter { id ->
+            Regex("(?<![a-z0-9_])${Regex.escape(id)}(?![a-z0-9_])", RegexOption.IGNORE_CASE)
+                .containsMatchIn(lower)
+        }
     }
 
     /**

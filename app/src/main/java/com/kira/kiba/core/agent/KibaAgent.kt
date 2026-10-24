@@ -394,23 +394,8 @@ class KibaAgent(private val context: Context) {
      * 只在**没有真工具调用**时使用，且必须命中明确的「将要调用」语义，
      * 避免把「根据查询结果 best50 总分是…」这种正常回答误判成空谈。
      */
-    private fun detectNarratedSkills(text: String): List<String> {
-        if (text.isBlank()) return emptyList()
-        val lower = text.lowercase()
-        // 明确的「打算调用」语义（中英），而不是泛泛的「查询 / 获取」
-        val intentPatterns = listOf(
-            "should call", "shall call", "i'll call", "i will call", "let me call",
-            "need to call", "needs to call", "going to call", "going to invoke",
-            "i should invoke", "i'll invoke", "let me invoke", "i will invoke",
-            "打算调用", "准备调用", "应该调用", "我将调用", "我会调用", "需要调用",
-            "想要调用", "先调用", "调用一下", "调用工具", "使用工具",
-        )
-        if (intentPatterns.none { lower.contains(it) }) return emptyList()
-        return SKILLS.map { it.id }.filter { id ->
-            Regex("(?<![a-z0-9_])${Regex.escape(id)}(?![a-z0-9_])", RegexOption.IGNORE_CASE)
-                .containsMatchIn(lower)
-        }
-    }
+    private fun detectNarratedSkills(text: String): List<String> =
+        LlmParse.detectNarratedSkills(text, SKILLS.map { it.id })
 
     /** 合并两次回复的产物（技能数据 / 卡片）。 */
     private fun AgentReply.merge(other: AgentReply): AgentReply = AgentReply(

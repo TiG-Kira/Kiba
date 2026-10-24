@@ -267,9 +267,12 @@ object KibaLlm {
         return try {
             executeOnce(messages, tools, maxTokens, stream, onChunk)
         } catch (e: LlmError.Server) {
-            val rejectedTools = e.code == 400 && tools.isNotEmpty() && e.message.orEmpty().contains("tool", true)
+            // provider 不认 tools 参数（400）：去掉后重试，改走文本内联调用协议。
+            // 错误文案五花八门（tool / function / parameter / unsupported），
+            // 这里宽松匹配，只要是 400 且请求带了 tools 就降级重试。
+            val rejectedTools = e.code == 400 && tools.isNotEmpty()
             if (!rejectedTools) throw e
-            Log.w(TAG, "provider 不接受 tools 参数，去掉后重试（改走文本内联调用协议）")
+            Log.w(TAG, "provider 拒绝 tools 参数，去掉后重试（改走文本内联调用协议）：${e.message}")
             executeOnce(messages, emptyList(), maxTokens, stream, onChunk)
         }
     }

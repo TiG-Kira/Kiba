@@ -152,6 +152,41 @@ class LlmParseTest {
         assertTrue(LlmParse.parseInlineToolCalls("随便什么", emptySet()).calls.isEmpty())
     }
 
+    // ---------- 空谈识别（兜底执行技能）----------
+
+    @Test
+    fun `识别模型声明要调用的技能`() {
+        val ids = listOf("best50", "push_rating", "song_query")
+        val text = "The user wants to know what songs they should push. " +
+            "I should call both best50 and push_rating to get a comprehensive view."
+        assertEquals(listOf("best50", "push_rating"), LlmParse.detectNarratedSkills(text, ids))
+    }
+
+    @Test
+    fun `识别中文的调用声明`() {
+        val ids = listOf("best50", "push_rating")
+        val text = "我应该调用 best50 和 push_rating 来获取真实数据。"
+        assertEquals(listOf("best50", "push_rating"), LlmParse.detectNarratedSkills(text, ids))
+    }
+
+    @Test
+    fun `正常回答不会被误判为空谈`() {
+        val ids = listOf("best50", "push_rating")
+        val text = "根据查询结果，你的 best50 总分是 12345，建议优先补这首高定数。"
+        assertTrue(LlmParse.detectNarratedSkills(text, ids).isEmpty())
+    }
+
+    @Test
+    fun `没有技能名的空谈不产生调用`() {
+        assertTrue(LlmParse.detectNarratedSkills("I should call something.", listOf("best50")).isEmpty())
+    }
+
+    @Test
+    fun `空文本与空技能表安全返回`() {
+        assertTrue(LlmParse.detectNarratedSkills("", listOf("best50")).isEmpty())
+        assertTrue(LlmParse.detectNarratedSkills("I should call best50.", emptyList()).isEmpty())
+    }
+
     // ---------- 参数解析容错 ----------
 
     @Test
