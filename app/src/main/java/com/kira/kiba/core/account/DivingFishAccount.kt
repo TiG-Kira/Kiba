@@ -34,6 +34,11 @@ import java.util.concurrent.TimeUnit
  *    Bearer 调 /player/records 拉全量成绩、/query/player 拿官方 B50 与 Rating。
  *
  * 应用不保存任何用户口令；access_token 仅内存缓存，过期自动重换。
+ *
+ * 保底通道（原版 MaimaiData 登录方式）：[loginWithPassword] 直接 POST
+ * username/password 换长效 jwt_token（Set-Cookie），请求以 Cookie 头发送。
+ * 用于 OAuth 设备码未获批 / 不可用的场景（例如应用为 public client 无
+ * client_secret 时服务端不放行设备码流程）。jwt 等价于口令，仅存本机私有 SP。
  */
 object DivingFishAccount {
 
@@ -41,6 +46,9 @@ object DivingFishAccount {
 
     private const val AUTH_URL = "https://auth.diving-fish.com"
     private const val API_URL = "https://maimai.diving-fish.com/api/maimaidxprober"
+
+    /** 原版通道域名（login / records / query/player 与传统 prober API 一致）。 */
+    private const val LEGACY_API_URL = "https://www.diving-fish.com/api/maimaidxprober"
 
     /** 与应用获批权限一致；写权限审核通过后可加 prober.records.write。 */
     private const val SCOPE = "openid profile prober.profile.read prober.records.read"
@@ -148,14 +156,32 @@ object DivingFishAccount {
         @SerializedName("expires_in") val expiresIn: Int = 300,
     )
 
+    private data class LegacyLoginError(val message: String? = null)
+
+    /** API 请求凭证：OAuth 通道走 Authorization Bearer，原版 jwt 通道走 Cookie。 */
+    private class ApiCredential(val headerName: String, val headerValue: String)
+
     // ── 配置 ──
 
     private val clientId: String get() = BuildConfig.DIVINGFISH_CLIENT_ID
     private val clientSecret: String get() = BuildConfig.DIVINGFISH_CLIENT_SECRET
 
-    /** 应用未配置 client_id（local.properties 未填 / Secrets 未注入）时的统一提示。 */
+    /**
+     * 应用未配置 client_id（local.properties 未填 / Secrets 未注入）时的统一提示。
+     *
+     * 设备码流程是 public client：**只需 client_id**。
+     * client_secret 仅机密客户端（自有服务端）需要，水鱼侧尚未生成时留空即可，
+     * 表单中也不会发送空值，避免服务端按空 secret 校验拒绝。
+     */
     val configMissing: Boolean
-        get() = clientId.isBlank() || clientSecret.isBlank()
+        get() = clientId.isBlank()
+
+    /** 表单公共字段：client_id 必填，client_secret 仅在已配置时附加。 */
+    private fun FormBody.Builder.addClientCredentials(): FormBody.Builder {
+        add("client_id", clientId)
+        if (clientSecret.isNotBlank()) add("client_secret", clientSecret)
+        return this
+    }
 
     /**
      * subject_ref：水鱼服务端用它关联"这台设备的用户"。
@@ -169,9 +195,9 @@ object DivingFishAccount {
 
     // ── 对外状态操作 ──
 
-    /** 启动恢复：已绑定则静默拉一次成绩；未绑定展示未登录引导。 */
+    /** 启动恢复：已登录（OAuth 绑定或原版 jwt）则静默拉一次成绩；否则展示未登录引导。 */
     suspend fun restore() {
-        if (SpUtil.isDivingFishBound()) {
+        if (SpUtil.isDivingFishLoggedIn()) {
             _state.value = AccountState(
                 bound = true,
                 nickname = SpUtil.getDivingFishOAuthNickname(),
@@ -184,18 +210,79 @@ object DivingFishAccount {
     }
 
     /**
+     * 保底通道（原版 MaimaiData 方式）：POST username/password 换长效 jwt_token。
+     *
+     * 用于 OAuth 设备码不可用的场景（如 public client 无 client_secret、
+     * 服务端未放行设备码流程）。成功响应头 `Set-Cookie: jwt_token=...` 整串留存，
+     * 之后以 `Cookie:` 头发往 www.diving-fish.com 的 prober API。
+     * jwt 等价于口令，仅存本机私有 SP；用户改密或在水鱼端注销即失效。
+     */
+    suspend fun loginWithPassword(username: String, password: String): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            val user = username.trim()
+            if (user.isBlank() || password.isBlank()) {
+                return@withContext Result.failure(IllegalStateException("请输入用户名和密码"))
+            }
+            _state.value = _state.value.copy(loading = true, error = null)
+            runCatching {
+                val json = """{"username": "${escapeJson(user)}", "password": "${escapeJson(password)}"}"""
+                val request = Request.Builder()
+                    .url("$LEGACY_API_URL/login")
+                    .post(json.toRequestBody("application/json; charset=utf-8".toMediaType()))
+                    .build()
+                client.newCall(request).execute().use { response ->
+                    if (response.code != 200) {
+                        val errText = response.body?.string().orEmpty()
+                        val msg = runCatching {
+                            gson.fromJson(errText, LegacyLoginError::class.java)?.message
+                        }.getOrNull()
+                        throw IllegalStateException(
+                            msg?.takeIf { it.isNotBlank() } ?: "登录失败（HTTP ${response.code}）",
+                        )
+                    }
+                    val cookie = response.header("Set-Cookie").orEmpty()
+                    if (cookie.isBlank()) {
+                        throw IllegalStateException("登录响应缺少令牌，请重试或换用 OAuth 授权")
+                    }
+                    cookie
+                }
+            }.onSuccess { cookie ->
+                SpUtil.saveDivingFishJwt(cookie)
+                SpUtil.setDivingFishBound(true)
+                _state.value = AccountState(bound = true, loading = true)
+                refreshRecords()
+            }.onFailure { e ->
+                Log.w(TAG, "loginWithPassword failed", e)
+                _state.value = _state.value.copy(loading = false, error = e.message ?: "登录失败")
+            }.map { }
+        }
+
+    /** JSON 字符串字面量转义（用户名 / 密码入 body 前）。 */
+    private fun escapeJson(raw: String): String = buildString(raw.length + 8) {
+        for (c in raw) {
+            when (c) {
+                '"' -> append("\\\"")
+                '\\' -> append("\\\\")
+                '\n' -> append("\\n")
+                '\r' -> append("\\r")
+                '\t' -> append("\\t")
+                else -> if (c < ' ') append("\\u%04x".format(c.code)) else append(c)
+            }
+        }
+    }
+
+    /**
      * 第一步：发起设备授权，返回授权链接给用户点开。
      */
     suspend fun startDeviceAuth(): Result<DeviceAuth> = withContext(Dispatchers.IO) {
         if (configMissing) {
             return@withContext Result.failure(
-                IllegalStateException("未配置水鱼应用凭据（client_id / client_secret），请检查 local.properties"),
+                IllegalStateException("未配置水鱼应用凭据（client_id），请检查 local.properties"),
             )
         }
         runCatching {
             val form = FormBody.Builder()
-                .add("client_id", clientId)
-                .add("client_secret", clientSecret)
+                .addClientCredentials()
                 .add("scope", SCOPE)
                 .add("subject_ref", subjectRef())
                 .add("binding_label", "Kiba")
@@ -208,7 +295,15 @@ object DivingFishAccount {
             client.newCall(request).execute().use { response ->
                 val text = response.body?.string().orEmpty()
                 if (!response.isSuccessful) {
-                    throw IllegalStateException("发起授权失败（HTTP ${response.code}）：$text")
+                    val errorCode = gson.fromJson(text, OAuthError::class.java)?.error.orEmpty()
+                    val msg = when (errorCode) {
+                        "unauthorized_client" ->
+                            "该应用未获批设备码授权流程（unauthorized_client），请改用「账号密码登录」"
+                        "invalid_client" -> "应用凭据无效，请检查 client_id 配置"
+                        "invalid_scope" -> "授权范围不被允许，请检查应用权限申请"
+                        else -> "发起授权失败（HTTP ${response.code}）：$text"
+                    }
+                    throw IllegalStateException(msg)
                 }
                 gson.fromJson(text, DeviceAuthResponse::class.java)
             }
@@ -235,9 +330,8 @@ object DivingFishAccount {
             _state.value = _state.value.copy(loading = true, error = null)
             runCatching {
                 val form = FormBody.Builder()
+                    .addClientCredentials()
                     .add("grant_type", GRANT_CONFIRMATION_CODE)
-                    .add("client_id", clientId)
-                    .add("client_secret", clientSecret)
                     .add("confirmation_code", code)
                     .add("subject_ref", subjectRef())
                     .build()
@@ -279,36 +373,40 @@ object DivingFishAccount {
         recordsCache = emptyList()
         best50Cache = emptyList()
         SpUtil.setDivingFishBound(false)
+        SpUtil.saveDivingFishJwt("")
         SpUtil.saveDivingFishOAuthNickname("")
         _state.value = AccountState()
     }
 
     /**
-     * 拉取成绩：换 token → 全量 records 落库 → /query/player 拿官方 B50 + Rating。
+     * 拉取成绩：取凭证 → 全量 records 落库 → /query/player 拿官方 B50 + Rating。
      * 任一步失败都降级为 error 状态并保留本地缓存，不崩溃。
+     *
+     * 双通道：原版 jwt 走 www.diving-fish.com + Cookie；OAuth 走 maimai.diving-fish.com + Bearer。
      */
     suspend fun refreshRecords() {
-        if (!SpUtil.isDivingFishBound()) {
-            _state.value = _state.value.copy(loading = false, error = "尚未绑定查分器账户")
+        if (!SpUtil.isDivingFishLoggedIn()) {
+            _state.value = _state.value.copy(loading = false, error = "尚未登录查分器账户")
             return
         }
         _state.value = _state.value.copy(loading = true, error = null)
-        val tokenResult = obtainToken()
-        val token = tokenResult.getOrElse { e ->
-            Log.w(TAG, "obtainToken failed", e)
+        val credentialResult = obtainCredential()
+        val credential = credentialResult.getOrElse { e ->
+            Log.w(TAG, "obtainCredential failed", e)
             _state.value = _state.value.copy(
                 loading = false,
                 error = "获取授权失败：${e.message}（将展示本地缓存）",
             )
             return
         }
+        val baseUrl = if (SpUtil.getDivingFishJwt().isNotBlank()) LEGACY_API_URL else API_URL
 
-        // ① 全量成绩（/player/records，Bearer）——推分推荐 / 本地逻辑的数据源
+        // ① 全量成绩（/player/records）——推分推荐 / 本地逻辑的数据源
         val recordsResult = withContext(Dispatchers.IO) {
             runCatching {
                 val request = Request.Builder()
-                    .url("$API_URL/player/records")
-                    .header("Authorization", "Bearer $token")
+                    .url("$baseUrl/player/records")
+                    .header(credential.headerName, credential.headerValue)
                     .build()
                 client.newCall(request).execute().use { response ->
                     val text = response.body?.string().orEmpty()
@@ -325,8 +423,8 @@ object DivingFishAccount {
             runCatching {
                 val json = """{"b50": true}"""
                 val request = Request.Builder()
-                    .url("$API_URL/query/player")
-                    .header("Authorization", "Bearer $token")
+                    .url("$baseUrl/query/player")
+                    .header(credential.headerName, credential.headerValue)
                     .post(json.toRequestBody("application/json; charset=utf-8".toMediaType()))
                     .build()
                 client.newCall(request).execute().use { response ->
@@ -414,6 +512,20 @@ object DivingFishAccount {
         type = type,
     )
 
+    /**
+     * 取 API 请求凭证（双通道）：
+     * - 原版 jwt（长效，存 SP）→ Cookie 头；
+     * - 否则 OAuth on-behalf-of 换 5 分钟短 token（内存缓存）→ Bearer 头。
+     */
+    private suspend fun obtainCredential(force: Boolean = false): Result<ApiCredential> =
+        withContext(Dispatchers.IO) {
+            val jwt = SpUtil.getDivingFishJwt()
+            if (jwt.isNotBlank()) {
+                return@withContext Result.success(ApiCredential("Cookie", jwt))
+            }
+            obtainToken(force).map { token -> ApiCredential("Authorization", "Bearer $token") }
+        }
+
     /** 换取代该用户访问的短期令牌（命中缓存直接复用，401 时由调用方刷新）。 */
     private suspend fun obtainToken(force: Boolean = false): Result<String> =
         withContext(Dispatchers.IO) {
@@ -427,9 +539,8 @@ object DivingFishAccount {
             }
             runCatching {
                 val form = FormBody.Builder()
+                    .addClientCredentials()
                     .add("grant_type", GRANT_ON_BEHALF_OF)
-                    .add("client_id", clientId)
-                    .add("client_secret", clientSecret)
                     .add("subject", "ref:${subjectRef()}")
                     .add("scope", SCOPE)
                     .build()

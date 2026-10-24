@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -5,6 +7,17 @@ plugins {
     id("com.google.devtools.ksp")
     id("org.jetbrains.kotlin.plugin.parcelize")
 }
+
+// 水鱼查分器 OAuth 应用凭据：显式读 local.properties（不入库，AGP 不保证注入 project property），
+// 环境变量兜底。公开仓库只放占位，真实值存 GitHub Secrets（KIBA_DF_CLIENT_ID / KIBA_DF_CLIENT_SECRET）。
+val localProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+val dfClientId = (localProps.getProperty("kiba.dfClientId")
+    ?: System.getenv("KIBA_DF_CLIENT_ID") ?: "").toString()
+val dfClientSecret = (localProps.getProperty("kiba.dfClientSecret")
+    ?: System.getenv("KIBA_DF_CLIENT_SECRET") ?: "").toString()
 
 android {
     namespace = "com.kira.kiba"
@@ -16,11 +29,13 @@ android {
         // miuix 0.9.4 各模块（blur/ui/icons/preference）要求 minSdk >= 33
         minSdk = 33
         targetSdk = 37
-        versionCode = 2
-        versionName = "0.1.1"
+        versionCode = 3
+        versionName = "0.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
+        buildConfigField("String", "DIVINGFISH_CLIENT_ID", "\"$dfClientId\"")
+        buildConfigField("String", "DIVINGFISH_CLIENT_SECRET", "\"$dfClientSecret\"")
         ksp {
             arg("room.schemaLocation", "$projectDir/schemas")
         }
@@ -68,17 +83,6 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
-    }
-
-    // 水鱼查分器 OAuth 应用凭据：local.properties（不入库）或环境变量注入。
-    // 公开仓库只放占位，真实值存 GitHub Secrets（KIBA_DF_CLIENT_ID / KIBA_DF_CLIENT_SECRET）。
-    val dfClientId = (project.findProperty("kiba.dfClientId")
-        ?: System.getenv("KIBA_DF_CLIENT_ID") ?: "").toString()
-    val dfClientSecret = (project.findProperty("kiba.dfClientSecret")
-        ?: System.getenv("KIBA_DF_CLIENT_SECRET") ?: "").toString()
-    defaultConfig {
-        buildConfigField("String", "DIVINGFISH_CLIENT_ID", "\"$dfClientId\"")
-        buildConfigField("String", "DIVINGFISH_CLIENT_SECRET", "\"$dfClientSecret\"")
     }
 
     packaging {

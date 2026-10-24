@@ -43,6 +43,7 @@ object SpUtil {
     private const val KEY_DF_BOUND = "diving_fish_bound"
     private const val KEY_DF_INSTALL_ID = "diving_fish_install_id"
     private const val KEY_DF_NICKNAME_OAUTH = "diving_fish_nickname_oauth"
+    private const val KEY_DF_JWT = "diving_fish_jwt"
 
     private const val KEY_VERSION = "db_version"
     private const val KEY_LAST_UPDATE_TIME = "chart_stats_db_last_update_time"
@@ -147,6 +148,21 @@ object SpUtil {
     fun getDivingFishOAuthNickname(): String =
         userInfoPrefs.getString(KEY_DF_NICKNAME_OAUTH, "") ?: ""
 
+    // ================= DIVINGFISH 原版账号密码登录 =================
+
+    /**
+     * 原版（MaimaiData）登录方式拿到的 jwt_token：等价于用户口令的长效凭证，
+     * 随请求以 `Cookie: jwt_token=xxx` 发送。仅存本机私有目录，不随备份外泄。
+     */
+    fun saveDivingFishJwt(jwt: String) {
+        userInfoPrefs.edit { putString(KEY_DF_JWT, jwt) }
+    }
+
+    fun getDivingFishJwt(): String = userInfoPrefs.getString(KEY_DF_JWT, "") ?: ""
+
+    /** 任一通道有效即视为已登录：OAuth 绑定（KEY_DF_BOUND）或原版 jwt。 */
+    fun isDivingFishLoggedIn(): Boolean = isDivingFishBound() || getDivingFishJwt().isNotBlank()
+
     // ================= SONG INFO =================
 
     fun isFavorite(id: String): Boolean = songInfoPrefs.getBoolean(id, false)
@@ -195,5 +211,70 @@ object SpUtil {
 
     fun clearSearchHistory() {
         searchHistoryPrefs.edit { clear() }
+    }
+
+    // ================= LLM（Agent 模型配置）=================
+
+    private const val KEY_LLM_ENABLED = "llm_enabled"
+    private const val KEY_LLM_BASE_URL = "llm_base_url"
+    private const val KEY_LLM_API_KEY = "llm_api_key"
+    private const val KEY_LLM_MODEL = "llm_model"
+    private const val KEY_LLM_TEMPERATURE = "llm_temperature"
+    private const val KEY_LLM_SYSTEM_PROMPT = "llm_system_prompt"
+    private const val KEY_LLM_MAX_TOKENS = "llm_max_tokens"
+
+    const val LLM_DEFAULT_BASE_URL = "https://api.openai.com/v1"
+    const val LLM_DEFAULT_MODEL = "gpt-4o-mini"
+    const val LLM_DEFAULT_TEMPERATURE = 0.7f
+    const val LLM_DEFAULT_MAX_TOKENS = 1024
+    const val LLM_DEFAULT_SYSTEM_PROMPT =
+        "你是 Kiba，舞萌（maimai DX）玩家的 AI 助手。回答简洁、准确，优先使用中文。" +
+            "涉及玩家本人的成绩、Best 50、Rating 时，使用工具返回的本地数据，不要编造。" +
+            "涉及舞萌机制（Rating 计算、定数、DX 分数）时按官方口径说明。"
+
+    fun isLlmEnabled(): Boolean = userInfoPrefs.getBoolean(KEY_LLM_ENABLED, false)
+
+    fun setLlmEnabled(enabled: Boolean) {
+        userInfoPrefs.edit { putBoolean(KEY_LLM_ENABLED, enabled) }
+    }
+
+    fun getLlmBaseUrl(): String =
+        userInfoPrefs.getString(KEY_LLM_BASE_URL, LLM_DEFAULT_BASE_URL) ?: LLM_DEFAULT_BASE_URL
+
+    fun setLlmBaseUrl(url: String) {
+        userInfoPrefs.edit { putString(KEY_LLM_BASE_URL, url.trim()) }
+    }
+
+    fun getLlmApiKey(): String = userInfoPrefs.getString(KEY_LLM_API_KEY, "") ?: ""
+
+    fun setLlmApiKey(key: String) {
+        userInfoPrefs.edit { putString(KEY_LLM_API_KEY, key.trim()) }
+    }
+
+    fun getLlmModel(): String =
+        userInfoPrefs.getString(KEY_LLM_MODEL, LLM_DEFAULT_MODEL) ?: LLM_DEFAULT_MODEL
+
+    fun setLlmModel(model: String) {
+        userInfoPrefs.edit { putString(KEY_LLM_MODEL, model.trim()) }
+    }
+
+    fun getLlmTemperature(): Float = userInfoPrefs.getFloat(KEY_LLM_TEMPERATURE, LLM_DEFAULT_TEMPERATURE)
+
+    fun setLlmTemperature(temperature: Float) {
+        userInfoPrefs.edit { putFloat(KEY_LLM_TEMPERATURE, temperature.coerceIn(0f, 2f)) }
+    }
+
+    fun getLlmSystemPrompt(): String =
+        userInfoPrefs.getString(KEY_LLM_SYSTEM_PROMPT, LLM_DEFAULT_SYSTEM_PROMPT)
+            ?: LLM_DEFAULT_SYSTEM_PROMPT
+
+    fun setLlmSystemPrompt(prompt: String) {
+        userInfoPrefs.edit { putString(KEY_LLM_SYSTEM_PROMPT, prompt) }
+    }
+
+    fun getLlmMaxTokens(): Int = userInfoPrefs.getInt(KEY_LLM_MAX_TOKENS, LLM_DEFAULT_MAX_TOKENS)
+
+    fun setLlmMaxTokens(tokens: Int) {
+        userInfoPrefs.edit { putInt(KEY_LLM_MAX_TOKENS, tokens.coerceIn(64, 8192)) }
     }
 }

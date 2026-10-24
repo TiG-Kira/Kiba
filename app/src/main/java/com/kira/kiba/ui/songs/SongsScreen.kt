@@ -328,13 +328,13 @@ fun SongCard(
                 append(song.songData.artist)
                 append(" · ")
                 append(song.songData.genre)
-                if (topChart != null) {
-                    append(" · ds ")
-                    append(topChart.ds)
-                }
             },
             startAction = {
-                CoverFrame(songId = song.songData.id, genre = song.songData.genre)
+                CoverFrame(
+                    songId = song.songData.id,
+                    imageUrl = song.songData.imageUrl,
+                    genre = song.songData.genre,
+                )
             },
             endActions = {
                 Column(horizontalAlignment = Alignment.End) {

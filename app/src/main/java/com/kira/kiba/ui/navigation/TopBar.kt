@@ -23,6 +23,7 @@ fun KibaTopBar(
     scrollBehavior: ScrollBehavior,
     modifier: Modifier = Modifier,
     largeTitle: String = title,
+    navigationIcon: @Composable () -> Unit = {},
     actions: @Composable RowScope.() -> Unit = {},
 ) {
     GlassTopAppBar(
@@ -31,8 +32,21 @@ fun KibaTopBar(
         modifier = modifier,
         backdrop = LocalGlassTopAppBarBackdrop.current,
         scrollBehavior = scrollBehavior,
+        navigationIcon = navigationIcon,
         actions = actions,
     )
+}
+
+/** 顶栏返回按钮（glass 系，二级页面用）。 */
+@Composable
+fun KibaBackAction(onClick: () -> Unit) {
+    GlassIconButton(onClick = onClick) {
+        Icon(
+            MiuixGlassIcons.Regular.Back,
+            contentDescription = "返回",
+            tint = MiuixTheme.colorScheme.onSurface,
+        )
+    }
 }
 
 /** 顶栏搜索按钮（glass 系）。 */

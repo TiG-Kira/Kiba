@@ -2,11 +2,13 @@ package com.kira.kiba.core.agent
 
 import android.content.Context
 import android.util.Log
+import com.kira.kiba.core.account.DivingFishAccount
 import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.db.entity.ChartEntity
 import com.kira.kiba.core.db.entity.RecordEntity
 import com.kira.kiba.core.db.entity.SongDataEntity
 import com.kira.kiba.core.model.DifficultyType
+import com.kira.kiba.core.utils.SpUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -19,13 +21,13 @@ import kotlin.random.Random
 /**
  * Kiba Agent 引擎。
  *
- * 能力（全部本地优先，断网/未授权自动降级）：
+ * 能力（本地优先，断网/未授权自动降级）：
  * - Best 50 查询（本地成绩缓存，未登录引导登录）；
  * - Rating 推分推荐（理论 ra 上限 - 当前 ra 的增益排序 + 未打高定数谱面）；
  * - 随机选曲（本地曲库）；
  * - 按别名/ID/标题查歌曲（本地曲库 + alias 表）；
- * - 舞萌游玩建议（内置攻略）；
- * - 兜底：联网搜索（DuckDuckGo），网络异常时明确降级提示。
+ * - 开放问题：LLM 优先（任意 OpenAI 兼容端点，带本地数据上下文），
+ *   失败降级为本地攻略 / 联网搜索（DuckDuckGo）。
  */
 class KibaAgent(private val context: Context) {
 
@@ -56,18 +58,63 @@ class KibaAgent(private val context: Context) {
         return when {
             isLogin(text) -> AgentReply(
                 "账户相关操作请在「我」页面完成：\n" +
-                    "· 未绑定：点击顶部卡片 →「打开授权页面」，在浏览器完成水鱼 OAuth 授权后回填确认码；\n" +
-                    "· 已绑定：在「我」页面可查看实时 Rating、Best 50，也可解除绑定。"
+                    "· 未登录：点击顶部卡片 →「OAuth 授权登录」（推荐）或「账号密码登录」；\n" +
+                    "· 已登录：在「我」页面可查看实时 Rating、Best 50，也可退出登录。"
             )
 
             isBest50(text) -> best50()
             isPushRating(text) -> pushRating()
             isRandom(text) -> randomSong()
-            isAdvice(text) -> AgentReply(ADVICE_TEXT)
             isHelp(text) -> AgentReply(HELP_TEXT)
             isSongQuery(text) -> querySong(text)
+            else -> openEnded(text)
+        }
+    }
+
+    /**
+     * 开放问题：LLM 优先（系统提示词 + 本地数据上下文 + 用户输入）；
+     * 未配置 / 调用失败 → 降级为本地攻略或联网搜索，并明确告知降级。
+     */
+    private suspend fun openEnded(text: String): AgentReply {
+        if (KibaLlm.isConfigured()) {
+            val messages = listOf(
+                KibaLlm.Message.system(SpUtil.getLlmSystemPrompt() + "\n\n" + localContext()),
+                KibaLlm.Message.user(text),
+            )
+            KibaLlm.chat(messages)
+                .onSuccess { return AgentReply(it) }
+                .onFailure { e -> Log.w(TAG, "llm chat failed: ${e.message}", e) }
+        }
+        return when {
+            isAdvice(text) -> AgentReply(
+                if (KibaLlm.isConfigured()) {
+                    "LLM 调用失败（可能是网络或配置问题），已降级为本地攻略：\n\n" + ADVICE_TEXT
+                } else {
+                    ADVICE_TEXT
+                }
+            )
+
             else -> webFallback(text)
         }
+    }
+
+    /** 本地数据上下文：注入 LLM 的 maimai 事实（登录态 / Rating / 曲库版本），防止编造。 */
+    private suspend fun localContext(): String = withContext(Dispatchers.IO) {
+        val sb = StringBuilder()
+        sb.append("【本地数据上下文】\n")
+        val account = DivingFishAccount.state.value
+        if (account.bound) {
+            sb.append("· 查分器已登录：${account.nickname.ifBlank { "用户" }}，DX Rating ${account.rating}，")
+            sb.append("本地成绩 ${account.recordCount} 条\n")
+        } else {
+            sb.append("· 查分器未登录（Best 50 / Rating 类问题应引导用户去「我」页面登录）\n")
+        }
+        runCatching {
+            val songs = AppDataBase.getInstance().songDao().getAllSongsList()
+            sb.append("· 本地曲库版本 ${SpUtil.getDataVersion().ifBlank { "未知" }}，共 ${songs.size} 首歌\n")
+        }
+        sb.append("回答涉及玩家本人数据时，以上下文为准，不知道就说不知道。")
+        sb.toString()
     }
 
     // ---------- 意图识别 ----------
@@ -180,7 +227,7 @@ class KibaAgent(private val context: Context) {
             unplayed.forEach { c ->
                 sb.append(
                     "· ${titleById[c.songId] ?: "id ${c.songId}"} " +
-                        "[${difficultyLabel(c.difficultyType.ordinal)} ${c.level}] ds ${c.ds}\n"
+                        "[${difficultyLabel(c.difficultyType.ordinal)} ${c.level}] 定数 ${c.ds}\n"
                 )
             }
         }
@@ -202,7 +249,7 @@ class KibaAgent(private val context: Context) {
         sb.append("艺术家：${song.artist}　流派：${song.genre}　类型：${song.type}\n")
         if (top != null) {
             sb.append(
-                "最高难度：[${difficultyLabel(top.difficultyType.ordinal)} ${top.level}] ds ${top.ds}\n"
+                "最高难度：[${difficultyLabel(top.difficultyType.ordinal)} ${top.level}] 定数 ${top.ds}\n"
             )
         }
         sb.append("祝 greatness！")
@@ -266,7 +313,7 @@ class KibaAgent(private val context: Context) {
             } else {
                 charts.sortedBy { it.difficultyType.ordinal }.forEach { c ->
                     sb.append(
-                        "  [${difficultyLabel(c.difficultyType.ordinal)} ${c.level}] ds ${c.ds}" +
+                        "  [${difficultyLabel(c.difficultyType.ordinal)} ${c.level}] 定数 ${c.ds}" +
                             "　谱师：${c.charter}\n"
                     )
                 }
@@ -338,6 +385,8 @@ class KibaAgent(private val context: Context) {
     }
 
     companion object {
+        private const val TAG = "KibaAgent"
+
         private val HELP_TEXT = """
             我是 Kiba Agent，我会这些：
             · 「我的 Best 50」——查分器 Best 50 与合计 ra；
@@ -345,9 +394,11 @@ class KibaAgent(private val context: Context) {
             · 「随机来一首」——本地曲库随机选曲（含定数/谱师）；
             · 「查歌 <歌名/别名/ID>」——歌曲与谱面详情；
             · 「舞萌建议」——通用游玩与推分攻略；
-            · 其他问题——我会尝试联网搜索（DuckDuckGo）。
+            · 配置了 LLM（设置 → Agent 模型）后，其他问题由 AI 直接回答；
+            · 未配置 LLM 时，我会尝试联网搜索（DuckDuckGo）。
 
-            账户授权：成绩类功能需要在「我」页面登录查分器账户；
+            账户授权：成绩类功能需要在「我」页面登录查分器账户
+            （OAuth 授权或账号密码两种方式）；
             未登录或断网时，我会明确提示并降级为本地能力。
         """.trimIndent()
 

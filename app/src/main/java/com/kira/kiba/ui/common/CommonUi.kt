@@ -17,21 +17,26 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
+import coil.compose.SubcomposeAsyncImage
 import com.kira.kiba.R
 import com.kira.kiba.core.model.DifficultyType
 import com.kira.kiba.core.network.MaimaiDataClient
 import com.kira.kiba.ui.navigation.LocalNavBarBottomPadding
+import com.kira.kiba.ui.navigation.LocalSystemNavBarBottom
 import com.kira.kiba.ui.navigation.LocalTopBarClearance
 import top.yukonga.miuix.kmp.basic.Card
+import top.yukonga.miuix.kmp.basic.Icon
+import top.yukonga.miuix.kmp.icon.glass.*
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
@@ -55,49 +60,116 @@ fun SectionTitle(
 /**
  * 页面滚动容器的 contentPadding：顶部顶栏 clearance + 底部悬浮底栏留白 + 两侧 16dp。
  * 挂在 LazyColumn 的 contentPadding 上（可被滚走），不是页面根 padding（死带）。
+ *
+ * @param withNavBar false 用于二级页面（无悬浮底栏）：底部只留系统导航栏 inset。
  */
 @Composable
 fun pageContentPadding(
     topExtra: androidx.compose.ui.unit.Dp = 8.dp,
     bottomExtra: androidx.compose.ui.unit.Dp = 16.dp,
+    withNavBar: Boolean = true,
 ): PaddingValues = PaddingValues(
     start = 16.dp,
     end = 16.dp,
     top = LocalTopBarClearance.current + topExtra,
-    bottom = LocalNavBarBottomPadding.current + bottomExtra,
+    bottom = if (withNavBar) {
+        LocalNavBarBottomPadding.current + bottomExtra
+    } else {
+        LocalSystemNavBarBottom.current + bottomExtra
+    },
 )
 
-/** 舞萌特色：方形封面框（genre 描边 + 圆角内嵌封面）。 */
+/** 流派 → 描边色资源（舞萌特色分类色）。 */
+private fun genreStrokeRes(genre: String): Int = when (genre) {
+    "流行&动漫" -> R.color.pop_stroke
+    "niconico & VOCALOID" -> R.color.vocal_stroke
+    "东方Project" -> R.color.touhou_stroke
+    "其他游戏" -> R.color.variety_stroke
+    "舞萌" -> R.color.maimai_stroke
+    "宴会場" -> R.color.utage_stroke
+    else -> R.color.gekichuni_stroke
+}
+
+/**
+ * 歌曲封面加载（双源级联，对齐原版 MaimaiData）：
+ * 1. 官网图床 `maimaidx.jp` + songdata.json 的 imageUrl（原版列表同源，覆盖最全）；
+ * 2. 水鱼 CDN `diving-fish.com/covers/%05d.png`（原版详情同源；**五位数补零**，
+ *    漏补老歌全部 404 白图）；
+ * 3. 都失败 → 流派色块 + 音符占位。
+ */
 @Composable
 fun CoverFrame(
     songId: Int,
+    imageUrl: String,
     genre: String,
     modifier: Modifier = Modifier,
     size: androidx.compose.ui.unit.Dp = 52.dp,
 ) {
-    val stroke = when (genre) {
-        "流行&动漫" -> R.color.pop_stroke
-        "niconico & VOCALOID" -> R.color.vocal_stroke
-        "东方Project" -> R.color.touhou_stroke
-        "其他游戏" -> R.color.variety_stroke
-        "舞萌" -> R.color.maimai_stroke
-        "宴会場" -> R.color.utage_stroke
-        else -> R.color.gekichuni_stroke
+    val stroke = colorResource(genreStrokeRes(genre))
+    val primaryUrl = remember(songId, imageUrl) {
+        if (imageUrl.isNotBlank()) MaimaiDataClient.IMAGE_BASE_URL + imageUrl else null
     }
+    val fallbackUrl = remember(songId) {
+        MaimaiDataClient.DIVING_FISH_COVER_URL + "%05d".format(songId) + ".png"
+    }
+
     Box(
         modifier = modifier
             .size(size)
             .clip(RoundedCornerShape(10.dp))
-            .border(2.dp, colorResource(stroke), RoundedCornerShape(10.dp))
+            .border(2.dp, stroke, RoundedCornerShape(10.dp))
     ) {
-        AsyncImage(
-            model = MaimaiDataClient.DIVING_FISH_COVER_URL + "$songId.png",
+        val inner = Modifier
+            .fillMaxSize()
+            .padding(2.dp)
+            .clip(RoundedCornerShape(8.dp))
+        when {
+            primaryUrl != null -> SubcomposeAsyncImage(
+                model = primaryUrl,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                loading = { CoverPlaceholder(stroke = stroke, size = size, modifier = inner) },
+                error = {
+                    SubcomposeAsyncImage(
+                        model = fallbackUrl,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        loading = { CoverPlaceholder(stroke = stroke, size = size, modifier = inner) },
+                        error = { CoverPlaceholder(stroke = stroke, size = size, modifier = inner) },
+                        modifier = inner,
+                    )
+                },
+                modifier = inner,
+            )
+
+            else -> SubcomposeAsyncImage(
+                model = fallbackUrl,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                loading = { CoverPlaceholder(stroke = stroke, size = size, modifier = inner) },
+                error = { CoverPlaceholder(stroke = stroke, size = size, modifier = inner) },
+                modifier = inner,
+            )
+        }
+    }
+}
+
+/** 封面占位：流派色半透明底 + 音符。 */
+@Composable
+private fun CoverPlaceholder(
+    stroke: Color,
+    size: androidx.compose.ui.unit.Dp,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier.background(stroke.copy(alpha = 0.15f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = MiuixGlassIcons.Regular.Music,
             contentDescription = null,
-            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(2.dp)
-                .clip(RoundedCornerShape(8.dp)),
+            tint = stroke,
+            modifier = Modifier.size(size / 2.6f),
         )
     }
 }
@@ -119,6 +191,16 @@ fun difficultyLabel(type: DifficultyType): String = when (type) {
     DifficultyType.EXPERT -> "EXPERT"
     DifficultyType.MASTER -> "MASTER"
     DifficultyType.REMASTER -> "Re:MASTER"
+    else -> "UTAGE"
+}
+
+/** levelIndex（RecordEntity 口径）→ 短标签：0=BASIC … 4=Re:MASTER，其余 UTAGE。 */
+fun difficultyLabel(index: Int): String = when (index) {
+    0 -> "BASIC"
+    1 -> "ADVANCED"
+    2 -> "EXPERT"
+    3 -> "MASTER"
+    4 -> "Re:MASTER"
     else -> "UTAGE"
 }
 
