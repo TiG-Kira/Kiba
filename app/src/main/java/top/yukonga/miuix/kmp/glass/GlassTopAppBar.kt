@@ -12,6 +12,7 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -258,6 +259,9 @@ fun GlassTopAppBar(
     actions: @Composable RowScope.() -> Unit = {},
     bottomContent: @Composable () -> Unit = {},
     onBlankTap: (() -> Unit)? = null,
+    background: (@Composable BoxScope.() -> Unit)? = null,
+    /** 展开态最小额外展开高度（px），用于封面背景完整露出。 */
+    minExpansionPx: Int = 0,
 ) {
     val isContentScrolled by remember(scrollBehavior) {
         derivedStateOf { scrollBehavior?.state?.let { it.contentOffset < 0f } ?: true }
@@ -291,6 +295,8 @@ fun GlassTopAppBar(
         actions = actions,
         bottomContent = bottomContent,
         onBlankTap = onBlankTap,
+        background = background,
+        minExpansionPx = minExpansionPx,
     )
 }
 
@@ -340,6 +346,14 @@ fun GlassTopAppBar(
     bottomContent: @Composable () -> Unit = {},
     onBlankTap: (() -> Unit)? = null,
     rampFromOverlay: Boolean = false,
+    /**
+     * 展开态的自定义背景（如歌曲详情页的封面大图），画在背板 band 之下。
+     * 随 [GlassTopAppBarDefaults.RampDistance] 的同一个 mask 时钟淡出：
+     * 未滚动时 alpha=1 全显，滚动（折叠）后淡出让位于背板 band。
+     */
+    background: (@Composable BoxScope.() -> Unit)? = null,
+    /** 展开态最小额外展开高度（px），用于封面背景完整露出。 */
+    minExpansionPx: Int = 0,
 ) {
     // Buttons carry their own horizontal margin (see [GlassTopAppBarDefaults.ButtonPadding]), so
     // the trailing row needs no spacing of its own; the wrapper only pins them to the end.
@@ -387,6 +401,15 @@ fun GlassTopAppBar(
         .takeIf { keepButtonMaterial && buttonBackdrop != null }
 
     Box(modifier = modifier) {
+        // 展开态自定义背景：与背板 band 共用 mask 时钟，折叠时封面淡出、背板淡入。
+        if (background != null) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .graphicsLayer { this.alpha = 1f - maskProgress.value.coerceIn(0f, 1f) },
+                content = background,
+            )
+        }
         val overhangPx = with(LocalDensity.current) { bandOverhang.toPx() }
         Box(
             modifier = Modifier
@@ -436,6 +459,7 @@ fun GlassTopAppBar(
                 actions = actionsWithPadding,
                 bottomContent = bottomContent,
                 onBlankTap = onBlankTap,
+                minExpansionPx = minExpansionPx,
             )
         }
     }

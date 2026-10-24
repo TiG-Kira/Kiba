@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -24,6 +25,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,6 +50,7 @@ import com.kira.kiba.ui.common.EmptyStateCard
 import com.kira.kiba.ui.common.difficultyColor
 import com.kira.kiba.ui.common.difficultyLabel
 import com.kira.kiba.ui.common.pageContentPadding
+import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.Card
@@ -83,11 +86,18 @@ fun SongsScreen(
     var searchVisible by remember { mutableStateOf(false) }
     val searchFocusRequester = remember { FocusRequester() }
     var lastTrigger by remember { mutableStateOf(0) }
+    // 列表滚动状态：搜索按钮点击时用它做「回到顶部」动画
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(searchTrigger) {
         if (searchTrigger > 0 && searchTrigger != lastTrigger) {
             lastTrigger = searchTrigger
             searchVisible = !searchVisible
+            // 回到页面顶部（带动画）——搜索栏在列表首位，滚回顶部才看得见
+            scope.launch {
+                listState.animateScrollToItem(0)
+            }
             if (searchVisible) {
                 // 展开后聚焦输入框
                 runCatching { searchFocusRequester.requestFocus() }
@@ -150,6 +160,7 @@ fun SongsScreen(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
     ) { padding ->
         LazyColumn(
+            state = listState,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),

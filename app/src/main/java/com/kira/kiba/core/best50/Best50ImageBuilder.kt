@@ -122,6 +122,7 @@ object Best50ImageBuilder {
         runCatching {
             val base = decode(context, "kiba_b50")
                 ?.copy(Bitmap.Config.ARGB_8888, true)
+                ?.apply { setDensity(Bitmap.DENSITY_NONE) }
                 ?: run {
                     lastError = "底板 b50.png 缺失"
                     return@withContext null
@@ -218,6 +219,7 @@ object Best50ImageBuilder {
 
         // DX Rating 底板 + 逐位数字（右对齐 5 位）
         val baseImg = decode(context, raAsset(rating))?.copy(Bitmap.Config.ARGB_8888, true)
+            ?.apply { setDensity(Bitmap.DENSITY_NONE) }
         if (baseImg != null) {
             val c = Canvas(baseImg)
             var value = rating
@@ -243,6 +245,7 @@ object Best50ImageBuilder {
         if (plateMask != null) {
             val namePlate = Bitmap.createScaledBitmap(plateMask, 285, 40, true)
                 .copy(Bitmap.Config.ARGB_8888, true)
+                .apply { setDensity(Bitmap.DENSITY_NONE) }
             val c = Canvas(namePlate)
             val spaced = toHalfWidth(nickname).toList().joinToString(" ")
             drawText(c, spaced, 12f, 3f, 28f, Color.BLACK, font(context, "HOS.ttf"))
@@ -254,6 +257,7 @@ object Best50ImageBuilder {
 
         // 称号条
         val shougou = decode(context, "kiba_ui_cmn_shougou_rainbow")?.copy(Bitmap.Config.ARGB_8888, true)
+            ?.apply { setDensity(Bitmap.DENSITY_NONE) }
         if (shougou != null) {
             val c = Canvas(shougou)
             val hos = font(context, "HOS.ttf")
@@ -286,23 +290,23 @@ object Best50ImageBuilder {
         num: Int,
         listSize: Int,
     ) {
-        val tile = Bitmap.createBitmap(ITEM_W, ITEM_H, Bitmap.Config.ARGB_8888)
+        val tile = newBitmap(ITEM_W, ITEM_H)
         val c = Canvas(tile)
 
         // 背景封面
         val cover = fetchCover(context, r.songId)
         val bg = if (cover != null) {
-            val scaled = Bitmap.createScaledBitmap(cover, ITEM_W, (cover.height * ITEM_W / cover.width), true)
+            val scaled = scaleToWidth(cover, ITEM_W)
             darken(blur(cropCenter(scaled, ITEM_W, ITEM_H)), 0.72f)
         } else {
             val noimage = decode(context, "kiba_noimage")
             if (noimage != null) {
                 cropCenter(
-                    Bitmap.createScaledBitmap(noimage, ITEM_W, (noimage.height * ITEM_W / noimage.width), true),
+                    scaleToWidth(noimage, ITEM_W),
                     ITEM_W, ITEM_H,
                 )
             } else {
-                Bitmap.createBitmap(ITEM_W, ITEM_H, Bitmap.Config.ARGB_8888)
+                newBitmap(ITEM_W, ITEM_H)
             }
         }
         c.drawBitmap(bg, 0f, 0f, null)
@@ -385,7 +389,7 @@ object Best50ImageBuilder {
     /** 空位（上游用 cover/1000.png 铺底，这里退化为 noimage）。 */
     private fun drawEmptyTile(context: Context, canvas: Canvas, x: Int, y: Int) {
         val noimage = decode(context, "kiba_noimage") ?: return
-        val scaled = Bitmap.createScaledBitmap(noimage, ITEM_W, (noimage.height * ITEM_W / noimage.width), true)
+        val scaled = scaleToWidth(noimage, ITEM_W)
         val tile = blur(cropCenter(scaled, ITEM_W, ITEM_H))
         applyAlphaMask(context, tile)
         canvas.drawBitmap(tile, x.toFloat(), y.toFloat(), null)
@@ -399,6 +403,12 @@ object Best50ImageBuilder {
      * 必须 inMutable=true：`decodeResource` 默认返回不可变位图，
      * 直接 `Canvas(bitmap)` 会抛 `IllegalStateException: Immutable bitmap passed to Canvas constructor`
      * （Rating.png / 小对话框 / 称号条 都要在上面写字）。
+     *
+     * 同时把 density 归零（`DENSITY_NONE`）：`res/drawable` 里的 PNG 没有 dpi 限定，
+     * 资源密度是 mdpi(160)，而 `Bitmap.createBitmap()` 建的中间图是设备密度（如 xxhdpi=480）。
+     * `Canvas.drawBitmap` 在两者密度不同时会按 `canvasDensity / bitmapDensity` 自动缩放
+     * （160/480 = 1/3），导致整格 246×132 被缩成 82×44、元素挤成一团。
+     * density 归零后该缩放逻辑直接跳过（canvasDensity == 0），像素级 1:1 绘制。
      */
     private fun decode(context: Context, name: String): Bitmap? = runCatching {
         val id = context.resources.getIdentifier(name, "drawable", context.packageName)
@@ -411,9 +421,33 @@ object Best50ImageBuilder {
             inMutable = true
             inScaled = false
         }
-        BitmapFactory.decodeResource(context.resources, id, opts)
+        val bmp = BitmapFactory.decodeResource(context.resources, id, opts)
             ?: BitmapFactory.decodeResource(context.resources, id)?.copy(Bitmap.Config.ARGB_8888, true)
+            ?: return null
+        bmp.setDensity(Bitmap.DENSITY_NONE)
+        bmp
     }.getOrNull()
+
+    /** 新建位图时统一 density=none，避免被 Canvas 按密度自动缩放。 */
+    private fun newBitmap(w: Int, h: Int): Bitmap =
+        Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).apply {
+            setDensity(Bitmap.DENSITY_NONE)
+        }
+
+    /**
+     * 缩放并强制 density=none。
+     * `createScaledBitmap` 返回不可变位图，`setDensity` 对不可变位图会抛异常，
+     * 所以这里先 copy 成可变副本再改 density。
+     */
+    private fun scale(src: Bitmap, factor: Float): Bitmap {
+        val w = (src.width * factor).roundToInt().coerceAtLeast(1)
+        val h = (src.height * factor).roundToInt().coerceAtLeast(1)
+        val scaled = Bitmap.createScaledBitmap(src, w, h, true)
+        if (scaled.density == Bitmap.DENSITY_NONE) return scaled
+        return scaled.copy(Bitmap.Config.ARGB_8888, true).apply {
+            setDensity(Bitmap.DENSITY_NONE)
+        }
+    }
 
     private val fontCache = mutableMapOf<String, Typeface?>()
 
@@ -422,15 +456,23 @@ object Best50ImageBuilder {
             runCatching { Typeface.createFromAsset(context.assets, "fonts/$assetName") }.getOrNull()
         }
 
-    private fun scale(src: Bitmap, factor: Float): Bitmap {
-        val w = (src.width * factor).roundToInt().coerceAtLeast(1)
-        val h = (src.height * factor).roundToInt().coerceAtLeast(1)
-        return Bitmap.createScaledBitmap(src, w, h, true)
+    /**
+     * 等比缩放到指定宽度（density 归零）。
+     * 上游是 `temp.resize(itemW / temp.size[0])`，即按宽度比例缩放。
+     */
+    private fun scaleToWidth(src: Bitmap, targetW: Int): Bitmap {
+        val w = targetW.coerceAtLeast(1)
+        val h = (src.height * (w.toFloat() / src.width)).roundToInt().coerceAtLeast(1)
+        val scaled = Bitmap.createScaledBitmap(src, w, h, true)
+        if (scaled.density == Bitmap.DENSITY_NONE) return scaled
+        return scaled.copy(Bitmap.Config.ARGB_8888, true).apply {
+            setDensity(Bitmap.DENSITY_NONE)
+        }
     }
 
     /** 居中裁切（上游 crop 到 itemH）。 */
     private fun cropCenter(src: Bitmap, w: Int, h: Int): Bitmap {
-        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val out = newBitmap(w, h)
         val c = Canvas(out)
         val srcRect = if (src.width * h > w * src.height) {
             val cropW = (src.height * w.toFloat() / h).roundToInt()
@@ -452,7 +494,7 @@ object Best50ImageBuilder {
         var pixels = IntArray(w * h)
         src.getPixels(pixels, 0, w, 0, 0, w, h)
         repeat(2) { pixels = boxBlur(pixels, w, h, 2) }
-        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val out = newBitmap(w, h)
         out.setPixels(pixels, 0, w, 0, 0, w, h)
         return out
     }
@@ -510,7 +552,7 @@ object Best50ImageBuilder {
             val b = ((c and 0xFF) * factor).toInt().coerceIn(0, 255)
             pixels[i] = (a shl 24) or (r shl 16) or (g shl 8) or b
         }
-        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val out = newBitmap(w, h)
         out.setPixels(pixels, 0, w, 0, 0, w, h)
         return out
     }
@@ -522,6 +564,8 @@ object Best50ImageBuilder {
             alphaSrc
         } else {
             Bitmap.createScaledBitmap(alphaSrc, tile.width, tile.height, true)
+                .copy(Bitmap.Config.ARGB_8888, true)
+                .apply { setDensity(Bitmap.DENSITY_NONE) }
         }
         val mw = mask.width
         val mh = mask.height
@@ -662,6 +706,8 @@ object Best50ImageBuilder {
                     if (!resp.isSuccessful) return@use null
                     val bytes = resp.body?.bytes() ?: return@use null
                     BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                        ?.let { it.copy(Bitmap.Config.ARGB_8888, true) }
+                        ?.apply { setDensity(Bitmap.DENSITY_NONE) }
                 }
             }.getOrNull()
             if (bmp != null) return bmp

@@ -19,7 +19,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -34,9 +33,7 @@ import com.kira.kiba.core.db.entity.ChartEntity
 import com.kira.kiba.core.db.entity.RecordEntity
 import com.kira.kiba.core.db.entity.SongDataEntity
 import com.kira.kiba.core.stats.SongRating
-import com.kira.kiba.core.utils.SpUtil
 import com.kira.kiba.ui.common.ChartTypeChip
-import com.kira.kiba.ui.common.CoverFrame
 import com.kira.kiba.ui.common.DifficultyChip
 import com.kira.kiba.ui.common.EmptyStateCard
 import com.kira.kiba.ui.common.HGap
@@ -48,11 +45,9 @@ import com.kira.kiba.ui.common.SyncBadge
 import com.kira.kiba.ui.common.difficultyColor
 import com.kira.kiba.ui.common.difficultyLabel
 import com.kira.kiba.ui.common.pageContentPadding
-import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
-import top.yukonga.miuix.kmp.basic.Switch
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.utils.PressFeedbackType
@@ -120,55 +115,22 @@ fun SongDetailScreen(
             contentPadding = pageContentPadding(withNavBar = false),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // ── 头部：封面 + 基础信息 + 收藏 ──
-            item(key = "header") {
+            // ── tag 显示区：曲种 / ID / BPM / 流派 / 版本（封面、歌名、艺术家、收藏已上移到魔改 TopBar）──
+            item(key = "tags") {
                 Card(modifier = Modifier.fillMaxWidth()) {
-                    Row(modifier = Modifier.padding(top = 14.dp, start = 16.dp, end = 16.dp)) {
-                        CoverFrame(
-                            songId = currentSong.id,
-                            imageUrl = currentSong.imageUrl,
-                            genre = currentSong.genre,
-                            size = 88.dp,
-                        )
-                        Spacer(Modifier.width(14.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = currentSong.title,
-                                style = MiuixTheme.textStyles.headline1,
-                                color = MiuixTheme.colorScheme.onSurface,
-                            )
-                            VGap(4.dp)
-                            Text(
-                                text = currentSong.artist,
-                                style = MiuixTheme.textStyles.body2,
-                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                            )
-                            VGap(6.dp)
-                            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                ChartTypeChip(type = currentSong.type)
-                                MetaChip("ID ${currentSong.id}")
-                                MetaChip("BPM ${currentSong.bpm}")
-                                MetaChip(currentSong.genre)
-                                MetaChip("版本 ${currentSong.from}")
-                            }
-                        }
+                    FlowRow(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        ChartTypeChip(type = currentSong.type)
+                        MetaChip("ID ${currentSong.id}")
+                        MetaChip("BPM ${currentSong.bpm}")
+                        MetaChip(currentSong.genre)
+                        MetaChip("版本 ${currentSong.from}")
                     }
-                    var favor by remember(currentSong.id) {
-                        mutableStateOf(SpUtil.isFavorite(currentSong.id.toString()))
-                    }
-                    BasicComponent(
-                        title = "收藏",
-                        summary = if (favor) "已收藏（可在曲目页筛选收藏）" else "未收藏",
-                        endActions = {
-                            Switch(
-                                checked = favor,
-                                onCheckedChange = {
-                                    favor = it
-                                    SpUtil.setFavorite(currentSong.id.toString(), it)
-                                },
-                            )
-                        },
-                    )
                 }
             }
 

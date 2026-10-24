@@ -3,6 +3,7 @@ package com.kira.kiba.ui.navigation
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.glass.GlassIconButton
@@ -37,14 +38,17 @@ fun KibaTopBar(
     )
 }
 
-/** 顶栏返回按钮（glass 系，二级页面用）。 */
+/** 顶栏返回按钮（glass 系，二级页面用）。[tint] 供封面背景等自定义底色场景切换字色。 */
 @Composable
-fun KibaBackAction(onClick: () -> Unit) {
+fun KibaBackAction(
+    tint: Color = MiuixTheme.colorScheme.onSurface,
+    onClick: () -> Unit,
+) {
     GlassIconButton(onClick = onClick) {
         Icon(
             MiuixGlassIcons.Regular.Back,
             contentDescription = "返回",
-            tint = MiuixTheme.colorScheme.onSurface,
+            tint = tint,
         )
     }
 }

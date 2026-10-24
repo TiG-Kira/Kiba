@@ -145,7 +145,11 @@ fun AgentScreen(
         scope.launch {
             val reply = runCatching {
                 agent.handleStream(trimmed) { chunk ->
-                    AgentSession.appendToLast(text = chunk.text, reasoning = chunk.reasoning)
+                    AgentSession.appendToLast(
+                        text = chunk.text,
+                        reasoning = chunk.reasoning,
+                        reset = chunk.reset,
+                    )
                 }
             }.getOrElse {
                 KibaAgent.AgentReply("出错了：${it.message ?: "未知错误"}", skills = KibaAgent.SKILLS)
@@ -345,12 +349,21 @@ private fun SkillStrip(
 @Composable
 private fun ChatBubble(msg: AgentSession.Turn, onOpenSong: (Int) -> Unit) {
     Column(modifier = Modifier.fillMaxWidth()) {
+        // 正文与思考内容去重：部分模型把同一段话同时塞进 content 和 reasoning_content，
+        // 不去重的话「深度思考」卡片和正文气泡会显示一模一样的两段话。
+        val bodyText = remember(msg.text, msg.reasoning) {
+            if (msg.reasoning.isNotBlank() && msg.text.trim() == msg.reasoning.trim()) {
+                ""
+            } else {
+                msg.text
+            }
+        }
         // 深度思考单独成卡，不和正文混在一起
         if (msg.reasoning.isNotBlank()) {
             ReasoningCard(text = msg.reasoning, streaming = msg.streaming)
             Spacer(Modifier.height(8.dp))
         }
-        if (msg.text.isNotBlank()) {
+        if (bodyText.isNotBlank()) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = if (msg.fromUser) Arrangement.End else Arrangement.Start,
@@ -374,7 +387,7 @@ private fun ChatBubble(msg: AgentSession.Turn, onOpenSong: (Int) -> Unit) {
                         .padding(horizontal = 12.dp, vertical = 9.dp),
                 ) {
                     Text(
-                        text = msg.text,
+                        text = bodyText,
                         style = MiuixTheme.textStyles.body2,
                         color = MiuixTheme.colorScheme.onSurface,
                     )

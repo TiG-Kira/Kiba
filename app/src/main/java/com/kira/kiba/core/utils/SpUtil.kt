@@ -268,7 +268,12 @@ object SpUtil {
             "  {\"name\":\"random_filtered\",\"arguments\":{\"condition\":\"dx 紫 3\"}}\n" +
             "注意：带参数的技能请在 arguments 里带上用户提到的条件；" +
             "若用户没给条件，先用自然语言追问，或按最宽松的条件调用一次。\n" +
-            "工具返回的内容是本地真实数据，请基于它组织回答；工具未返回数据时不要臆造。"
+            "工具返回的内容是本地真实数据，请基于它组织回答；工具未返回数据时不要臆造。\n\n" +
+            "【如果接口不支持 function calling】就直接把下面这样的 JSON 单独输出一行，Kiba 会识别并执行：\n" +
+            "  {\"name\":\"best50\",\"arguments\":{}}\n" +
+            "【必须给结论】调用工具拿到数据后，必须用中文给出最终的、针对用户实际情况的回答。" +
+            "绝对不要只输出「我打算调用 best50 和 push_rating」这类计划性描述就结束——" +
+            "那样用户拿不到任何有用的信息。"
 
     fun isLlmEnabled(): Boolean = userInfoPrefs.getBoolean(KEY_LLM_ENABLED, false)
 

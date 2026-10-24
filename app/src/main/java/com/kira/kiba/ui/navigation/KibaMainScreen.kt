@@ -46,6 +46,7 @@ import com.kira.kiba.ui.songdetail.ChartDetailScreen
 import com.kira.kiba.ui.tools.DxConverterScreen
 import com.kira.kiba.ui.tools.MachineUpdateScreen
 import com.kira.kiba.ui.songdetail.SongDetailScreen
+import com.kira.kiba.ui.songdetail.SongDetailTopBarSlot
 import com.kira.kiba.ui.songs.SongsScreen
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import top.yukonga.miuix.kmp.basic.Scaffold
@@ -245,6 +246,13 @@ fun KibaMainScreen() {
                                 else -> Unit
                             }
                         },
+                    )
+                } else if (sub is KibaSubPage.SongDetail) {
+                    // 歌曲详情页魔改顶栏：封面背景 + 歌名/艺术家 + 收藏 star（详见 SongDetailTopBar）
+                    SongDetailTopBarSlot(
+                        songId = sub.songId,
+                        scrollBehavior = scrollBehavior,
+                        onBack = { popPage() },
                     )
                 } else {
                     KibaTopBar(

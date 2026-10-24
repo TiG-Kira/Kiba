@@ -109,7 +109,7 @@ fun CoverFrame(
     size: androidx.compose.ui.unit.Dp = 52.dp,
 ) {
     val stroke = colorResource(genreStrokeRes(genre))
-    val candidates = remember(songId, imageUrl) { coverCandidates(songId, imageUrl) }
+    val candidates = remember(songId, imageUrl) { coverCandidateUrls(songId, imageUrl) }
 
     Box(
         modifier = modifier
@@ -165,14 +165,13 @@ private fun CoverImageChain(
     )
 }
 
-/**
- * 封面候选 URL 链：
+/** 封面候选 URL 链（公开给 TopBar 封面背景等处复用）：
  * 1. 自定义图床前缀（设置页可填，命中自己的镜像最快）；
  * 2. 水鱼 CDN `covers/%05d.png` 三种编号形态（songId / mod 10000 / mod 100000，
  *    水鱼只收录到 DX 2024 曲库，DX2025+ 新曲没有）；
  * 3. 官网图床 maimaidx.jp + 若干镜像（DX 新曲唯一来源，国内可能需镜像）。
  */
-private fun coverCandidates(songId: Int, imageUrl: String): List<String> {
+fun coverCandidateUrls(songId: Int, imageUrl: String): List<String> {
     val list = mutableListOf<String>()
 
     fun push(url: String) {

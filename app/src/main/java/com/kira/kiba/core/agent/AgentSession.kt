@@ -62,15 +62,17 @@ object AgentSession {
     /**
      * 流式输出：把增量追加到最后一条（Agent）记录上。
      * 不落盘（避免高频写 SP），流式结束后由 [finishStream] 收尾。
+     *
+     * @param reset 清空已累积的正文与思考内容（重试 / 兜底执行前丢弃上一轮的空谈）
      */
-    fun appendToLast(text: String = "", reasoning: String = "") {
+    fun appendToLast(text: String = "", reasoning: String = "", reset: Boolean = false) {
         ensureLoaded()
         val list = _turns.value
         val last = list.lastOrNull() ?: return
         if (last.fromUser) return
         _turns.value = list.dropLast(1) + last.copy(
-            text = last.text + text,
-            reasoning = last.reasoning + reasoning,
+            text = if (reset) "" else last.text + text,
+            reasoning = if (reset) "" else last.reasoning + reasoning,
             streaming = true,
         )
     }

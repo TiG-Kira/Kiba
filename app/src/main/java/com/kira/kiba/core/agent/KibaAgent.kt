@@ -101,12 +101,12 @@ class KibaAgent(private val context: Context) {
                 skills = SKILLS,
             )
         }
-        return llmWithSkills(text)
+        return runAgent(text, null)
     }
 
     /**
      * 流式聊天入口：**只走 LLM**，正文 / 思考过程通过 [onChunk] 增量回传。
-     * 流程同 [llmWithSkills]：模型可调用技能，最多 3 轮；只是每轮都流式。
+     * 流程同 [runAgent]：模型可调用技能，最多 [MAX_ROUNDS] 轮；只是每轮都流式。
      */
     suspend fun handleStream(
         input: String,
@@ -122,70 +122,7 @@ class KibaAgent(private val context: Context) {
                 skills = SKILLS,
             )
         }
-        val messages = mutableListOf(
-            KibaLlm.Message.system(
-                SpUtil.getLlmSystemPrompt() + "\n\n" + localContext() + "\n\n" + skillHint()
-            )
-        )
-        messages += AgentSession.llmHistory(maxTurns = 8)
-        messages += KibaLlm.Message.user(text)
-
-        val tools = SKILLS.map { KibaLlm.ToolDef(it.id, it.summary, it.params) }
-        var collected = AgentReply("")
-
-        repeat(3) { round ->
-            val streamed = KibaLlm.chatStream(messages, tools, onChunk)
-            if (streamed.isFailure) {
-                // 服务端不支持 SSE：退回一次性请求，结果整块回传（不影响功能）
-                val single = KibaLlm.chat(messages, tools).getOrElse {
-                    return AgentReply("LLM 调用失败：${it.message}", skills = SKILLS)
-                }
-                onChunk(KibaLlm.StreamChunk(text = single.text, reasoning = single.reasoning))
-                if (single.toolCalls.isEmpty()) {
-                    return AgentReply(single.text.ifBlank { "（模型没有返回内容）" })
-                }
-                return llmWithSkills(text)
-            }
-            val result = streamed.getOrThrow()
-            if (result.toolCalls.isEmpty()) {
-                return AgentReply(
-                    result.text.ifBlank { collected.text.ifBlank { "（模型没有返回内容）" } },
-                    songs = collected.songs,
-                    records = collected.records,
-                    skills = collected.skills,
-                    b50 = collected.b50,
-                    imageUri = collected.imageUri,
-                )
-            }
-            for (call in result.toolCalls) {
-                val reply = runToolCall(call.name, call.arguments, text)
-                collected = AgentReply(
-                    text = collected.text + reply.text,
-                    songs = collected.songs + reply.songs,
-                    records = collected.records + reply.records,
-                    skills = collected.skills + reply.skills,
-                    b50 = collected.b50 ?: reply.b50,
-                    imageUri = collected.imageUri.ifBlank { reply.imageUri },
-                )
-                messages.add(KibaLlm.Message.assistant("[调用技能 ${call.name}]"))
-                messages.add(
-                    KibaLlm.Message.user(
-                        "技能 ${call.name} 返回如下（这是本地真实数据，请据此用自然语言回答用户）：\n" + reply.text
-                    )
-                )
-            }
-            if (round == 2) {
-                return AgentReply(
-                    collected.text.ifBlank { "已完成技能调用。" },
-                    songs = collected.songs,
-                    records = collected.records,
-                    skills = collected.skills,
-                    b50 = collected.b50,
-                    imageUri = collected.imageUri,
-                )
-            }
-        }
-        return collected
+        return runAgent(text, onChunk)
     }
 
     /** 直接执行某个技能（技能卡点击专用，不经过 LLM）。 */
@@ -295,10 +232,15 @@ class KibaAgent(private val context: Context) {
     }
 
     /**
-     * LLM 工具循环：模型可调用本地技能，最多 3 轮；
+     * LLM 工具循环：模型可调用本地技能，最多 [MAX_ROUNDS] 轮；
      * 工具结果回灌后由模型总结成自然语言回答。
+     *
+     * @param onChunk 非空 → 流式（正文 / 思考过程增量回传）；空 → 一次性返回
      */
-    private suspend fun llmWithSkills(input: String): AgentReply {
+    private suspend fun runAgent(
+        input: String,
+        onChunk: (suspend (KibaLlm.StreamChunk) -> Unit)?,
+    ): AgentReply {
         val messages = mutableListOf(
             KibaLlm.Message.system(
                 SpUtil.getLlmSystemPrompt() + "\n\n" + localContext() + "\n\n" + skillHint()
@@ -309,53 +251,176 @@ class KibaAgent(private val context: Context) {
 
         val tools = SKILLS.map { KibaLlm.ToolDef(it.id, it.summary, it.params) }
         var collected = AgentReply("")
+        // 思考型模型可能把 token 全烧在 reasoning 上，正文一个字都没吐出来。
+        // 这种情况下加额重试一次，而不是把思考当答案。
+        var budget = SpUtil.getLlmMaxTokens()
+        var budgetRetried = false
+        // 已经兜底执行过的技能，避免重复调用
+        val executed = mutableSetOf<String>()
 
-        repeat(3) { round ->
-            val result = KibaLlm.chat(messages, tools).getOrElse { e ->
-                return AgentReply("LLM 调用失败：${e.message}", skills = SKILLS)
+        for (round in 0 until MAX_ROUNDS) {
+            val result = if (onChunk != null) {
+                KibaLlm.chatStream(messages, tools, maxTokens = budget, onChunk = onChunk).getOrElse {
+                    // 流式不可用（不支持 SSE / 网络错误）：退回一次性请求，结果整块回传
+                    val single = KibaLlm.chat(messages, tools, maxTokens = budget).getOrElse { e ->
+                        return AgentReply("LLM 调用失败：${e.message}", skills = SKILLS)
+                    }
+                    onChunk(KibaLlm.StreamChunk(text = single.text, reasoning = single.reasoning))
+                    single
+                }
+            } else {
+                KibaLlm.chat(messages, tools, maxTokens = budget).getOrElse { e ->
+                    return AgentReply("LLM 调用失败：${e.message}", skills = SKILLS)
+                }
             }
-            if (result.toolCalls.isEmpty()) {
-                return AgentReply(
-                    result.text.ifBlank { collected.text },
-                    songs = collected.songs,
-                    records = collected.records,
-                    skills = collected.skills,
-                    b50 = collected.b50,
-                    imageUri = collected.imageUri,
-                )
+
+            if (result.toolCalls.isNotEmpty()) {
+                // 正常路径：模型真的调了工具
+                val nativeCalls = result.toolCalls.filter { it.id.isNotBlank() }
+                val inlineCalls = result.toolCalls.filter { it.id.isBlank() }
+                val results = LinkedHashMap<KibaLlm.ToolCall, String>()
+                for (call in result.toolCalls) {
+                    val reply = runToolCall(call.name, call.arguments, input)
+                    collected = collected.merge(reply)
+                    results[call] = reply.text
+                    executed += call.name
+                }
+
+                if (nativeCalls.isNotEmpty()) {
+                    // 原生 function calling：assistant(tool_calls) + tool(tool_call_id) 成对回灌
+                    messages.add(
+                        KibaLlm.Message.assistantToolCalls(
+                            content = result.text,
+                            calls = nativeCalls,
+                            reasoning = result.reasoning,
+                        )
+                    )
+                    nativeCalls.forEach { call ->
+                        messages.add(
+                            KibaLlm.Message.toolResult(
+                                toolCallId = call.id,
+                                content = results[call].orEmpty(),
+                            )
+                        )
+                    }
+                }
+                if (inlineCalls.isNotEmpty()) {
+                    // 文本内联协议：没有 tool_call_id，只能按普通对话回灌
+                    messages.add(
+                        KibaLlm.Message.assistant(
+                            inlineCalls.joinToString("；") { "[调用技能 ${it.name}]" }
+                        )
+                    )
+                    inlineCalls.forEach { call ->
+                        messages.add(
+                            KibaLlm.Message.user(
+                                "技能 ${call.name} 返回如下（这是本地真实数据，请据此用自然语言回答用户）：\n" +
+                                    results[call].orEmpty()
+                            )
+                        )
+                    }
+                }
+
+                if (round == MAX_ROUNDS - 1) {
+                    // 轮次用尽：把已拿到的真实数据直接给用户，不再让模型继续空转
+                    return collected.copy(text = collected.text.ifBlank { "已完成技能调用。" })
+                }
+                continue
             }
-            for (call in result.toolCalls) {
-                val reply = runToolCall(call.name, call.arguments, input)
-                collected = AgentReply(
-                    text = collected.text + reply.text,
-                    songs = collected.songs + reply.songs,
-                    records = collected.records + reply.records,
-                    skills = collected.skills + reply.skills,
-                    b50 = collected.b50 ?: reply.b50,
-                    imageUri = collected.imageUri.ifBlank { reply.imageUri },
-                )
-                messages.add(KibaLlm.Message.assistant("[调用技能 ${call.name}]"))
-                messages.add(KibaLlm.Message.user("技能返回：\n" + reply.text))
+
+            // 没有工具调用 —— 看是「有答案」还是「只在空谈」
+            val answer = result.text.trim()
+            val narration = detectNarratedSkills(answer.ifBlank { result.reasoning })
+
+            if (narration.isNotEmpty() && narration.none { it in executed }) {
+                // 模型嘴上说「我打算调用 best50 / push_rating」却没真调：
+                // 直接按它点名的技能兜底执行，把真实数据拿回来再让它总结。
+                // 已流出的空谈正文先清掉，否则用户会看到一段没有结论的话。
+                onChunk?.invoke(KibaLlm.StreamChunk(reset = true))
+                val picked = narration.filter { it !in executed }
+                val results = LinkedHashMap<String, String>()
+                for (name in picked) {
+                    val reply = runToolCall(name, "", input)
+                    collected = collected.merge(reply)
+                    results[name] = reply.text
+                    executed += name
+                }
+                messages.add(KibaLlm.Message.assistant("[已执行技能 ${picked.joinToString("、")}]"))
+                picked.forEach { name ->
+                    messages.add(
+                        KibaLlm.Message.user(
+                            "技能 $name 返回如下（这是本地真实数据，请据此用自然语言回答用户）：\n" +
+                                results[name].orEmpty()
+                        )
+                    )
+                }
+                if (round == MAX_ROUNDS - 1) {
+                    return collected.copy(text = collected.text.ifBlank { "已完成技能调用。" })
+                }
+                continue
             }
-            if (round == 2) {
-                return AgentReply(
-                    collected.text.ifBlank { "已完成技能调用。" },
-                    songs = collected.songs,
-                    records = collected.records,
-                    skills = collected.skills,
-                    b50 = collected.b50,
-                    imageUri = collected.imageUri,
-                )
+
+            if (answer.isBlank() && result.reasoning.isNotBlank() && !budgetRetried) {
+                // 典型的「思考烧光 token」：正文被截没了。清掉这段思考，加额重试一次。
+                onChunk?.invoke(KibaLlm.StreamChunk(reset = true))
+                budgetRetried = true
+                budget = (budget * 2).coerceAtMost(MAX_TOKENS_CAP)
+                continue
             }
+
+            // 有答案 → 这一轮就是最终答复
+            return collected.copy(
+                text = answer.ifBlank {
+                    collected.text.ifBlank {
+                        if (result.reasoning.isNotBlank()) {
+                            "模型只输出了思考过程，没有给出结论。可以换个说法再问一次，或点上方技能卡直接使用。"
+                        } else {
+                            "（模型没有返回内容）"
+                        }
+                    }
+                }
+            )
         }
-        return AgentReply(
-            collected.text,
-            songs = collected.songs,
-            skills = collected.skills,
-            b50 = collected.b50,
-            imageUri = collected.imageUri,
-        )
+        return collected
     }
+
+    /**
+     * 检测「模型只是在描述打算调用哪些技能」。
+     *
+     * 有些模型 / 中转不支持 function calling，模型会写
+     * 「我打算调用 best50 和 push_rating 来获取数据」然后就没有下文了 ——
+     * 用户看到的是一句空话。识别出这些技能名就能兜底执行。
+     *
+     * 只在**没有真工具调用**时使用，且必须命中明确的「将要调用」语义，
+     * 避免把「根据查询结果 best50 总分是…」这种正常回答误判成空谈。
+     */
+    private fun detectNarratedSkills(text: String): List<String> {
+        if (text.isBlank()) return emptyList()
+        val lower = text.lowercase()
+        // 明确的「打算调用」语义（中英），而不是泛泛的「查询 / 获取」
+        val intentPatterns = listOf(
+            "should call", "shall call", "i'll call", "i will call", "let me call",
+            "need to call", "needs to call", "going to call", "going to invoke",
+            "i should invoke", "i'll invoke", "let me invoke", "i will invoke",
+            "打算调用", "准备调用", "应该调用", "我将调用", "我会调用", "需要调用",
+            "想要调用", "先调用", "调用一下", "调用工具", "使用工具",
+        )
+        if (intentPatterns.none { lower.contains(it) }) return emptyList()
+        return SKILLS.map { it.id }.filter { id ->
+            Regex("(?<![a-z0-9_])${Regex.escape(id)}(?![a-z0-9_])", RegexOption.IGNORE_CASE)
+                .containsMatchIn(lower)
+        }
+    }
+
+    /** 合并两次回复的产物（技能数据 / 卡片）。 */
+    private fun AgentReply.merge(other: AgentReply): AgentReply = AgentReply(
+        text = text + other.text,
+        songs = songs + other.songs,
+        records = records + other.records,
+        skills = skills + other.skills,
+        b50 = b50 ?: other.b50,
+        imageUri = imageUri.ifBlank { other.imageUri },
+    )
 
     /** 给 LLM 的技能说明（含每个技能的入参与调用示例）。 */
     private fun skillHint(): String = buildString {
@@ -376,7 +441,12 @@ class KibaAgent(private val context: Context) {
                 "例：查歌 → {\"name\":\"song_query\",\"arguments\":{\"query\":\"群青\"}}；" +
                 "定数区间 → {\"name\":\"ds_query\",\"arguments\":{\"min\":12,\"max\":13}}；" +
                 "分数线 → {\"name\":\"score_line\",\"arguments\":{\"target\":99.5,\"difficulty\":\"紫\"}}。\n" +
-                "用户没给足参数时，要么用自然语言追问，要么用最宽松的默认值调用，不要瞎填数字。"
+                "一次可以调用多个技能（如 best50 和 push_rating 一起调）。\n" +
+                "如果当前接口不支持 function calling，就把同样的 JSON 单独输出一行" +
+                "（例：{\"name\":\"best50\",\"arguments\":{}}），Kiba 会识别并执行。\n" +
+                "用户没给足参数时，要么用自然语言追问，要么用最宽松的默认值调用，不要瞎填数字。\n" +
+                "【重要】调用完工具后必须基于返回的真实数据给出最终中文答复，" +
+                "不要只描述「我打算调用什么」，也不要复述工具调用的过程。"
         )
     }
 
@@ -1072,6 +1142,16 @@ class KibaAgent(private val context: Context) {
 
         /** 宴会場流派：官方设定该类歌曲不获 Rating。 */
         private const val GENRE_UTAGE = "宴会場"
+
+        /**
+         * 工具调用循环的最大轮数。
+         * 一轮 = 模型决策 + 执行技能 + 回灌；3 轮足够覆盖
+         * 「先 best50 再 push_rating 再总结」这类多技能组合。
+         */
+        private const val MAX_ROUNDS = 3
+
+        /** 输出 token 上限（思考被截断时加额重试的封顶值）。 */
+        private const val MAX_TOKENS_CAP = 16384
 
         /**
          * 技能表：既是技能卡，也是 LLM 的 tool 定义。

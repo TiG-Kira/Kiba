@@ -121,6 +121,8 @@ fun BlurTopAppBar(
     titleAlpha: () -> Float = { 1f },
     bottomContent: @Composable () -> Unit = {},
     onBlankTap: (() -> Unit)? = null,
+    /** 展开态最小额外展开高度（ songsDetail 封面背景等场景让顶栏完整露出封面）。 */
+    minExpansionPx: Int = 0,
 ) {
     // Wrap the given actions in a Row.
     val actionsRow =
@@ -156,6 +158,7 @@ fun BlurTopAppBar(
         defaultWindowInsetsPadding = defaultWindowInsetsPadding,
         bottomContent = bottomContent,
         onBlankTap = onBlankTap,
+        minExpansionPx = minExpansionPx,
     )
 }
 @Composable
@@ -179,6 +182,12 @@ private fun TopAppBarLayout(
     titleAlpha: () -> Float = { 1f },
     bottomContent: @Composable () -> Unit = {},
     onBlankTap: (() -> Unit)? = null,
+    /**
+     * 展开态最小额外展开高度（px 之外再保证的量）。
+     * 用于歌曲详情页封面背景：展开高度需要 ≥ 封面完整高度，
+     * 仅靠 largeTitle 文字高度不够。折叠完成后仍回到 CollapsedHeight。
+     */
+    minExpansionPx: Int = 0,
 ) {
     // Producer lambdas — reads stay in layout/draw phases so scroll never recomposes this subtree.
     val scrolledOffset = remember(scrollBehavior) {
@@ -199,10 +208,10 @@ private fun TopAppBarLayout(
             1f - largeTitleFade()
         }
     }
-    val updateHeightOffsetLimit = remember(scrollBehavior) {
+    val updateHeightOffsetLimit = remember(scrollBehavior, minExpansionPx) {
         { height: Int ->
             scrollBehavior?.state?.let { state ->
-                val limit = -height.toFloat()
+                val limit = -height.toFloat() - minExpansionPx
                 if (state.heightOffsetLimit != limit) {
                     state.heightOffsetLimit = limit
                 }
@@ -422,7 +431,9 @@ private fun TopAppBarLayout(
 
         val collapsedHeight = TopAppBarDefaults.CollapsedHeight.roundToPx()
         // largeTitle Box has top padding = collapsedHeight, so subtract it back for the pure expansion.
-        val expansion = (largeTitlePlaceable.height - collapsedHeight).coerceAtLeast(0)
+        // minExpansionPx：封面背景等场景要求展开高度 ≥ 指定量（如完整封面高度）。
+        val expansion = maxOf(largeTitlePlaceable.height - collapsedHeight, minExpansionPx)
+            .coerceAtLeast(0)
         val barHeight = if (expansion > 0) {
             val offset = scrolledOffset()
             val collapseFraction = if (offset.isNaN()) {
