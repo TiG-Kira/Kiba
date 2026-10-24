@@ -6,6 +6,7 @@ import android.content.SharedPreferences
 import androidx.core.content.edit
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import java.util.UUID
 
 object SpUtil {
     private lateinit var application: Application
@@ -39,6 +40,9 @@ object SpUtil {
     private const val KEY_LAST_QUERY_LEVEL = "last_query_level"
     private const val KEY_LAST_QUERY_VERSION = "last_query_version"
     private const val KEY_DIVING_FISH_NICKNAME = "diving_fish_nickname"
+    private const val KEY_DF_BOUND = "diving_fish_bound"
+    private const val KEY_DF_INSTALL_ID = "diving_fish_install_id"
+    private const val KEY_DF_NICKNAME_OAUTH = "diving_fish_nickname_oauth"
 
     private const val KEY_VERSION = "db_version"
     private const val KEY_LAST_UPDATE_TIME = "chart_stats_db_last_update_time"
@@ -116,6 +120,32 @@ object SpUtil {
     fun getDivingFishNickname(): String {
         return userInfoPrefs.getString(KEY_DIVING_FISH_NICKNAME, "") ?: ""
     }
+
+    // ================= DIVINGFISH OAUTH 绑定 =================
+
+    /** 是否已完成 OAuth 绑定（水鱼服务端持有授权关系）。 */
+    fun isDivingFishBound(): Boolean = userInfoPrefs.getBoolean(KEY_DF_BOUND, false)
+
+    fun setDivingFishBound(bound: Boolean) {
+        userInfoPrefs.edit { putBoolean(KEY_DF_BOUND, bound) }
+    }
+
+    /** 安装级随机 ID：OAuth subject_ref 的盐值来源，首次生成后固定。 */
+    fun getDivingFishInstallId(): String {
+        var id = userInfoPrefs.getString(KEY_DF_INSTALL_ID, "") ?: ""
+        if (id.isBlank()) {
+            id = UUID.randomUUID().toString()
+            userInfoPrefs.edit { putString(KEY_DF_INSTALL_ID, id) }
+        }
+        return id
+    }
+
+    fun saveDivingFishOAuthNickname(nickname: String) {
+        userInfoPrefs.edit { putString(KEY_DF_NICKNAME_OAUTH, nickname) }
+    }
+
+    fun getDivingFishOAuthNickname(): String =
+        userInfoPrefs.getString(KEY_DF_NICKNAME_OAUTH, "") ?: ""
 
     // ================= SONG INFO =================
 

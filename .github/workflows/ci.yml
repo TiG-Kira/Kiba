@@ -23,4 +23,7 @@ jobs:
         run: chmod +x gradlew
 
       - name: Build debug APK
+        env:
+          KIBA_DF_CLIENT_ID: ${{ secrets.KIBA_DF_CLIENT_ID }}
+          KIBA_DF_CLIENT_SECRET: ${{ secrets.KIBA_DF_CLIENT_SECRET }}
         run: ./gradlew assembleDebug --no-daemon

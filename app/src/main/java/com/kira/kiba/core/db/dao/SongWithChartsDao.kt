@@ -68,6 +68,10 @@ interface SongWithChartsDao : ChartDao, SongDao, AliasDao {
         ascending: Boolean = false
     ): LiveData<List<SongWithChartsEntity>>
 
+    /** 歌曲计数（判断曲库是否为空）。 */
+    @Query("SELECT COUNT(*) FROM song_data")
+    suspend fun getAllSongsWithChartsCount(): Int
+
 
     /**
      * 根据指定的筛选条件搜索歌曲数据，并获取其关联的谱面信息。

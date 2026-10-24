@@ -32,6 +32,14 @@ interface RecordDao {
     @Query("SELECT * FROM record")
     fun getAllRecords(): LiveData<List<RecordEntity>>
 
+    /** 全量成绩列表（Agent / Best50 用）。 */
+    @Query("SELECT * FROM record")
+    suspend fun getAllRecordList(): List<RecordEntity>
+
+    /** Best 50（按 ra 降序，Agent 用）。 */
+    @Query("SELECT * FROM record ORDER BY ra DESC LIMIT 50")
+    suspend fun getBest50List(): List<RecordEntity>
+
     /**
      * 根据难度索引查询记录表
      * @param index 难度索引

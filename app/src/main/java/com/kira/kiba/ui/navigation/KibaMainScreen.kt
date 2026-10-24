@@ -1,19 +1,14 @@
 package com.kira.kiba.ui.navigation
 
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.systemBars
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -22,26 +17,48 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.kyant.backdrop.backdrops.layerBackdrop
-import com.kyant.backdrop.backdrops.rememberLayerBackdrop
-import top.yukonga.miuix.kmp.basic.Icon
-import top.yukonga.miuix.kmp.blur.Backdrop
-import top.yukonga.miuix.kmp.blur.layerBackdrop as miuixLayerBackdrop
-import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop as rememberMiuixLayerBackdrop
-import top.yukonga.miuix.kmp.glass.GlassIconButton
-import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
-import top.yukonga.miuix.kmp.icon.glass.*
-import top.yukonga.miuix.kmp.theme.MiuixTheme
+import com.kira.kiba.core.state.KibaState
 import com.kira.kiba.ui.agent.AgentScreen
 import com.kira.kiba.ui.me.MeScreen
-import com.kira.kiba.ui.songs.SongsScreen
 import com.kira.kiba.ui.settings.SettingsScreen
+import com.kira.kiba.ui.songs.SongsScreen
+import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
+import top.yukonga.miuix.kmp.basic.Scaffold
+import top.yukonga.miuix.kmp.basic.ScrollBehavior
+import top.yukonga.miuix.kmp.basic.rememberTopAppBarState
+import top.yukonga.miuix.kmp.blur.Backdrop
+import top.yukonga.miuix.kmp.blur.layerBackdrop
+import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
+import top.yukonga.miuix.kmp.glass.GlassNavigationBar
+import top.yukonga.miuix.kmp.glass.GlassNavigationItem
+import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
+import top.yukonga.miuix.kmp.icon.glass.*
 
-/** 顶栏玻璃材质共享 MainScreen 的取景层（miuix-blur Backdrop），各页无需各自持有。 */
+/**
+ * Kiba 主框架：Termux Ultra 同款玻璃导航体系。
+ *
+ * - 顶栏：原生 miuix-glass [GlassTopAppBar]（大标题 + 滚动塌缩），采样 [glassNavBackdrop]；
+ * - 底栏：**Termux Ultra 默认悬浮底栏** [GlassNavigationBar]（玻璃胶囊，非液态玻璃那套）；
+ * - 取景层：单一 miuix-blur layerBackdrop，顶栏与底栏共用，内容区注册到同一层。
+ *
+ * 关键坑位规避（与 Termux Ultra 一致）：
+ * - `contentWindowInsets = WindowInsets(0, 0, 0, 0)`：内容满高铺开，不被顶/底栏推开；
+ * - 页面顶部留白不硬编码，取 Scaffold 内容 lambda 的 `padding.calculateTopPadding()`
+ *   （顶栏塌缩时其测量高度同步收缩，常量会留下一条不透带）；
+ * - 内容 Box 挂 `.layerBackdrop(glassNavBackdrop)` 供顶栏/底栏采样。
+ */
+
+/** 顶栏玻璃材质共享 MainScreen 的取景层，各页无需各自持有。 */
 val LocalGlassTopAppBarBackdrop = staticCompositionLocalOf<Backdrop?> { null }
 
-/** 顶栏占位高度（状态栏 + 栏高），页面顶部需至少留出此值，避免内容顶进顶栏内。 */
+/**
+ * 顶栏占位高度：页面把首个 item 压到此值之下，避免顶栏遮挡。
+ * 由 MainScreen 从 Scaffold padding 现算后注入，随顶栏塌缩同步。
+ */
 val LocalTopBarClearance = staticCompositionLocalOf<Dp> { 0.dp }
+
+/** 悬浮底栏占位高度（54dp 栏高 + 系统导航栏 inset），页面底部需至少留出此值。 */
+val LocalNavBarBottomPadding = staticCompositionLocalOf<Dp> { 0.dp }
 
 enum class KibaTab(val title: String) {
     Songs("曲目"),
@@ -50,101 +67,90 @@ enum class KibaTab(val title: String) {
     Settings("设置")
 }
 
-fun tabIcon(tab: KibaTab) = when (tab) {
+private fun tabIcon(tab: KibaTab) = when (tab) {
     KibaTab.Songs -> MiuixGlassIcons.Regular.Music
     KibaTab.Agent -> MiuixGlassIcons.Regular.AiScan
     KibaTab.Me -> MiuixGlassIcons.Regular.Contacts
     KibaTab.Settings -> MiuixGlassIcons.Regular.Settings
 }
 
+/** Termux Ultra 浮动玻璃底栏的固定栏高（GlassNavigationBarDefaults.Height）。 */
+private val GLASS_NAV_HEIGHT = 54.dp
+
 @Composable
 fun KibaMainScreen() {
     val tabs = KibaTab.values()
     var selectedTab by remember { mutableStateOf(KibaTab.Songs) }
 
+    // 顶栏搜索按钮：每次点击 +1，曲目页据此聚焦搜索框
+    var songsSearchTrigger by remember { mutableIntStateOf(0) }
+
     val density = LocalDensity.current
-    // 本机 Compose 版本无 statusBars 顶层/伴随属性，用 systemBars（含状态栏）取顶部高度
-    val statusBar = WindowInsets.systemBars.asPaddingValues(density).calculateTopPadding()
-    val navBarBottom = WindowInsets.navigationBars.asPaddingValues(density).calculateBottomPadding()
-    val topBarClearance = statusBar + 56.dp
+    // 隐藏手势提示线后 navigationBars inset 可能为 0，保底 12dp 贴屏幕底边
+    val systemNavBarsHeight = with(density) {
+        maxOf(WindowInsets.navigationBars.getBottom(density), 12.dp.roundToPx()).toDp()
+    }
+    val navBarBottomPadding = GLASS_NAV_HEIGHT + systemNavBarsHeight
 
-    // 两套 backdrop：
-    // - glassNavBackdrop（miuix-blur）供给顶栏 GlassTopAppBar 采样页面内容；
-    // - liquidGlassBackdrop（kyant）供给底部 LiquidGlassNavigationBar 采样（玻璃地板修复关键）。
-    val glassNavBackdrop = rememberMiuixLayerBackdrop()
-    val liquidGlassBackdrop = rememberLayerBackdrop()
+    // 顶栏塌缩行为：rememberSaveable 状态，切 tab / 进程恢复都不丢
+    val topAppBarState = rememberTopAppBarState()
+    val scrollBehavior: ScrollBehavior = MiuixScrollBehavior(topAppBarState)
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        Scaffold(
-            modifier = Modifier.fillMaxSize(),
-            // 关键：禁用默认 contentWindowInsets，让内容满高铺开，不被顶/底栏推开
-            contentWindowInsets = WindowInsets(0, 0, 0, 0),
-            topBar = {
-                CompositionLocalProvider(LocalGlassTopAppBarBackdrop provides glassNavBackdrop) {
-                    KibaTopBar(
-                        title = selectedTab.title,
-                        actions = {
-                            when (selectedTab) {
-                                KibaTab.Songs -> GlassIconButton(onClick = { /* TODO 搜索 */ }) {
-                                    Icon(
-                                        MiuixGlassIcons.Regular.Search,
-                                        contentDescription = "搜索",
-                                        tint = MiuixTheme.colorScheme.onSurface
-                                    )
-                                }
-                                KibaTab.Me -> GlassIconButton(onClick = { /* TODO 刷新 */ }) {
-                                    Icon(
-                                        MiuixGlassIcons.Regular.Refresh,
-                                        contentDescription = "刷新",
-                                        tint = MiuixTheme.colorScheme.onSurface
-                                    )
-                                }
-                                else -> Unit
-                            }
+    // 顶栏与底栏共用的取景层（miuix-blur）
+    val glassNavBackdrop = rememberLayerBackdrop()
+
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        // 关键：禁用默认 contentWindowInsets，让内容满高铺开
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        topBar = {
+            CompositionLocalProvider(LocalGlassTopAppBarBackdrop provides glassNavBackdrop) {
+                KibaTopBar(
+                    title = selectedTab.title,
+                    scrollBehavior = scrollBehavior,
+                    actions = {
+                        when (selectedTab) {
+                            KibaTab.Songs -> KibaSearchAction { songsSearchTrigger++ }
+                            KibaTab.Me -> KibaRefreshAction { KibaState.refreshRecords() }
+                            else -> Unit
                         }
-                    )
-                }
-            },
-            bottomBar = {
-                val glassDims = computeNavDimensions(tabs.size, NavStyle.GLASS)
-                LiquidGlassNavigationBarWithIndicator(
-                    selectedIndex = selectedTab.ordinal,
-                    itemCount = tabs.size,
-                    backdrop = liquidGlassBackdrop,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = navBarBottom),
-                    onIndexChange = { index -> selectedTab = tabs.getOrElse(index) { selectedTab } }
-                ) { onPositioned ->
-                    tabs.forEachIndexed { index, tab ->
-                        LiquidGlassNavigationBarItem(
-                            icon = tabIcon(tab),
-                            label = tab.title,
-                            selected = selectedTab == tab,
-                            onClick = { selectedTab = tab },
-                            dims = glassDims,
-                            index = index,
-                            onPositioned = onPositioned
-                        )
-                    }
-                }
+                    },
+                )
             }
-        ) { _ ->
-            // 内容同时注册到两套 backdrop：底栏（kyant）采样内容做玻璃地板，
-            // 顶栏（miuix）采样内容做玻璃透视。内容满高铺在悬浮导航之下（无底部留白=玻璃地板修复核心）。
-            CompositionLocalProvider(LocalTopBarClearance provides topBarClearance) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .miuixLayerBackdrop(glassNavBackdrop)
-                        .layerBackdrop(liquidGlassBackdrop)
-                ) {
-                    when (selectedTab) {
-                        KibaTab.Songs -> SongsScreen()
-                        KibaTab.Agent -> AgentScreen()
-                        KibaTab.Me -> MeScreen()
-                        KibaTab.Settings -> SettingsScreen()
-                    }
+        },
+        bottomBar = {
+            // Termux Ultra 默认悬浮底栏：GlassNavigationBar
+            // 左右各 24dp 内缩成浮动胶囊，底部贴系统导航栏上边缘
+            GlassNavigationBar(
+                items = tabs.map { GlassNavigationItem(icon = tabIcon(it), label = it.title) },
+                selectedIndex = selectedTab.ordinal,
+                onSelect = { index -> selectedTab = tabs.getOrElse(index) { selectedTab } },
+                backdrop = glassNavBackdrop,
+                modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = systemNavBarsHeight),
+            )
+        }
+    ) { padding ->
+        // 顶栏遮挡量从 Scaffold 自身 padding 现取：顶栏塌缩时测量高度同步收缩，
+        // 常量会留下一条不透带（Termux Ultra GlassPageHost 同款做法）。
+        val topBarClearance = padding.calculateTopPadding()
+        CompositionLocalProvider(
+            LocalTopBarClearance provides topBarClearance,
+            LocalNavBarBottomPadding provides navBarBottomPadding,
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    // 内容注册到取景层：顶栏/底栏透过它折射页面内容
+                    .layerBackdrop(glassNavBackdrop)
+            ) {
+                when (selectedTab) {
+                    KibaTab.Songs -> SongsScreen(
+                        scrollBehavior = scrollBehavior,
+                        searchTrigger = songsSearchTrigger,
+                    )
+                    KibaTab.Agent -> AgentScreen(scrollBehavior = scrollBehavior)
+                    KibaTab.Me -> MeScreen(scrollBehavior = scrollBehavior)
+                    KibaTab.Settings -> SettingsScreen(scrollBehavior = scrollBehavior)
                 }
             }
         }

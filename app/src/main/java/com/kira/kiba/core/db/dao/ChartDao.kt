@@ -36,4 +36,12 @@ interface ChartDao {
 
     @Query("DELETE FROM chart")
     fun clearCharts()
+
+    /** 全量谱面（Agent / 进度统计用，内存join）。 */
+    @Query("SELECT * FROM chart")
+    suspend fun getAllChartsList(): List<ChartEntity>
+
+    /** 按歌曲查谱面（Agent 查歌详情用）。 */
+    @Query("SELECT * FROM chart WHERE song_id = :songId")
+    suspend fun getChartsBySongId(songId: Int): List<ChartEntity>
 }

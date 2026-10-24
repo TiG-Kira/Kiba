@@ -16,8 +16,8 @@ android {
         // miuix 0.9.4 各模块（blur/ui/icons/preference）要求 minSdk >= 33
         minSdk = 33
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.1.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
@@ -70,6 +70,17 @@ android {
         buildConfig = true
     }
 
+    // 水鱼查分器 OAuth 应用凭据：local.properties（不入库）或环境变量注入。
+    // 公开仓库只放占位，真实值存 GitHub Secrets（KIBA_DF_CLIENT_ID / KIBA_DF_CLIENT_SECRET）。
+    val dfClientId = (project.findProperty("kiba.dfClientId")
+        ?: System.getenv("KIBA_DF_CLIENT_ID") ?: "").toString()
+    val dfClientSecret = (project.findProperty("kiba.dfClientSecret")
+        ?: System.getenv("KIBA_DF_CLIENT_SECRET") ?: "").toString()
+    defaultConfig {
+        buildConfigField("String", "DIVINGFISH_CLIENT_ID", "\"$dfClientId\"")
+        buildConfigField("String", "DIVINGFISH_CLIENT_SECRET", "\"$dfClientSecret\"")
+    }
+
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -86,12 +97,9 @@ configurations.all {
     resolutionStrategy {
         // miuix 各模块（ui/blur/icons/preference）可能互相拉取不同 miuix-ui 版本，统一锁 0.9.4
         force("top.yukonga.miuix.kmp:miuix-ui-android:0.9.4")
-        // guava 自带 ListenableFuture 与 com.google.guava:listenablefuture 冲突时，用官方空占位包
-        eachDependency {
-            if (requested.group == "com.google.guava" && requested.name == "listenablefuture") {
-                useTarget("com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava")
-            }
-        }
+        // concurrent-futures 1.1.0 的 AbstractResolvableFuture 依赖 guava；
+        // 本项目无完整 guava，锁 1.2.0（自包含实现）修 ProfileInstaller NoClassDefFound
+        force("androidx.concurrent:concurrent-futures:1.2.0")
     }
 }
 
@@ -105,20 +113,9 @@ dependencies {
 
     // miuix-glass 弹层控件需要 NavigationBackHandler / rememberNavigationEventState（1.1.2 起提供）
     implementation("androidx.navigationevent:navigationevent-compose-android:1.1.2")
-
-    // 玻璃悬浮导航依赖（miuix-glass 的 LiquidBottomTabs 同源实现）
-    implementation("io.github.kyant0:backdrop-android:2.0.1") {
-        exclude(group = "org.jetbrains.compose")
-        exclude(group = "org.jetbrains.compose.ui")
-        exclude(group = "org.jetbrains.compose.foundation")
-    }
-    implementation("io.github.kyant0:shapes-android:1.2.1") {
-        exclude(group = "org.jetbrains.compose")
-        exclude(group = "org.jetbrains.compose.ui")
-        exclude(group = "org.jetbrains.compose.foundation")
-    }
-    // miuix-glass 弹层需要 NavigationBackHandler
-    implementation("androidx.navigationevent:navigationevent-compose-android:1.1.2")
+    // 根 owner 装配（ViewTreeNavigationEventDispatcherOwner / OnBackInvokedDefaultInput）在
+    // navigationevent-android 里，KMP 根模块变体选择下需显式声明才能上编译类路径
+    implementation("androidx.navigationevent:navigationevent-android:1.1.2")
 
     // ── Compose 基础 ──
     implementation("androidx.compose.ui:ui:1.8.3")
@@ -126,6 +123,7 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended:1.7.8")
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.5")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.5")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.5")
     implementation("androidx.lifecycle:lifecycle-livedata-ktx:2.8.7")
     implementation("androidx.navigation:navigation-compose:2.8.5")
@@ -165,3 +163,4 @@ dependencies {
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
 }
+

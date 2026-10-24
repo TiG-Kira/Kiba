@@ -14,4 +14,16 @@ interface SongDao {
     @Query("DELETE FROM song_data")
     fun clearSongData()
 
+    /** 全量歌曲（Agent / 进度统计用，内存join）。 */
+    @Query("SELECT * FROM song_data")
+    suspend fun getAllSongsList(): List<SongDataEntity>
+
+    /** 标题模糊搜索（Agent 查歌用；别名匹配在上一层做）。 */
+    @Query("SELECT * FROM song_data WHERE title LIKE '%' || :query || '%' LIMIT :limit")
+    suspend fun searchSongsList(query: String, limit: Int = 50): List<SongDataEntity>
+
+    /** 随机一首（Agent 随机选曲用）。 */
+    @Query("SELECT * FROM song_data ORDER BY RANDOM() LIMIT 1")
+    suspend fun randomSong(): SongDataEntity?
+
 }
