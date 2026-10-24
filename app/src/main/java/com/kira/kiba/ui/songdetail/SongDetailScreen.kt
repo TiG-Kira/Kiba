@@ -42,6 +42,9 @@ import com.kira.kiba.ui.common.EmptyStateCard
 import com.kira.kiba.ui.common.HGap
 import com.kira.kiba.ui.common.SectionTitle
 import com.kira.kiba.ui.common.VGap
+import com.kira.kiba.ui.common.RankBadge
+import com.kira.kiba.ui.common.ComboBadge
+import com.kira.kiba.ui.common.SyncBadge
 import com.kira.kiba.ui.common.difficultyColor
 import com.kira.kiba.ui.common.difficultyLabel
 import com.kira.kiba.ui.common.pageContentPadding
@@ -321,18 +324,21 @@ private fun ChartCard(
                         style = MiuixTheme.textStyles.title1,
                         color = diffColor,
                     )
-                    HGap()
+                }
+                // 成绩的下一行：评级 / 连击 / 同步贴图 + 本曲 Rating
+                VGap(6.dp)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    RankBadge(rate = r.rate.ifBlank { SongRating.rankOf(r.achievements) })
+                    HGap(6.dp)
+                    ComboBadge(fc = r.fc)
+                    if (r.fs.isNotBlank()) HGap(6.dp)
+                    SyncBadge(fs = r.fs)
+                    Spacer(Modifier.weight(1f))
                     Text(
-                        text = "ra ${r.ra}",
+                        text = "获得的本曲 Rating ${r.ra}",
                         style = MiuixTheme.textStyles.subtitle,
                         color = MiuixTheme.colorScheme.primary,
                     )
-                    Spacer(Modifier.weight(1f))
-                    if (r.fc.isNotBlank()) MetaChip("FC ${r.fc}")
-                    if (r.fs.isNotBlank()) {
-                        Spacer(Modifier.width(6.dp))
-                        MetaChip("FS ${r.fs}")
-                    }
                 }
                 VGap(2.dp)
                 Text(

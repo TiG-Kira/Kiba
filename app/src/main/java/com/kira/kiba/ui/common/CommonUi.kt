@@ -361,6 +361,89 @@ fun InfoPill(text: String, modifier: Modifier = Modifier) {
     }
 }
 
+// ── 官方贴图徽标（与 Best50 图片生成同一套素材）──
+
+/** drawable 名 → 资源 id（素材名全小写，取不到返回 0，调用方自行跳过）。 */
+@Composable
+private fun drawableId(name: String): Int {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    return remember(name) {
+        context.resources.getIdentifier(name, "drawable", context.packageName)
+    }
+}
+
+/**
+ * 评级贴图（UI_GAM_Rank_*）：d/c/b/bb/bbb/a/aa/aaa/s/sp/ss/ssp/sss/sssp。
+ * 取不到素材时退回文字，保证不空白。
+ */
+@Composable
+fun RankBadge(rate: String, height: androidx.compose.ui.unit.Dp = 26.dp) {
+    val file = when (rate.lowercase()) {
+        "d" -> "d"; "c" -> "c"; "b" -> "b"; "bb" -> "bb"; "bbb" -> "bbb"
+        "a" -> "a"; "aa" -> "aa"; "aaa" -> "aaa"
+        "s" -> "s"; "sp" -> "sp"; "s+" -> "sp"
+        "ss" -> "ss"; "ssp" -> "ssp"; "ss+" -> "ssp"
+        "sss" -> "sss"; "sssp" -> "sssp"; "sss+" -> "sssp"
+        else -> ""
+    }
+    val id = drawableId("kiba_ui_gam_rank_$file")
+    if (file.isBlank() || id == 0) {
+        Text(
+            text = rate.uppercase(),
+            style = MiuixTheme.textStyles.footnote2,
+            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+        )
+        return
+    }
+    Image(
+        painter = androidx.compose.ui.res.painterResource(id),
+        contentDescription = "评级 $rate",
+        contentScale = ContentScale.Fit,
+        modifier = Modifier.height(height),
+    )
+}
+
+/**
+ * 连击贴图（UI_MSS_MBase_Icon_*_S）：fc / fcp（FC+）/ ap / app（AP+）。
+ * 空值不渲染（Bot 的同位置会贴 Blank，这里直接留白更干净）。
+ */
+@Composable
+fun ComboBadge(fc: String, height: androidx.compose.ui.unit.Dp = 24.dp) {
+    val file = when (fc.lowercase()) {
+        "fc" -> "fc"; "fcp" -> "fcp"; "fc+" -> "fcp"
+        "ap" -> "ap"; "app" -> "app"; "ap+" -> "app"
+        else -> return
+    }
+    val id = drawableId("kiba_ui_mss_mbase_icon_${file}_s")
+    if (id == 0) return
+    Image(
+        painter = androidx.compose.ui.res.painterResource(id),
+        contentDescription = "连击 $fc",
+        contentScale = ContentScale.Fit,
+        modifier = Modifier.height(height),
+    )
+}
+
+/**
+ * 同步贴图（UI_MSS_MBase_Icon_*_S）：fs / fsp（FS+）/ fsd（FDX）/ fsdp（FDX+）。
+ */
+@Composable
+fun SyncBadge(fs: String, height: androidx.compose.ui.unit.Dp = 24.dp) {
+    val file = when (fs.lowercase()) {
+        "fs" -> "fs"; "fsp" -> "fsp"; "fs+" -> "fsp"
+        "fsd" -> "fsd"; "fsdp" -> "fsdp"; "fdx" -> "fsd"; "fdx+" -> "fsdp"
+        else -> return
+    }
+    val id = drawableId("kiba_ui_mss_mbase_icon_${file}_s")
+    if (id == 0) return
+    Image(
+        painter = androidx.compose.ui.res.painterResource(id),
+        contentDescription = "同步 $fs",
+        contentScale = ContentScale.Fit,
+        modifier = Modifier.height(height),
+    )
+}
+
 /** 「已完成」标记（进度明细页）。 */
 @Composable
 fun DoneTag(modifier: Modifier = Modifier) {

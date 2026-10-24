@@ -38,6 +38,9 @@ import com.kira.kiba.ui.common.EmptyStateCard
 import com.kira.kiba.ui.common.HGap
 import com.kira.kiba.ui.common.SectionTitle
 import com.kira.kiba.ui.common.VGap
+import com.kira.kiba.ui.common.RankBadge
+import com.kira.kiba.ui.common.ComboBadge
+import com.kira.kiba.ui.common.SyncBadge
 import com.kira.kiba.ui.common.difficultyColor
 import com.kira.kiba.ui.common.difficultyLabel
 import com.kira.kiba.ui.common.pageContentPadding
@@ -339,23 +342,26 @@ private fun RecordCard(chart: ChartEntity, record: RecordEntity) {
                     style = MiuixTheme.textStyles.title1,
                     color = diffColor,
                 )
-                HGap()
+            }
+            // 成绩的下一行：评级 / 连击 / 同步贴图 + 本曲 Rating
+            VGap(6.dp)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                RankBadge(rate = record.rate.ifBlank { SongRating.rankOf(record.achievements) })
+                HGap(6.dp)
+                ComboBadge(fc = record.fc)
+                if (record.fs.isNotBlank()) HGap(6.dp)
+                SyncBadge(fs = record.fs)
+                Spacer(Modifier.weight(1f))
                 Text(
-                    text = "${SongRating.rankOf(record.achievements)}　Rating " +
-                        SongRating.songRating(chart.ds, record.achievements),
+                    text = "获得的本曲 Rating ${record.ra}",
                     style = MiuixTheme.textStyles.subtitle,
                     color = MiuixTheme.colorScheme.primary,
                 )
-                Spacer(Modifier.weight(1f))
-                if (record.fc.isNotBlank()) InfoPill("FC ${record.fc}")
-                if (record.fs.isNotBlank()) {
-                    Spacer(Modifier.width(6.dp))
-                    InfoPill("FS ${record.fs}")
-                }
             }
-            VGap(6.dp)
+            VGap(4.dp)
             Text(
-                text = "ra ${record.ra}　DX 分数 ${record.dxScore} / ${chart.notesTotal * 3}",
+                text = "单曲 Rating ${SongRating.songRating(chart.ds, record.achievements)}" +
+                    "　DX 分数 ${record.dxScore} / ${chart.notesTotal * 3}",
                 style = MiuixTheme.textStyles.body2,
                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
             )

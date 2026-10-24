@@ -32,7 +32,7 @@ import top.yukonga.miuix.kmp.preference.ArrowPreference
  * “我”页面（miuix preference 规范 + miuix Card 分组包裹）：
  * - 置顶 [ArrowPreference]：已登录展示昵称 + DX Rating 段位徽章（官方色表），
  *   点击进 Best 50；未登录展示引导，点击进登录页（账号密码 / OAuth 双通道）；
- * - 查分器入口：Best 50 / 成绩记录；
+ * - 查分器入口：成绩记录（Best 50 由顶部卡片承载）；
  * - 我的收藏：收藏的歌曲列表；
  * - 进度入口：版本进度 / 等级进度（可下钻到歌曲明细）；
  * - 工具：DX 分数转换 / 退出登录。
@@ -101,11 +101,6 @@ fun MeScreen(
                             "支持水鱼账号密码（原版）与 OAuth 授权两种方式"
                         },
                         onClick = onOpenLogin,
-                    )
-                    ArrowPreference(
-                        title = "Best 50",
-                        summary = "官方口径旧曲 35 + 新曲 15，ra 之和即 DX Rating",
-                        onClick = onOpenBest50,
                     )
                     ArrowPreference(
                         title = "成绩记录",

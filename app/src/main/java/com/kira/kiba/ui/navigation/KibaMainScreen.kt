@@ -188,8 +188,22 @@ fun KibaMainScreen() {
     val tabs = KibaTab.values()
     var selectedTab by remember { mutableStateOf(KibaTab.Songs) }
 
-    // 二级页面：非空时覆盖当前 Tab（顶栏带返回、底栏隐藏）
-    var subPage by remember { mutableStateOf<KibaSubPage?>(null) }
+    // 二级页面栈：非空时覆盖当前 Tab（顶栏带返回、底栏隐藏），支持多层逐级返回
+    var subStack by remember { mutableStateOf<List<KibaSubPage>>(emptyList()) }
+    // 导航方向：true=前进入栈，false=后退出栈（驱动页面切换动画方向）
+    var navForward by remember { mutableStateOf(true) }
+
+    fun pushPage(page: KibaSubPage) {
+        navForward = true
+        subStack = subStack + page
+    }
+
+    fun popPage() {
+        if (subStack.isNotEmpty()) {
+            navForward = false
+            subStack = subStack.dropLast(1)
+        }
+    }
 
     // 顶栏搜索按钮：每次点击 +1，曲目页据此聚焦搜索框
     var songsSearchTrigger by remember { mutableIntStateOf(0) }
@@ -208,9 +222,9 @@ fun KibaMainScreen() {
     // 顶栏与底栏共用的取景层（miuix-blur）
     val glassNavBackdrop = rememberLayerBackdrop()
 
-    // 系统返回：先退二级页面，再放行给 Activity
-    BackHandler(enabled = subPage != null) {
-        subPage = null
+    // 系统返回：先退二级页面（出栈），清空后再放行给 Activity
+    BackHandler(enabled = subStack.isNotEmpty()) {
+        popPage()
     }
 
     Scaffold(
@@ -219,7 +233,7 @@ fun KibaMainScreen() {
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             CompositionLocalProvider(LocalGlassTopAppBarBackdrop provides glassNavBackdrop) {
-                val sub = subPage
+                val sub = subStack.lastOrNull()
                 if (sub == null) {
                     KibaTopBar(
                         title = selectedTab.title,
@@ -236,7 +250,7 @@ fun KibaMainScreen() {
                     KibaTopBar(
                         title = sub.title,
                         scrollBehavior = scrollBehavior,
-                        navigationIcon = { KibaBackAction { subPage = null } },
+                        navigationIcon = { KibaBackAction { popPage() } },
                         actions = {
                             if (sub is KibaSubPage.Records) {
                                 KibaRefreshAction { KibaState.refreshRecords() }
@@ -247,7 +261,7 @@ fun KibaMainScreen() {
             }
         },
         bottomBar = {
-            if (subPage == null) {
+            if (subStack.isEmpty()) {
                 // Termux Ultra 默认悬浮底栏：GlassNavigationBar
                 // 左右各 24dp 内缩成浮动胶囊，底部贴系统导航栏上边缘
                 GlassNavigationBar(
@@ -274,13 +288,13 @@ fun KibaMainScreen() {
                     // 内容注册到取景层：顶栏/底栏透过它折射页面内容
                     .layerBackdrop(glassNavBackdrop)
             ) {
-                val sub = subPage
+                val sub = subStack.lastOrNull()
                 // 页面切换动画：Tab 间淡入淡出 + 轻微横向位移；二级页面从右滑入、返回时滑出
                 AnimatedContent(
-                    targetState = sub ?: selectedTab,
+                    targetState = subStack.lastOrNull() ?: selectedTab,
                     transitionSpec = {
                         val isSub = targetState is KibaSubPage
-                        val forward = targetState != initialState
+                        val forward = navForward
                         if (isSub) {
                             if (forward) {
                                 (slideInHorizontally(tween(260)) { it / 4 } + fadeIn(tween(200)))
@@ -302,7 +316,7 @@ fun KibaMainScreen() {
                                 songId = target.songId,
                                 scrollBehavior = scrollBehavior,
                                 onOpenChart = { songId, difficultyOrdinal ->
-                                    subPage = KibaSubPage.ChartDetail(songId, difficultyOrdinal)
+                                    pushPage(KibaSubPage.ChartDetail(songId, difficultyOrdinal))
                                 },
                             )
                             is KibaSubPage.ChartDetail -> ChartDetailScreen(
@@ -312,7 +326,7 @@ fun KibaMainScreen() {
                             )
                             is KibaSubPage.Best50 -> Best50Screen(
                                 scrollBehavior = scrollBehavior,
-                                onOpenSong = { songId -> subPage = KibaSubPage.SongDetail(songId) },
+                                onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
                                 onSaveImage = {
                                     val b50 = DivingFishAccount.best50()
                                     val account = DivingFishAccount.state.value
@@ -327,36 +341,36 @@ fun KibaMainScreen() {
                             )
                             is KibaSubPage.Records -> RecordsScreen(
                                 scrollBehavior = scrollBehavior,
-                                onOpenSong = { songId -> subPage = KibaSubPage.SongDetail(songId) },
+                                onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
                             )
                             is KibaSubPage.VersionProgress -> VersionProgressScreen(
                                 scrollBehavior = scrollBehavior,
                                 onOpenDetail = { type, key ->
-                                    subPage = KibaSubPage.ProgressDetail(type, key)
+                                    pushPage(KibaSubPage.ProgressDetail(type, key))
                                 },
                             )
                             is KibaSubPage.LevelProgress -> LevelProgressScreen(
                                 scrollBehavior = scrollBehavior,
                                 onOpenDetail = { type, key ->
-                                    subPage = KibaSubPage.ProgressDetail(type, key)
+                                    pushPage(KibaSubPage.ProgressDetail(type, key))
                                 },
                             )
                             is KibaSubPage.LlmConfig -> LlmConfigScreen(scrollBehavior = scrollBehavior)
                             is KibaSubPage.Login -> LoginScreen(
                                 scrollBehavior = scrollBehavior,
-                                onLoginSuccess = { subPage = null },
+                                onLoginSuccess = { popPage() },
                             )
                             is KibaSubPage.ProgressDetail -> ProgressDetailScreen(
                                 groupType = target.groupType,
                                 groupKey = target.groupKey,
                                 scrollBehavior = scrollBehavior,
-                                onOpenSong = { songId -> subPage = KibaSubPage.SongDetail(songId) },
+                                onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
                             )
                             is KibaSubPage.DxConverter -> DxConverterScreen(scrollBehavior = scrollBehavior)
                             is KibaSubPage.MachineUpdate -> MachineUpdateScreen(scrollBehavior = scrollBehavior)
                             is KibaSubPage.Favorites -> FavoritesScreen(
                                 scrollBehavior = scrollBehavior,
-                                onOpenSong = { song -> subPage = KibaSubPage.SongDetail(song.songData.id) },
+                                onOpenSong = { song -> pushPage(KibaSubPage.SongDetail(song.songData.id)) },
                             )
                             is KibaSubPage.About -> AboutScreen(scrollBehavior = scrollBehavior)
                         }
@@ -366,31 +380,31 @@ fun KibaMainScreen() {
                                 scrollBehavior = scrollBehavior,
                                 searchTrigger = songsSearchTrigger,
                                 onSongClick = { song ->
-                                    subPage = KibaSubPage.SongDetail(song.songData.id)
+                                    pushPage(KibaSubPage.SongDetail(song.songData.id))
                                 },
                             )
                             KibaTab.Agent -> AgentScreen(
                                 scrollBehavior = scrollBehavior,
-                                onOpenSong = { songId -> subPage = KibaSubPage.SongDetail(songId) },
+                                onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
                             )
                             KibaTab.Me -> MeScreen(
                                 scrollBehavior = scrollBehavior,
-                                onOpenLogin = { subPage = KibaSubPage.Login },
-                                onOpenBest50 = { subPage = KibaSubPage.Best50 },
-                                onOpenRecords = { subPage = KibaSubPage.Records },
-                                onOpenVersionProgress = { subPage = KibaSubPage.VersionProgress },
-                                onOpenLevelProgress = { subPage = KibaSubPage.LevelProgress },
+                                onOpenLogin = { pushPage(KibaSubPage.Login) },
+                                onOpenBest50 = { pushPage(KibaSubPage.Best50) },
+                                onOpenRecords = { pushPage(KibaSubPage.Records) },
+                                onOpenVersionProgress = { pushPage(KibaSubPage.VersionProgress) },
+                                onOpenLevelProgress = { pushPage(KibaSubPage.LevelProgress) },
                                 onOpenProgressDetail = { type, key ->
-                                    subPage = KibaSubPage.ProgressDetail(type, key)
+                                    pushPage(KibaSubPage.ProgressDetail(type, key))
                                 },
-                                onOpenDxConverter = { subPage = KibaSubPage.DxConverter },
-                                onOpenFavorites = { subPage = KibaSubPage.Favorites },
+                                onOpenDxConverter = { pushPage(KibaSubPage.DxConverter) },
+                                onOpenFavorites = { pushPage(KibaSubPage.Favorites) },
                             )
                             KibaTab.Settings -> SettingsScreen(
                                 scrollBehavior = scrollBehavior,
-                                onOpenLlmConfig = { subPage = KibaSubPage.LlmConfig },
-                                onOpenMachineUpdate = { subPage = KibaSubPage.MachineUpdate },
-                                onOpenAbout = { subPage = KibaSubPage.About },
+                                onOpenLlmConfig = { pushPage(KibaSubPage.LlmConfig) },
+                                onOpenMachineUpdate = { pushPage(KibaSubPage.MachineUpdate) },
+                                onOpenAbout = { pushPage(KibaSubPage.About) },
                             )
                         }
                     }
