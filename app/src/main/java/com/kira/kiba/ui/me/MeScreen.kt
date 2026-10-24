@@ -58,10 +58,10 @@ fun MeScreen(
     onOpenRecords: () -> Unit,
     onOpenVersionProgress: () -> Unit,
     onOpenLevelProgress: () -> Unit,
+    onOpenDxConverter: () -> Unit,
 ) {
     val account by DivingFishAccount.state.collectAsState()
 
-    var showDxConvert by remember { mutableStateOf(false) }
 
     Scaffold(
         modifier = Modifier
@@ -147,8 +147,8 @@ fun MeScreen(
             item(key = "dx_convert") {
                 ArrowPreference(
                     title = "DX 分数转换",
-                    summary = "DX 分数 → 估算达成率与单曲 ra",
-                    onClick = { showDxConvert = true },
+                    summary = "由判定数量反推达成率与单曲 Rating",
+                    onClick = onOpenDxConverter,
                 )
             }
             if (account.bound) {
@@ -163,146 +163,5 @@ fun MeScreen(
         }
     }
 
-    // ── 弹层 ──
-    if (showDxConvert) {
-        DxConvertDialog(onDismiss = { showDxConvert = false })
-    }
 }
 
-/** DX 分数转换弹层：选歌曲（取最高难度）+ 输入 DX 分数 → 估算达成率 / ra。 */
-@Composable
-private fun DxConvertDialog(onDismiss: () -> Unit) {
-    val scope = rememberCoroutineScope()
-    var query by remember { mutableStateOf("") }
-    var resolved by remember { mutableStateOf<ResolvedChart?>(null) }
-    var notFound by remember { mutableStateOf(false) }
-    var dxInput by remember { mutableStateOf("") }
-
-    val dxScore = dxInput.toIntOrNull() ?: 0
-    val achievement = resolved?.let {
-        MaimaiStats.estimateAchievement(
-            notesTap = it.notesTap,
-            notesHold = it.notesHold,
-            notesSlide = it.notesSlide,
-            notesTouch = it.notesTouch,
-            notesBreak = it.notesBreak,
-            dxScore = dxScore,
-        )
-    }
-    val ra = resolved?.let { MaimaiStats.estimateRa(it.ds, achievement ?: 0.0) }
-
-    OverlayDialog(
-        show = true,
-        title = "DX 分数转换",
-        summary = "DX 分数 → 估算达成率与单曲 ra",
-        onDismissRequest = onDismiss,
-    ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    label = "歌曲名 / ID",
-                    useLabelAsPlaceholder = true,
-                    modifier = Modifier.weight(1f),
-                )
-                Spacer(Modifier.width(8.dp))
-                TextButton(
-                    text = "查询",
-                    onClick = {
-                        scope.launch {
-                            val db = AppDataBase.getInstance()
-                            val byId = query.trim().toIntOrNull()?.let { id ->
-                                db.songDao().getAllSongsList().firstOrNull { it.id == id }
-                            }
-                            val song = byId ?: db.songDao()
-                                .searchSongsList(query.trim(), 1)
-                                .firstOrNull()
-                            if (song == null) {
-                                notFound = true
-                                resolved = null
-                                return@launch
-                            }
-                            notFound = false
-                            val chart = db.chartDao().getChartsBySongId(song.id)
-                                .maxByOrNull { it.ds }
-                            resolved = chart?.let {
-                                ResolvedChart(
-                                    songId = song.id,
-                                    title = song.title,
-                                    level = it.level,
-                                    ds = it.ds,
-                                    notesTap = it.notesTap,
-                                    notesHold = it.notesHold,
-                                    notesSlide = it.notesSlide,
-                                    notesTouch = it.notesTouch,
-                                    notesBreak = it.notesBreak,
-                                )
-                            }
-                        }
-                    },
-                )
-            }
-            if (notFound) {
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    text = "没有找到相关歌曲（曲库可能未更新）",
-                    style = MiuixTheme.textStyles.footnote1,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                )
-            }
-            resolved?.let { r ->
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    text = "${r.title} · ${r.level} · 定数 ${r.ds}",
-                    style = MiuixTheme.textStyles.body1,
-                    color = MiuixTheme.colorScheme.onSurface,
-                )
-                Spacer(Modifier.height(8.dp))
-                TextField(
-                    value = dxInput,
-                    onValueChange = { input ->
-                        if (input.all { c -> c.isDigit() }) dxInput = input
-                    },
-                    label = "DX 分数",
-                    useLabelAsPlaceholder = true,
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Number,
-                    ),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(10.dp))
-                if (dxScore > 0 && achievement != null) {
-                    Text(
-                        text = "估算达成率：%.4f%%".format(achievement),
-                        style = MiuixTheme.textStyles.subtitle,
-                        color = MiuixTheme.colorScheme.primary,
-                    )
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        text = "该难度下单曲 ra ≈ $ra",
-                        style = MiuixTheme.textStyles.body2,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    )
-                }
-            }
-            Spacer(Modifier.height(16.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                TextButton(text = "关闭", onClick = onDismiss)
-            }
-        }
-    }
-}
-
-/** DX 转换用的已解析谱面（歌曲最高难度）。 */
-private data class ResolvedChart(
-    val songId: Int,
-    val title: String,
-    val level: String,
-    val ds: Double,
-    val notesTap: Int,
-    val notesHold: Int,
-    val notesSlide: Int,
-    val notesTouch: Int,
-    val notesBreak: Int,
-)

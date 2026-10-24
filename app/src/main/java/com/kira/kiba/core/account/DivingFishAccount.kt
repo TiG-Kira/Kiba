@@ -79,16 +79,36 @@ object DivingFishAccount {
         val interval: Int,
     )
 
+    /**
+     * Best 50（官方 Festival 口径，本地按成绩计算）：
+     * - 旧曲 35（isNew=false，按 ra 降序取前 35）
+     * - 新曲 15（isNew=true，按 ra 降序取前 15）
+     * Rating = 两部分 ra 之和。
+     */
+    data class Best50(
+        val old: List<RecordEntity> = emptyList(),
+        val new: List<RecordEntity> = emptyList(),
+    ) {
+        val oldRa: Int get() = old.sumOf { it.ra }
+        val newRa: Int get() = new.sumOf { it.ra }
+        val rating: Int get() = oldRa + newRa
+        val all: List<RecordEntity> get() = new + old
+    }
+
     private val _state = MutableStateFlow(AccountState())
     val state: StateFlow<AccountState> = _state.asStateFlow()
 
-    /** 最近一次拉到的全量成绩（内存缓存，供 Agent 本地逻辑使用）。 */
+    /** 全量成绩（内存缓存，供 Agent 本地逻辑使用）。 */
     @Volatile
     private var recordsCache: List<RecordEntity> = emptyList()
 
-    /** 官方 B50（sd 35 + dx 15，服务端算好，ra 之和即 rating）。 */
+    /** 最近一次拉取到的昵称（records 响应体携带）。 */
     @Volatile
-    private var best50Cache: List<RecordEntity> = emptyList()
+    private var recordsNickname: String = ""
+
+    /** Best 50（本地按官方口径计算：旧曲 35 + 新曲 15）。 */
+    @Volatile
+    private var best50Cache: Best50 = Best50()
 
     // ── token 缓存（5 分钟有效，无 refresh，过期重换） ──
     private var cachedToken: String? = null
@@ -371,7 +391,8 @@ object DivingFishAccount {
         tokenExpireAtMs = 0L
         pendingDeviceCode = null
         recordsCache = emptyList()
-        best50Cache = emptyList()
+        recordsNickname = ""
+        best50Cache = Best50()
         SpUtil.setDivingFishBound(false)
         SpUtil.saveDivingFishJwt("")
         SpUtil.saveDivingFishOAuthNickname("")
@@ -379,8 +400,11 @@ object DivingFishAccount {
     }
 
     /**
-     * 拉取成绩：取凭证 → 全量 records 落库 → /query/player 拿官方 B50 + Rating。
-     * 任一步失败都降级为 error 状态并保留本地缓存，不崩溃。
+     * 拉取成绩：取凭证 → 全量 records 落库 → 本地按官方口径算 B50 与 Rating。
+     *
+     * 注意：**不再调 `/query/player`**——那是"按用户名查任意玩家"的开发者接口，
+     * 用自身 Cookie 调会返回 400 `user not exists`。B50 改本地计算（与上游 MaimaiData 一致）：
+     * 旧曲（isNew=false）取 ra 最高 35 + 新曲（isNew=true）取 ra 最高 15，ra 之和即 Rating。
      *
      * 双通道：原版 jwt 走 www.diving-fish.com + Cookie；OAuth 走 maimai.diving-fish.com + Bearer。
      */
@@ -401,7 +425,7 @@ object DivingFishAccount {
         }
         val baseUrl = if (SpUtil.getDivingFishJwt().isNotBlank()) LEGACY_API_URL else API_URL
 
-        // ① 全量成绩（/player/records）——推分推荐 / 本地逻辑的数据源
+        // 全量成绩（/player/records）——推分推荐 / B50 计算 / 本地逻辑的数据源
         val recordsResult = withContext(Dispatchers.IO) {
             runCatching {
                 val request = Request.Builder()
@@ -418,65 +442,41 @@ object DivingFishAccount {
             }
         }
 
-        // ② 官方 B50 + Rating（/query/player，b50:true）——ra 之和即 rating，权威口径
-        val b50Result = withContext(Dispatchers.IO) {
-            runCatching {
-                val json = """{"b50": true}"""
-                val request = Request.Builder()
-                    .url("$baseUrl/query/player")
-                    .header(credential.headerName, credential.headerValue)
-                    .post(json.toRequestBody("application/json; charset=utf-8".toMediaType()))
-                    .build()
-                client.newCall(request).execute().use { response ->
-                    val text = response.body?.string().orEmpty()
-                    if (!response.isSuccessful) {
-                        throw IllegalStateException("B50 获取失败（HTTP ${response.code}）：$text")
-                    }
-                    gson.fromJson(text, QueryPlayerResponse::class.java)
-                }
-            }
-        }
-
         recordsResult.onSuccess { records ->
             RecordRepository.getInstance(
                 AppDataBase.getInstance().recordDao()
             ).replaceAllRecord(records)
             recordsCache = records
-        }.onFailure { e ->
-            Log.w(TAG, "fetch records failed", e)
-        }
-
-        b50Result.onSuccess { parsed ->
-            val b50 = buildList {
-                parsed.charts?.sd?.let { addAll(it) }
-                parsed.charts?.dx?.let { addAll(it) }
-            }.map { it.toEntity() }
-            best50Cache = b50
-            val nickname = parsed.nickname ?: parsed.username.orEmpty()
+            // B50 本地计算：需要曲库的 isNew 标记
+            val isNewBySongId = withContext(Dispatchers.IO) {
+                runCatching {
+                    AppDataBase.getInstance().songDao().getAllSongsList()
+                        .associate { it.id to it.isNew }
+                }.getOrDefault(emptyMap())
+            }
+            val sorted = records.sortedByDescending { it.ra }
+            best50Cache = Best50(
+                old = sorted.filter { isNewBySongId[it.songId] != true }.take(35),
+                new = sorted.filter { isNewBySongId[it.songId] == true }.take(15),
+            )
+            val nickname = recordsNickname
             if (nickname.isNotBlank()) {
                 SpUtil.saveDivingFishOAuthNickname(nickname)
             }
             _state.value = AccountState(
                 bound = true,
                 nickname = nickname.ifBlank { SpUtil.getDivingFishOAuthNickname() },
-                rating = parsed.rating ?: recordsCache.sumOf { it.ra },
-                additionalRating = parsed.additionalRating ?: 0,
-                recordCount = recordsCache.size,
+                rating = best50Cache.rating,
+                additionalRating = 0,
+                recordCount = records.size,
                 loading = false,
                 error = null,
             )
         }.onFailure { e ->
-            Log.w(TAG, "fetch b50 failed", e)
-            val fallbackError = recordsResult.exceptionOrNull()?.let { recErr ->
-                "成绩获取失败：${recErr.message}"
-            } ?: "B50 获取失败：${e.message}（将展示本地缓存）"
-            _state.value = _state.value.copy(loading = false, error = fallbackError)
-        }
-
-        if (recordsResult.isFailure && b50Result.isFailure) {
+            Log.w(TAG, "fetch records failed", e)
             _state.value = _state.value.copy(
                 loading = false,
-                error = "网络异常，无法连接查分器（将展示本地缓存）",
+                error = "成绩获取失败：${e.message}（将展示本地缓存）",
             )
         }
     }
@@ -491,6 +491,7 @@ object DivingFishAccount {
             arr.map { it.toEntity() }
         } else {
             val env = gson.fromJson(trimmed, RecordsEnvelope::class.java)
+            recordsNickname = env?.nickname.orEmpty()
             env?.records?.map { it.toEntity() } ?: emptyList()
         }
     }
@@ -574,9 +575,8 @@ object DivingFishAccount {
 
     // ── 数据访问（供 Agent / UI） ──
 
-    /** Best 50（官方口径 sd 35 + dx 15；未命中缓存时回退本地全量取前 50）。 */
-    fun best50(): List<RecordEntity> =
-        best50Cache.ifEmpty { recordsCache.sortedByDescending { it.ra }.take(50) }
+    /** Best 50（官方口径：旧曲 35 + 新曲 15，本地按 ra 排序计算）。 */
+    fun best50(): Best50 = best50Cache
 
     /** 全部本地成绩缓存（Agent 推分推荐用）。 */
     fun allRecords(): List<RecordEntity> = recordsCache

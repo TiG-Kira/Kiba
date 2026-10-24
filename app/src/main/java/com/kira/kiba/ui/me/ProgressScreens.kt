@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -61,6 +63,7 @@ fun LevelProgressScreen(scrollBehavior: ScrollBehavior) {
     )
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ProgressScreen(
     scrollBehavior: ScrollBehavior,
@@ -108,6 +111,16 @@ private fun ProgressScreen(
                             style = MiuixTheme.textStyles.footnote1,
                             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                         )
+                        Spacer(Modifier.height(8.dp))
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            JudgePill("极 FC", items.sumOf { it.fc })
+                            JudgePill("将 SSS+", items.sumOf { it.sss })
+                            JudgePill("神 AP", items.sumOf { it.ap })
+                            JudgePill("FDX", items.sumOf { it.fdx })
+                        }
                     }
                 }
             }
@@ -133,6 +146,17 @@ private fun ProgressScreen(
                             }
                             Spacer(Modifier.height(8.dp))
                             ProgressBar(ratio = item.ratio)
+                            Spacer(Modifier.height(10.dp))
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                JudgePill("已游玩", item.played)
+                                JudgePill("极 FC", item.fc)
+                                JudgePill("将 SSS+", item.sss)
+                                JudgePill("神 AP", item.ap)
+                                JudgePill("FDX", item.fdx)
+                            }
                         }
                     }
                 }
@@ -160,5 +184,21 @@ private fun ProgressBar(ratio: Float, modifier: Modifier = Modifier) {
                     .background(MiuixTheme.colorScheme.primary),
             )
         }
+    }
+}
+
+/** 判定维度小胶囊（极 / 将 / 神 / FDX）。 */
+@Composable
+private fun JudgePill(label: String, count: Int) {
+    Box(
+        modifier = Modifier
+            .background(MiuixTheme.colorScheme.onSurface.copy(alpha = 0.06f), RoundedCornerShape(6.dp))
+            .padding(horizontal = 7.dp, vertical = 2.dp),
+    ) {
+        Text(
+            text = "$label $count",
+            style = MiuixTheme.textStyles.footnote2,
+            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+        )
     }
 }

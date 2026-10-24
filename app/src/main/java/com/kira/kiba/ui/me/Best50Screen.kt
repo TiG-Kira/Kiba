@@ -41,13 +41,13 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  */
 @Composable
 fun Best50Screen(scrollBehavior: ScrollBehavior) {
-    val records by produceState(initialValue = emptyList<RecordEntity>()) {
+    val b50 by produceState(initialValue = DivingFishAccount.Best50()) {
         value = DivingFishAccount.best50()
     }
     val account by DivingFishAccount.state.collectAsState()
-    val sd = remember(records) { records.take(35) }
-    val dx = remember(records) { records.drop(35).take(15) }
-    val total = records.sumOf { it.ra }
+    val old = b50.old
+    val new = b50.new
+    val total = b50.rating
 
     Scaffold(
         modifier = Modifier
@@ -62,7 +62,7 @@ fun Best50Screen(scrollBehavior: ScrollBehavior) {
             contentPadding = pageContentPadding(withNavBar = false),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            if (records.isEmpty()) {
+            if (b50.old.isEmpty() && b50.new.isEmpty()) {
                 item(key = "empty") {
                     EmptyStateCard(
                         text = if (account.bound) {
@@ -89,14 +89,14 @@ fun Best50Screen(scrollBehavior: ScrollBehavior) {
                                 )
                                 Spacer(Modifier.height(2.dp))
                                 Text(
-                                    text = "新曲 35（ra ${sd.sumOf { it.ra }}） + 旧曲 15（ra ${dx.sumOf { it.ra }}）",
+                                    text = "旧曲 ${old.size}（ra ${b50.oldRa}） + 新曲 ${new.size}（ra ${b50.newRa}）",
                                     style = MiuixTheme.textStyles.footnote1,
                                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                                 )
                             }
                             Column(horizontalAlignment = Alignment.End) {
                                 Text(
-                                    text = "sd ${sd.size} / dx ${dx.size}",
+                                    text = "旧 ${old.size} / 新 ${new.size}",
                                     style = MiuixTheme.textStyles.footnote1,
                                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                                 )
@@ -104,9 +104,34 @@ fun Best50Screen(scrollBehavior: ScrollBehavior) {
                         }
                     }
                 }
-                items@ records.forEachIndexed { index, r ->
-                    item(key = "b50_$index") {
-                        Best50Row(rank = index + 1, record = r, isDx = index >= 35)
+                if (new.isNotEmpty()) {
+                    item(key = "new_title") {
+                        Text(
+                            text = "新曲 ${new.size}（当前版本，Best15）",
+                            style = MiuixTheme.textStyles.subtitle,
+                            color = MiuixTheme.colorScheme.primary,
+                            modifier = Modifier.padding(start = 4.dp, top = 4.dp),
+                        )
+                    }
+                    new.forEachIndexed { index, r ->
+                        item(key = "b50_new_$index") {
+                            Best50Row(rank = index + 1, record = r, tag = "新")
+                        }
+                    }
+                }
+                if (old.isNotEmpty()) {
+                    item(key = "old_title") {
+                        Text(
+                            text = "旧曲 ${old.size}（Best35）",
+                            style = MiuixTheme.textStyles.subtitle,
+                            color = MiuixTheme.colorScheme.onSurface,
+                            modifier = Modifier.padding(start = 4.dp, top = 8.dp),
+                        )
+                    }
+                    old.forEachIndexed { index, r ->
+                        item(key = "b50_old_$index") {
+                            Best50Row(rank = index + 1, record = r, tag = "旧")
+                        }
                     }
                 }
             }
@@ -115,7 +140,7 @@ fun Best50Screen(scrollBehavior: ScrollBehavior) {
 }
 
 @Composable
-private fun Best50Row(rank: Int, record: RecordEntity, isDx: Boolean) {
+private fun Best50Row(rank: Int, record: RecordEntity, tag: String) {
     val diffColor = difficultyColor(
         DifficultyType.entries.getOrElse(record.levelIndex) { DifficultyType.UTAGE }
     )
@@ -142,7 +167,7 @@ private fun Best50Row(rank: Int, record: RecordEntity, isDx: Boolean) {
                 Text(
                     text = "[${difficultyLabel(record.levelIndex)} ${record.level}] " +
                         "%.4f%%".format(record.achievements) +
-                        if (isDx) "　· 旧曲" else "",
+                        "　· $tag",
                     style = MiuixTheme.textStyles.footnote2,
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                 )

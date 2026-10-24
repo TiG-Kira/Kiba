@@ -30,6 +30,7 @@ import com.kira.kiba.ui.me.VersionProgressScreen
 import com.kira.kiba.ui.settings.AboutScreen
 import com.kira.kiba.ui.settings.SettingsScreen
 import com.kira.kiba.ui.songdetail.ChartDetailScreen
+import com.kira.kiba.ui.tools.DxConverterScreen
 import com.kira.kiba.ui.songdetail.SongDetailScreen
 import com.kira.kiba.ui.songs.SongsScreen
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
@@ -126,6 +127,11 @@ sealed interface KibaSubPage {
     /** 查分器登录（账号密码 / OAuth 双通道；独立子页避免弹层与软键盘冲突）。 */
     data object Login : KibaSubPage {
         override val title: String = "登录查分器"
+    }
+
+    /** DX 分数转换（判定数量 → 达成率 / Rating）。 */
+    data object DxConverter : KibaSubPage {
+        override val title: String = "DX 分数转换"
     }
 
     /** 关于。 */
@@ -259,6 +265,7 @@ fun KibaMainScreen() {
                             scrollBehavior = scrollBehavior,
                             onLoginSuccess = { subPage = null },
                         )
+                        is KibaSubPage.DxConverter -> DxConverterScreen(scrollBehavior = scrollBehavior)
                         is KibaSubPage.About -> AboutScreen(scrollBehavior = scrollBehavior)
                     }
                 } else {
@@ -278,6 +285,7 @@ fun KibaMainScreen() {
                             onOpenRecords = { subPage = KibaSubPage.Records },
                             onOpenVersionProgress = { subPage = KibaSubPage.VersionProgress },
                             onOpenLevelProgress = { subPage = KibaSubPage.LevelProgress },
+                            onOpenDxConverter = { subPage = KibaSubPage.DxConverter },
                         )
                         KibaTab.Settings -> SettingsScreen(
                             scrollBehavior = scrollBehavior,
