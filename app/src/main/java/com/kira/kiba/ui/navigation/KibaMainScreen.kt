@@ -25,6 +25,7 @@ import com.kira.kiba.ui.me.Best50Screen
 import com.kira.kiba.ui.me.LevelProgressScreen
 import com.kira.kiba.ui.me.LoginScreen
 import com.kira.kiba.ui.me.MeScreen
+import com.kira.kiba.ui.me.ProgressDetailScreen
 import com.kira.kiba.ui.me.RecordsScreen
 import com.kira.kiba.ui.me.VersionProgressScreen
 import com.kira.kiba.ui.settings.AboutScreen
@@ -127,6 +128,14 @@ sealed interface KibaSubPage {
     /** 查分器登录（账号密码 / OAuth 双通道；独立子页避免弹层与软键盘冲突）。 */
     data object Login : KibaSubPage {
         override val title: String = "登录查分器"
+    }
+
+    /** 进度明细（版本 / 等级分类下的歌曲列表）。 */
+    data class ProgressDetail(
+        val groupType: com.kira.kiba.core.stats.ProgressDetail.GroupType,
+        val groupKey: String,
+    ) : KibaSubPage {
+        override val title: String = groupKey
     }
 
     /** DX 分数转换（判定数量 → 达成率 / Rating）。 */
@@ -258,12 +267,27 @@ fun KibaMainScreen() {
                         )
                         is KibaSubPage.Best50 -> Best50Screen(scrollBehavior = scrollBehavior)
                         is KibaSubPage.Records -> RecordsScreen(scrollBehavior = scrollBehavior)
-                        is KibaSubPage.VersionProgress -> VersionProgressScreen(scrollBehavior = scrollBehavior)
-                        is KibaSubPage.LevelProgress -> LevelProgressScreen(scrollBehavior = scrollBehavior)
+                        is KibaSubPage.VersionProgress -> VersionProgressScreen(
+                            scrollBehavior = scrollBehavior,
+                            onOpenDetail = { type, key ->
+                                subPage = KibaSubPage.ProgressDetail(type, key)
+                            },
+                        )
+                        is KibaSubPage.LevelProgress -> LevelProgressScreen(
+                            scrollBehavior = scrollBehavior,
+                            onOpenDetail = { type, key ->
+                                subPage = KibaSubPage.ProgressDetail(type, key)
+                            },
+                        )
                         is KibaSubPage.LlmConfig -> LlmConfigScreen(scrollBehavior = scrollBehavior)
                         is KibaSubPage.Login -> LoginScreen(
                             scrollBehavior = scrollBehavior,
                             onLoginSuccess = { subPage = null },
+                        )
+                        is KibaSubPage.ProgressDetail -> ProgressDetailScreen(
+                            groupType = sub.groupType,
+                            groupKey = sub.groupKey,
+                            scrollBehavior = scrollBehavior,
                         )
                         is KibaSubPage.DxConverter -> DxConverterScreen(scrollBehavior = scrollBehavior)
                         is KibaSubPage.About -> AboutScreen(scrollBehavior = scrollBehavior)
@@ -285,6 +309,9 @@ fun KibaMainScreen() {
                             onOpenRecords = { subPage = KibaSubPage.Records },
                             onOpenVersionProgress = { subPage = KibaSubPage.VersionProgress },
                             onOpenLevelProgress = { subPage = KibaSubPage.LevelProgress },
+                            onOpenProgressDetail = { type, key ->
+                                subPage = KibaSubPage.ProgressDetail(type, key)
+                            },
                             onOpenDxConverter = { subPage = KibaSubPage.DxConverter },
                         )
                         KibaTab.Settings -> SettingsScreen(

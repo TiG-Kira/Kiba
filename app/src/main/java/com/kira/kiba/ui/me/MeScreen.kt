@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.dp
 import com.kira.kiba.core.account.DivingFishAccount
 import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.stats.MaimaiStats
+import com.kira.kiba.core.stats.ProgressDetail
 import com.kira.kiba.core.state.KibaState
 import com.kira.kiba.ui.common.DxRatingTag
 import com.kira.kiba.ui.common.SectionTitle
@@ -59,6 +60,7 @@ fun MeScreen(
     onOpenVersionProgress: () -> Unit,
     onOpenLevelProgress: () -> Unit,
     onOpenDxConverter: () -> Unit,
+    onOpenProgressDetail: (ProgressDetail.GroupType, String) -> Unit,
 ) {
     val account by DivingFishAccount.state.collectAsState()
 
@@ -131,14 +133,14 @@ fun MeScreen(
             item(key = "version_progress") {
                 ArrowPreference(
                     title = "版本进度",
-                    summary = "各版本歌曲的收集 / 游玩情况",
+                    summary = "各版本歌曲的收集 / 游玩情况（点击进入歌曲明细）",
                     onClick = onOpenVersionProgress,
                 )
             }
             item(key = "level_progress") {
                 ArrowPreference(
                     title = "等级进度",
-                    summary = "各难度等级谱面的游玩情况",
+                    summary = "各难度等级谱面的游玩情况（点击进入歌曲明细）",
                     onClick = onOpenLevelProgress,
                 )
             }

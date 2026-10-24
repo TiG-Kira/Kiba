@@ -26,6 +26,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.unit.dp
 import com.kira.kiba.core.account.DivingFishAccount
 import com.kira.kiba.core.stats.MaimaiStats
+import com.kira.kiba.core.stats.ProgressDetail
 import com.kira.kiba.ui.common.EmptyStateCard
 import com.kira.kiba.ui.common.pageContentPadding
 import top.yukonga.miuix.kmp.basic.Card
@@ -40,12 +41,17 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  * 需要曲库数据；绑定查分器后「已游玩」按真实成绩统计。
  */
 @Composable
-fun VersionProgressScreen(scrollBehavior: ScrollBehavior) {
+fun VersionProgressScreen(
+    scrollBehavior: ScrollBehavior,
+    onOpenDetail: (ProgressDetail.GroupType, String) -> Unit,
+) {
     ProgressScreen(
         scrollBehavior = scrollBehavior,
         title = "版本进度",
+        groupType = ProgressDetail.GroupType.VERSION,
         load = { MaimaiStats.versionProgress() },
         emptyHint = "曲库还是空的\n请先到「设置 → 曲库更新」同步曲库",
+        onOpenDetail = onOpenDetail,
     )
 }
 
@@ -54,12 +60,17 @@ fun VersionProgressScreen(scrollBehavior: ScrollBehavior) {
  * 各难度等级（7 / 7+ / 8 … 14+ / 15）的谱面游玩情况。
  */
 @Composable
-fun LevelProgressScreen(scrollBehavior: ScrollBehavior) {
+fun LevelProgressScreen(
+    scrollBehavior: ScrollBehavior,
+    onOpenDetail: (ProgressDetail.GroupType, String) -> Unit,
+) {
     ProgressScreen(
         scrollBehavior = scrollBehavior,
         title = "等级进度",
+        groupType = ProgressDetail.GroupType.LEVEL,
         load = { MaimaiStats.levelProgress() },
         emptyHint = "曲库还是空的\n请先到「设置 → 曲库更新」同步曲库",
+        onOpenDetail = onOpenDetail,
     )
 }
 
@@ -68,8 +79,10 @@ fun LevelProgressScreen(scrollBehavior: ScrollBehavior) {
 private fun ProgressScreen(
     scrollBehavior: ScrollBehavior,
     title: String,
+    groupType: ProgressDetail.GroupType,
     load: suspend () -> List<MaimaiStats.ProgressItem>,
     emptyHint: String,
+    onOpenDetail: (ProgressDetail.GroupType, String) -> Unit,
 ) {
     val state = produceState(initialValue = emptyList<MaimaiStats.ProgressItem>()) {
         value = load()
@@ -129,7 +142,10 @@ private fun ProgressScreen(
             }
             items.forEach { item ->
                 item(key = "${title}_${item.key}") {
-                    Card(modifier = Modifier.fillMaxWidth()) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = { onOpenDetail(groupType, item.key) },
+                    ) {
                         Column(modifier = Modifier.padding(16.dp)) {
                             Row(modifier = Modifier.fillMaxWidth()) {
                                 Text(

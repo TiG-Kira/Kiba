@@ -1,7 +1,6 @@
 package com.kira.kiba.core.stats
 
 import com.kira.kiba.core.db.AppDataBase
-import com.kira.kiba.core.db.entity.RecordEntity
 import com.kira.kiba.core.model.DifficultyType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -91,21 +90,4 @@ object MaimaiStats {
         return base to level
     }
 
-    // ── 判定维度（上游 prober 字段口径）──
-
-    /** 极：fc 字段非空（fc / ap / app 都算全连）。 */
-    val RecordEntity.isFc: Boolean
-        get() = fc.isNotBlank()
-
-    /** 神：AP / AP+（fc = "ap" 或 "app"）。 */
-    val RecordEntity.isAp: Boolean
-        get() = fc == "ap" || fc == "app"
-
-    /** 将：SSS 及以上（rate = sss / sss+）。 */
-    val RecordEntity.isSss: Boolean
-        get() = rate.startsWith("sss", ignoreCase = true)
-
-    /** FDX：FULL SYNC（fs 字段非空）。 */
-    val RecordEntity.isFdx: Boolean
-        get() = fs.isNotBlank()
 }
