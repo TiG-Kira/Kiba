@@ -1,6 +1,7 @@
 package com.kira.kiba.ui.me
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,6 +25,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.unit.dp
 import com.kira.kiba.core.model.DifficultyType
@@ -231,14 +233,15 @@ private fun DoneTag() {
 private fun SelectPill(text: String, selected: Boolean, onClick: () -> Unit) {
     Box(
         modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
             .background(
                 if (selected) {
                     MiuixTheme.colorScheme.primary.copy(alpha = 0.18f)
                 } else {
                     MiuixTheme.colorScheme.onSurface.copy(alpha = 0.06f)
                 },
-                RoundedCornerShape(6.dp),
             )
+            .clickable(onClick = onClick)
             .padding(horizontal = 9.dp, vertical = 3.dp),
     ) {
         Text(

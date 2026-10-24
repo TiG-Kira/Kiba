@@ -1,6 +1,11 @@
 package com.kira.kiba.ui.settings
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -23,10 +28,15 @@ import com.kira.kiba.core.state.KibaState
 import com.kira.kiba.core.utils.SpUtil
 import com.kira.kiba.ui.common.SectionTitle
 import com.kira.kiba.ui.common.pageContentPadding
+import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.DropdownItem
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
+import top.yukonga.miuix.kmp.basic.TextButton
+import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.basic.TextField
+import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.OverlaySpinnerPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
@@ -48,6 +58,8 @@ fun SettingsScreen(
     val syncState by SongDataSync.state.collectAsState()
     val updateAvailable by SongDataSync.updateAvailable.collectAsState()
     var llmOn by remember { mutableStateOf(SpUtil.isLlmEnabled()) }
+    var coverSource by remember { mutableStateOf(SpUtil.getCoverSource()) }
+    var showCoverSource by remember { mutableStateOf(false) }
 
     Scaffold(
         modifier = Modifier
@@ -139,6 +151,12 @@ fun SettingsScreen(
             item(key = "data_card") {
                 Card(modifier = Modifier.fillMaxWidth()) {
                 ArrowPreference(
+                    title = "自定义封面源",
+                    summary = coverSource.ifBlank { "使用内置候选链（水鱼 CDN + 官网镜像）" }
+                        .let { if (coverSource.isBlank()) it else coverSource },
+                    onClick = { showCoverSource = true },
+                )
+                ArrowPreference(
                     title = "曲库更新",
                     summary = when (val s = syncState) {
                         SongDataSync.SyncState.Idle -> "点击检查曲库更新（update.json）"
@@ -186,6 +204,56 @@ fun SettingsScreen(
                         summary = "版本 ${BuildConfig.VERSION_NAME} · 基于 MaimaiData 二次开发",
                         onClick = onOpenAbout,
                     )
+                }
+            }
+        }
+    }
+
+    if (showCoverSource) {
+        CoverSourceDialog(
+            current = coverSource,
+            onDismiss = { showCoverSource = false },
+            onConfirm = {
+                coverSource = it
+                SpUtil.setCoverSource(it)
+                showCoverSource = false
+            },
+        )
+    }
+}
+
+/** 自定义封面图床前缀编辑弹层。 */
+@Composable
+private fun CoverSourceDialog(
+    current: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var value by remember { mutableStateOf(current) }
+    OverlayDialog(
+        show = true,
+        title = "自定义封面源",
+        summary = "填写图床前缀，例：https://your-mirror/maimai-mobile/img/Music/",
+        onDismissRequest = onDismiss,
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            TextField(
+                value = value,
+                onValueChange = { value = it },
+                label = "图床前缀",
+                useLabelAsPlaceholder = true,
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextButton(text = "取消", onClick = onDismiss)
+                Spacer(Modifier.width(12.dp))
+                Button(onClick = { onConfirm(value) }) {
+                    Text(text = "保存")
                 }
             }
         }

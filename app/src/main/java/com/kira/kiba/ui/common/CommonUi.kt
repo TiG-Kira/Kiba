@@ -17,9 +17,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -31,11 +28,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.Image
-import coil.compose.AsyncImagePainter
-import coil.compose.rememberAsyncImagePainter
+import coil.compose.SubcomposeAsyncImage
 import com.kira.kiba.R
 import com.kira.kiba.core.model.DifficultyType
 import com.kira.kiba.core.network.MaimaiDataClient
+import com.kira.kiba.core.utils.SpUtil
 import com.kira.kiba.ui.navigation.LocalNavBarBottomPadding
 import com.kira.kiba.ui.navigation.LocalSystemNavBarBottom
 import com.kira.kiba.ui.navigation.LocalTopBarClearance
@@ -113,19 +110,6 @@ fun CoverFrame(
 ) {
     val stroke = colorResource(genreStrokeRes(genre))
     val candidates = remember(songId, imageUrl) { coverCandidates(songId, imageUrl) }
-    var index by remember(candidates) { mutableStateOf(0) }
-    val painter = rememberAsyncImagePainter(
-        model = candidates.getOrNull(index),
-        onError = {
-            if (index < candidates.lastIndex) index = index + 1
-        },
-    )
-    val failed = (painter.state as? AsyncImagePainter.State)?.let {
-        it is AsyncImagePainter.State.Error
-    } ?: false
-    val loaded = (painter.state as? AsyncImagePainter.State)?.let {
-        it is AsyncImagePainter.State.Success
-    } ?: false
 
     Box(
         modifier = modifier
@@ -133,39 +117,99 @@ fun CoverFrame(
             .clip(RoundedCornerShape(10.dp))
             .border(2.dp, stroke, RoundedCornerShape(10.dp))
     ) {
-        if (loaded && !failed) {
-            Image(
-                painter = painter,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(2.dp)
-                    .clip(RoundedCornerShape(8.dp)),
-            )
-        } else {
-            CoverPlaceholder(stroke = stroke, size = size)
-        }
+        CoverImageChain(
+            candidates = candidates,
+            index = 0,
+            stroke = stroke,
+            size = size,
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(2.dp)
+                .clip(RoundedCornerShape(8.dp)),
+        )
     }
 }
 
-/** 封面候选 URL 链（水鱼 CDN 多种编号形态 → 官网图床）。 */
+/**
+ * 封面候选链加载：逐个尝试，任一成功即显示；全部失败落回占位。
+ * 用 SubcomposeAsyncImage 的 error slot 递归实现，避免依赖 painter 状态判断。
+ */
+@Composable
+private fun CoverImageChain(
+    candidates: List<String>,
+    index: Int,
+    stroke: Color,
+    size: androidx.compose.ui.unit.Dp,
+    modifier: Modifier = Modifier,
+) {
+    val url = candidates.getOrNull(index)
+    if (url == null) {
+        CoverPlaceholder(stroke = stroke, size = size, modifier = modifier)
+        return
+    }
+    SubcomposeAsyncImage(
+        model = url,
+        contentDescription = null,
+        contentScale = ContentScale.Crop,
+        loading = { CoverPlaceholder(stroke = stroke, size = size, modifier = modifier) },
+        error = {
+            CoverImageChain(
+                candidates = candidates,
+                index = index + 1,
+                stroke = stroke,
+                size = size,
+                modifier = modifier,
+            )
+        },
+        modifier = modifier,
+    )
+}
+
+/**
+ * 封面候选 URL 链：
+ * 1. 自定义图床前缀（设置页可填，命中自己的镜像最快）；
+ * 2. 水鱼 CDN `covers/%05d.png` 三种编号形态（songId / mod 10000 / mod 100000，
+ *    水鱼只收录到 DX 2024 曲库，DX2025+ 新曲没有）；
+ * 3. 官网图床 maimaidx.jp + 若干镜像（DX 新曲唯一来源，国内可能需镜像）。
+ */
 private fun coverCandidates(songId: Int, imageUrl: String): List<String> {
     val list = mutableListOf<String>()
+
+    fun push(url: String) {
+        if (url.isNotBlank() && url !in list) list.add(url)
+    }
+
+    // 自定义图床
+    val custom = SpUtil.getCoverSource()
+    if (custom.isNotBlank() && imageUrl.isNotBlank()) {
+        push(custom.trimEnd('/') + "/" + imageUrl)
+    }
+
+    // 水鱼 CDN：多种编号形态
     fun pushCd(id: Int) {
-        val url = MaimaiDataClient.DIVING_FISH_COVER_URL + "%05d".format(id) + ".png"
-        if (url !in list) list.add(url)
+        push(MaimaiDataClient.DIVING_FISH_COVER_URL + "%05d".format(id) + ".png")
     }
     pushCd(songId)
     val mod10k = songId % 10000
     if (mod10k != songId) pushCd(mod10k)
     val mod100k = songId % 100000
     if (mod100k != songId && mod100k != mod10k) pushCd(mod100k)
+
+    // 官网图床 + 镜像（DX 新曲靠它们）
     if (imageUrl.isNotBlank()) {
-        list.add(MaimaiDataClient.IMAGE_BASE_URL + imageUrl)
+        MIRRORS.forEach { base -> push(base.trimEnd('/') + "/" + imageUrl) }
     }
     return list
 }
+
+/** 已知镜像（同一路径结构 /maimai-mobile/img/Music/{hash}.png）。 */
+private val MIRRORS = listOf(
+    "https://maimaidx.jp/maimai-mobile/img/Music/",
+    "https://maimai-mobile.jp/maimai-mobile/img/Music/",
+    "https://maimai.sakura.party/maimai-mobile/img/Music/",
+    "https://maimai.wmflabs.com/maimai-mobile/img/Music/",
+    "https://maimai.sega.jp/maimai-mobile/img/Music/",
+)
 
 /** 封面占位：流派色半透明底 + 音符。 */
 @Composable

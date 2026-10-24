@@ -291,4 +291,15 @@ object SpUtil {
     fun setVpnDifficulties(difficulties: Set<Int>) {
         userInfoPrefs.edit { putStringSet(KEY_VPN_DIFFICULTIES, difficulties.map { it.toString() }.toSet()) }
     }
+
+    // ================= 封面源 =================
+
+    private const val KEY_COVER_SOURCE = "cover_source"
+
+    /** 自定义封面图床前缀（留空 = 使用内置候选链）。例：https://xxx/maimai-mobile/img/Music/ */
+    fun getCoverSource(): String = userInfoPrefs.getString(KEY_COVER_SOURCE, "") ?: ""
+
+    fun setCoverSource(prefix: String) {
+        userInfoPrefs.edit { putString(KEY_COVER_SOURCE, prefix.trim()) }
+    }
 }
