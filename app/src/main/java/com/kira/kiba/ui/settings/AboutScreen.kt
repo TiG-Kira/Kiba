@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -43,7 +44,8 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
             item(key = "app_title") { SectionTitle("应用") }
             item(key = "app_card") {
                 Card(
-                    cornerRadius = CardDefaults.CornerRadius,
+                modifier = Modifier.fillMaxWidth(),
+                cornerRadius = CardDefaults.CornerRadius,
                     insideMargin = CardDefaults.InsideMargin,
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
@@ -71,7 +73,8 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
             item(key = "data_title") { SectionTitle("数据来源") }
             item(key = "data_card") {
                 Card(
-                    cornerRadius = CardDefaults.CornerRadius,
+                modifier = Modifier.fillMaxWidth(),
+                cornerRadius = CardDefaults.CornerRadius,
                     insideMargin = CardDefaults.InsideMargin,
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
@@ -90,7 +93,8 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
             item(key = "thanks_title") { SectionTitle("致谢") }
             item(key = "thanks_card") {
                 Card(
-                    cornerRadius = CardDefaults.CornerRadius,
+                modifier = Modifier.fillMaxWidth(),
+                cornerRadius = CardDefaults.CornerRadius,
                     insideMargin = CardDefaults.InsideMargin,
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
@@ -108,7 +112,8 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
             item(key = "oss_title") { SectionTitle("开源") }
             item(key = "oss_card") {
                 Card(
-                    cornerRadius = CardDefaults.CornerRadius,
+                modifier = Modifier.fillMaxWidth(),
+                cornerRadius = CardDefaults.CornerRadius,
                     insideMargin = CardDefaults.InsideMargin,
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {

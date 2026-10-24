@@ -39,12 +39,33 @@ class KibaAgent(private val context: Context) {
         val type: String,
         val topLevel: String,
         val topDs: Double,
+        val imageUrl: String = "",
+        val difficulty: String = "",
+    )
+
+    /** 技能卡：可点击直接执行（无需 LLM），同时作为 LLM 的 tool。 */
+    data class AgentSkill(
+        val id: String,
+        val title: String,
+        val summary: String,
+    )
+
+    /** B50 卡：总分 + 旧曲 35 / 新曲 15 分别的合计。 */
+    data class Best50Info(
+        val total: Int,
+        val b35: Int,
+        val b15: Int,
+        val oldCount: Int,
+        val newCount: Int,
+        val entries: List<RecordEntity> = emptyList(),
     )
 
     data class AgentReply(
         val text: String,
         val songs: List<AgentSong> = emptyList(),
         val records: List<RecordEntity> = emptyList(),
+        val skills: List<AgentSkill> = emptyList(),
+        val b50: Best50Info? = null,
     )
 
     private val client = OkHttpClient.Builder()
@@ -52,50 +73,116 @@ class KibaAgent(private val context: Context) {
         .readTimeout(15, TimeUnit.SECONDS)
         .build()
 
+    /**
+     * 统一入口。
+     * - 命中本地技能意图 → 直接执行（不消耗 LLM）；
+     * - 否则 → 走 LLM，LLM 可调用本地技能（tool calling），最多 3 轮；
+     * - 未配置 LLM → 提示用户点上方技能卡手动发起。
+     */
     suspend fun handle(input: String): AgentReply {
         val text = input.trim()
         if (text.isEmpty()) return AgentReply("说点什么吧，比如「我的 Best 50」。")
-        return when {
-            isLogin(text) -> AgentReply(
+
+        if (isLogin(text)) {
+            return AgentReply(
                 "账户相关操作请在「我」页面完成：\n" +
-                    "· 未登录：点击顶部卡片 →「OAuth 授权登录」（推荐）或「账号密码登录」；\n" +
+                    "· 未登录：点击顶部卡片 →「登录查分器账户」（账号密码或 OAuth）；\n" +
                     "· 已登录：在「我」页面可查看实时 Rating、Best 50，也可退出登录。"
             )
-
-            isBest50(text) -> best50()
-            isPushRating(text) -> pushRating()
-            isRandom(text) -> randomSong()
-            isHelp(text) -> AgentReply(HELP_TEXT)
-            isSongQuery(text) -> querySong(text)
-            else -> openEnded(text)
         }
+        if (isHelp(text)) return AgentReply(HELP_TEXT, skills = SKILLS)
+
+        intentSkillId(text)?.let { id ->
+            return runSkill(id, text)
+        }
+
+        if (!KibaLlm.isConfigured()) {
+            return AgentReply(
+                "当前未配置 LLM，无法自由提问。\n" +
+                    "请点下方技能卡直接使用：Best 50 / 推分推荐 / 随机选曲 / 查歌 / 攻略。\n" +
+                    "（设置 → Agent 模型配置 可开启对话能力）",
+                skills = SKILLS,
+            )
+        }
+        return llmWithSkills(text)
+    }
+
+    /** 直接执行某个技能（技能卡点击 / 意图命中都用它）。 */
+    suspend fun runSkill(id: String, arg: String = ""): AgentReply = when (id) {
+        "best50" -> best50()
+        "push_rating" -> pushRating()
+        "random_song" -> randomSong()
+        "song_query" -> querySong(arg)
+        "advice" -> AgentReply(ADVICE_TEXT, skills = listOf(SKILLS.first { it.id == "advice" }))
+        else -> AgentReply("未知技能：$id", skills = SKILLS)
+    }
+
+    /** 意图 → 技能 id（命中即直接执行，不走 LLM）。 */
+    private fun intentSkillId(t: String): String? = when {
+        isBest50(t) -> "best50"
+        isPushRating(t) -> "push_rating"
+        isRandom(t) -> "random_song"
+        isSongQuery(t) -> "song_query"
+        isAdvice(t) -> "advice"
+        else -> null
     }
 
     /**
-     * 开放问题：LLM 优先（系统提示词 + 本地数据上下文 + 用户输入）；
-     * 未配置 / 调用失败 → 降级为本地攻略或联网搜索，并明确告知降级。
+     * LLM 工具循环：模型可调用本地技能，最多 3 轮；
+     * 工具结果回灌后由模型总结成自然语言回答。
      */
-    private suspend fun openEnded(text: String): AgentReply {
-        if (KibaLlm.isConfigured()) {
-            val messages = listOf(
-                KibaLlm.Message.system(SpUtil.getLlmSystemPrompt() + "\n\n" + localContext()),
-                KibaLlm.Message.user(text),
-            )
-            KibaLlm.chat(messages)
-                .onSuccess { return AgentReply(it) }
-                .onFailure { e -> Log.w(TAG, "llm chat failed: ${e.message}", e) }
-        }
-        return when {
-            isAdvice(text) -> AgentReply(
-                if (KibaLlm.isConfigured()) {
-                    "LLM 调用失败（可能是网络或配置问题），已降级为本地攻略：\n\n" + ADVICE_TEXT
-                } else {
-                    ADVICE_TEXT
-                }
-            )
+    private suspend fun llmWithSkills(input: String): AgentReply {
+        val messages = mutableListOf(
+            KibaLlm.Message.system(
+                SpUtil.getLlmSystemPrompt() + "\n\n" + localContext() + "\n\n" + skillHint()
+            ),
+            KibaLlm.Message.user(input),
+        )
+        val tools = SKILLS.map { KibaLlm.ToolDef(it.id, it.summary) }
+        var collected = AgentReply("")
 
-            else -> webFallback(text)
+        repeat(3) { round ->
+            val result = KibaLlm.chat(messages, tools).getOrElse { e ->
+                return AgentReply("LLM 调用失败：${e.message}", skills = SKILLS)
+            }
+            if (result.toolCalls.isEmpty()) {
+                return AgentReply(
+                    result.text.ifBlank { collected.text },
+                    songs = collected.songs,
+                    records = collected.records,
+                    skills = collected.skills,
+                    b50 = collected.b50,
+                )
+            }
+            for (call in result.toolCalls) {
+                val reply = runSkill(call.name, input)
+                collected = AgentReply(
+                    text = collected.text + reply.text,
+                    songs = collected.songs + reply.songs,
+                    records = collected.records + reply.records,
+                    skills = collected.skills + reply.skills,
+                    b50 = collected.b50 ?: reply.b50,
+                )
+                messages.add(KibaLlm.Message.assistant("[调用技能 ${call.name}]"))
+                messages.add(KibaLlm.Message.user("技能返回：\n" + reply.text))
+            }
+            if (round == 2) {
+                return AgentReply(
+                    collected.text.ifBlank { "已完成技能调用。" },
+                    songs = collected.songs,
+                    records = collected.records,
+                    skills = collected.skills,
+                    b50 = collected.b50,
+                )
+            }
         }
+        return AgentReply(collected.text, songs = collected.songs, skills = collected.skills, b50 = collected.b50)
+    }
+
+    /** 给 LLM 的技能说明。 */
+    private fun skillHint(): String = buildString {
+        append("【可用技能】（需要时调用工具，不要凭空编造）\n")
+        SKILLS.forEach { append("- ${it.id}：${it.summary}\n") }
     }
 
     /** 本地数据上下文：注入 LLM 的 maimai 事实（登录态 / Rating / 曲库版本），防止编造。 */
@@ -152,27 +239,42 @@ class KibaAgent(private val context: Context) {
     // ---------- 能力实现 ----------
 
     private suspend fun best50(): AgentReply {
-        val records = withContext(Dispatchers.IO) {
-            runCatching {
-                AppDataBase.getInstance().recordDao().getBest50List()
-            }.getOrDefault(emptyList())
-        }
-        if (records.isEmpty()) {
+        val b50 = DivingFishAccount.best50()
+        if (b50.old.isEmpty() && b50.new.isEmpty()) {
+            val local = withContext(Dispatchers.IO) {
+                runCatching {
+                    AppDataBase.getInstance().recordDao().getBest50List()
+                }.getOrDefault(emptyList())
+            }
+            if (local.isEmpty()) {
+                return AgentReply(
+                    "本地还没有成绩数据。\n请先在「我」页面登录查分器账户，登录后我会自动拉取你的 Best 50。"
+                )
+            }
+            val total = local.sumOf { it.ra }
             return AgentReply(
-                "本地还没有成绩数据。\n请先在「我」页面登录查分器账户，登录后我会自动拉取你的 Best 50。"
+                "Best 50（本地缓存，合计 ra = $total）：\n" +
+                    local.take(10).joinToString("\n") { r ->
+                        "· ${r.title} [${difficultyLabel(r.levelIndex)} ${r.level}] " +
+                            "%.4f%%".format(r.achievements) + "  ra ${r.ra}"
+                    },
+                records = local,
             )
         }
-        val total = records.sumOf { it.ra }
-        val sb = StringBuilder()
-        sb.append("你的 Best 50（合计 ra = $total）：\n")
-        records.take(15).forEachIndexed { i, r ->
-            sb.append(
-                "${i + 1}. ${r.title} [${difficultyLabel(r.levelIndex)} ${r.level}] " +
-                    "%.4f%%".format(r.achievements) + "  ra ${r.ra}\n"
-            )
-        }
-        if (records.size > 15) sb.append("……共 ${records.size} 条\n")
-        return AgentReply(sb.toString().trimEnd(), records = records)
+        return AgentReply(
+            "你的 Best 50：总分 ${b50.rating}\n" +
+                "· 旧曲 ${b50.old.size} 首 = ${b50.oldRa}\n" +
+                "· 新曲 ${b50.new.size} 首 = ${b50.newRa}",
+            records = b50.all,
+            b50 = Best50Info(
+                total = b50.rating,
+                b35 = b50.oldRa,
+                b15 = b50.newRa,
+                oldCount = b50.old.size,
+                newCount = b50.new.size,
+                entries = b50.all,
+            ),
+        )
     }
 
     private suspend fun pushRating(): AgentReply {
@@ -264,6 +366,8 @@ class KibaAgent(private val context: Context) {
                     type = song.type,
                     topLevel = top?.level ?: "-",
                     topDs = top?.ds ?: 0.0,
+                    imageUrl = song.imageUrl,
+                    difficulty = top?.let { difficultyLabel(it.difficultyType.ordinal) } ?: "",
                 )
             ),
         )
@@ -320,7 +424,25 @@ class KibaAgent(private val context: Context) {
             }
             sb.append("\n")
         }
-        return AgentReply(sb.toString().trimEnd())
+        val cards = matched.distinctBy { it.id }.take(8).map { s ->
+            val top = withContext(Dispatchers.IO) {
+                runCatching {
+                    AppDataBase.getInstance().chartDao().getChartsBySongId(s.id)
+                }.getOrDefault(emptyList())
+            }.maxByOrNull { it.ds }
+            AgentSong(
+                id = s.id,
+                title = s.title,
+                artist = s.artist,
+                genre = s.genre,
+                type = s.type,
+                topLevel = top?.level ?: "-",
+                topDs = top?.ds ?: 0.0,
+                imageUrl = s.imageUrl,
+                difficulty = top?.let { difficultyLabel(it.difficultyType.ordinal) } ?: "",
+            )
+        }
+        return AgentReply(sb.toString().trimEnd(), songs = cards)
     }
 
     /** 联网兜底：DuckDuckGo lite；失败明确降级。 */
@@ -386,6 +508,15 @@ class KibaAgent(private val context: Context) {
 
     companion object {
         private const val TAG = "KibaAgent"
+
+        /** 技能表：既是技能卡，也是 LLM 的 tool 定义。 */
+        val SKILLS = listOf(
+            AgentSkill("best50", "我的 Best 50", "查询查分器 Best 50（官方口径：旧曲 35 + 新曲 15，ra 之和即 DX Rating）"),
+            AgentSkill("push_rating", "推荐推分曲目", "按增益排序的推分建议，并列出未打的高定数谱面"),
+            AgentSkill("random_song", "随机来一首", "从本地曲库随机选一首歌（含定数与谱师）"),
+            AgentSkill("song_query", "查歌曲信息", "按歌名 / 别名 / ID 查询歌曲与各难度谱面信息"),
+            AgentSkill("advice", "舞萌建议", "舞萌通用游玩与推分攻略"),
+        )
 
         private val HELP_TEXT = """
             我是 Kiba Agent，我会这些：

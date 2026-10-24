@@ -2,6 +2,8 @@ package com.kira.kiba.ui.songs
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -310,7 +312,8 @@ private fun SongDataUpdateDialog(
     }
 }
 
-/** 歌曲卡片：封面框 + 标题/艺术家 + 最高难度分类 + ds。 */
+/** 歌曲卡片：封面 + 标题 + 副标题（曲师 · 分类）+ 副标题下方的 SD/DX 与各难度等级。 */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SongCard(
     song: SongWithChartsEntity,
@@ -325,8 +328,12 @@ fun SongCard(
         BasicComponent(
             title = song.songData.title,
             summary = buildString {
-                append(song.songData.artist)
-                append(" · ")
+                val charter = topChart?.charter?.takeIf { it.isNotBlank() && it != "-" }
+                if (charter != null) {
+                    append("谱师 ")
+                    append(charter)
+                    append(" · ")
+                }
                 append(song.songData.genre)
             },
             startAction = {
@@ -336,28 +343,18 @@ fun SongCard(
                     genre = song.songData.genre,
                 )
             },
-            endActions = {
-                Column(horizontalAlignment = Alignment.End) {
-                    if (topChart != null) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            ChartTypeChip(type = song.songData.type)
-                            HGap()
-                            DifficultyChip(
-                                text = "${difficultyLabel(topChart.difficultyType)} ${topChart.level}",
-                                color = difficultyColor(topChart.difficultyType),
-                            )
-                        }
-                        Spacer(Modifier.height(4.dp))
-                        // 各难度等级一览（BASIC 12 / ADVANCED 12+ …）
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            song.charts.sortedBy { it.difficultyType.ordinal }.forEach { chart ->
-                                DifficultyChip(
-                                    text = chart.level,
-                                    color = difficultyColor(chart.difficultyType).copy(alpha = 0.85f),
-                                    modifier = Modifier.padding(start = 3.dp),
-                                )
-                            }
-                        }
+            bottomAction = {
+                // SD / DX + 各难度等级，放在副标题下方
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    ChartTypeChip(type = song.songData.type)
+                    song.charts.sortedBy { it.difficultyType.ordinal }.forEach { chart ->
+                        DifficultyChip(
+                            text = "${difficultyLabel(chart.difficultyType)} ${chart.level}",
+                            color = difficultyColor(chart.difficultyType),
+                        )
                     }
                 }
             },

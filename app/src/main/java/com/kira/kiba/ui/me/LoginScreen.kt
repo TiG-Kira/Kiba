@@ -89,7 +89,8 @@ fun LoginScreen(
             item(key = "pw_title") { SectionTitle("账号密码登录（原版方式）") }
             item(key = "pw_card") {
                 Card(
-                    cornerRadius = CardDefaults.CornerRadius,
+                modifier = Modifier.fillMaxWidth(),
+                cornerRadius = CardDefaults.CornerRadius,
                     insideMargin = CardDefaults.InsideMargin,
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
@@ -156,7 +157,8 @@ fun LoginScreen(
             item(key = "oauth_title") { SectionTitle("OAuth 授权登录（备用）") }
             item(key = "oauth_card") {
                 Card(
-                    cornerRadius = CardDefaults.CornerRadius,
+                modifier = Modifier.fillMaxWidth(),
+                cornerRadius = CardDefaults.CornerRadius,
                     insideMargin = CardDefaults.InsideMargin,
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {

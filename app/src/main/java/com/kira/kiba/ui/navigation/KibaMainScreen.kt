@@ -308,7 +308,10 @@ fun KibaMainScreen() {
                                 subPage = KibaSubPage.SongDetail(song.songData.id)
                             },
                         )
-                        KibaTab.Agent -> AgentScreen(scrollBehavior = scrollBehavior)
+                        KibaTab.Agent -> AgentScreen(
+                            scrollBehavior = scrollBehavior,
+                            onOpenSong = { songId -> subPage = KibaSubPage.SongDetail(songId) },
+                        )
                         KibaTab.Me -> MeScreen(
                             scrollBehavior = scrollBehavior,
                             onOpenLogin = { subPage = KibaSubPage.Login },

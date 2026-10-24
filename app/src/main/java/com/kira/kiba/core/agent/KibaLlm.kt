@@ -51,11 +51,42 @@ object KibaLlm {
         class Network(detail: String) : LlmError("网络不通（$detail）")
     }
 
+    /** 工具（技能）定义，OpenAI 兼容 function calling 格式。 */
+    data class ToolDef(
+        val name: String,
+        val description: String,
+    )
+
+    /** 模型请求的工具调用。 */
+    data class ToolCall(
+        val id: String = "",
+        val name: String = "",
+        val arguments: String = "",
+    )
+
+    /** 一次对话的结果：文本 + 可能存在的工具调用。 */
+    data class ChatResult(
+        val text: String = "",
+        val toolCalls: List<ToolCall> = emptyList(),
+    )
+
     private data class ChatRequest(
         val model: String,
         val messages: List<Message>,
         val temperature: Float,
         @SerializedName("max_tokens") val maxTokens: Int,
+        val tools: List<Map<String, Any>>? = null,
+        @SerializedName("tool_choice") val toolChoice: String? = null,
+    )
+
+    private data class ToolCallDto(
+        val id: String? = null,
+        @SerializedName("function") val function: FunctionDto? = null,
+    )
+
+    private data class FunctionDto(
+        val name: String? = null,
+        val arguments: String? = null,
     )
 
     private data class ChatResponse(
@@ -63,7 +94,10 @@ object KibaLlm {
         val error: ApiError? = null,
     )
 
-    private data class Choice(val message: ResponseMessage? = null)
+    private data class Choice(
+        val message: ResponseMessage? = null,
+        @SerializedName("tool_calls") val toolCalls: List<ToolCallDto>? = null,
+    )
 
     private data class ResponseMessage(val role: String? = null, val content: String? = null)
 
@@ -89,7 +123,10 @@ object KibaLlm {
      * 通用对话：messages 原样透传，返回助手文本。
      * 失败抛 [LlmError] 子类（已含人类可读信息）。
      */
-    suspend fun chat(messages: List<Message>): Result<String> = withContext(Dispatchers.IO) {
+    suspend fun chat(
+        messages: List<Message>,
+        tools: List<ToolDef> = emptyList(),
+    ): Result<ChatResult> = withContext(Dispatchers.IO) {
         if (!isConfigured()) {
             return@withContext Result.failure(LlmError.NotConfigured())
         }
@@ -99,6 +136,25 @@ object KibaLlm {
                 messages = messages,
                 temperature = SpUtil.getLlmTemperature(),
                 maxTokens = SpUtil.getLlmMaxTokens(),
+                tools = if (tools.isEmpty()) {
+                    null
+                } else {
+                    tools.map { tool ->
+                        mapOf(
+                            "type" to "function",
+                            "function" to mapOf(
+                                "name" to tool.name,
+                                "description" to tool.description,
+                                "parameters" to mapOf(
+                                    "type" to "object",
+                                    "properties" to emptyMap<String, Any>(),
+                                    "required" to emptyList<String>(),
+                                ),
+                            ),
+                        )
+                    }
+                },
+                toolChoice = if (tools.isEmpty()) null else "auto",
             )
             val requestBuilder = Request.Builder()
                 .url(normalizeChatUrl(SpUtil.getLlmBaseUrl()))
@@ -119,11 +175,19 @@ object KibaLlm {
                     }
                 }
                 val parsed = gson.fromJson(text, ChatResponse::class.java)
-                val content = parsed?.choices?.firstOrNull()?.message?.content
-                if (content.isNullOrBlank()) {
+                val choice = parsed?.choices?.firstOrNull()
+                val calls = choice?.toolCalls.orEmpty().map {
+                    ToolCall(
+                        id = it.id.orEmpty(),
+                        name = it.function?.name.orEmpty(),
+                        arguments = it.function?.arguments.orEmpty(),
+                    )
+                }
+                val content = choice?.message?.content.orEmpty()
+                if (calls.isEmpty() && content.isBlank()) {
                     throw LlmError.Server(response.code, "响应缺少 content 字段")
                 }
-                content
+                ChatResult(text = content, toolCalls = calls)
             }
         }.onFailure { e ->
             if (e is LlmError) {
@@ -149,7 +213,7 @@ object KibaLlm {
                 Message.user("ping"),
             ),
         ).fold(
-            onSuccess = { "连接成功，模型回复：${it.take(20)}" },
+            onSuccess = { "连接成功，模型回复：${it.text.take(20)}" },
             onFailure = { e -> "连接失败：${e.message}" },
         )
     }

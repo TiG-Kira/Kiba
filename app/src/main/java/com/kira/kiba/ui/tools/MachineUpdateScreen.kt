@@ -48,8 +48,10 @@ import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
+import top.yukonga.miuix.kmp.preference.CheckboxPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import kotlin.random.Random
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -95,6 +97,17 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
         onDispose { CrawlerCaller.removeOnWechatCrawlerListener() }
     }
 
+    fun stopServices() {
+        runCatching {
+            context.stopService(Intent(context, LocalVpnService::class.java))
+            context.stopService(Intent(context, HttpServerService::class.java))
+        }
+        LocalVpnService.IsRunning = false
+        running = false
+        logs.add("已停止抓包")
+    }
+
+    /** 一条龙：起服务 → 复制链接 → 拉起微信 → 自动取微信授权 → 抓包上传。 */
     fun startServices() {
         runCatching {
             context.startService(Intent(context, LocalVpnService::class.java))
@@ -107,8 +120,24 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
         val link = "http://127.0.0.2:8284/$random"
         copyToClipboard(context, link)
         logs.add("已复制链接：$link")
-        logs.add("请切到微信，把链接粘贴发送并打开，等待抓包完成")
+        logs.add("正在拉起微信…请在微信里把链接粘贴并打开")
         openWechat(context)
+
+        // 自动取微信授权链接并进入抓包上传流程（无需用户再点按钮）
+        scope.launch {
+            try {
+                delay(3000)
+                val authUrl = CrawlerCaller.getWechatAuthUrl()
+                if (authUrl.isNullOrBlank()) {
+                    logs.add("获取微信授权链接失败，请确认手机能访问 tgk-wcaime.wahlap.com")
+                    return@launch
+                }
+                logs.add("已获取微信授权，开始抓取机台成绩…")
+                CrawlerCaller.fetchData(authUrl)
+            } catch (e: Exception) {
+                logs.add("抓包失败：${e.message}")
+            }
+        }
     }
 
     val vpnLauncher = rememberLauncherForActivityResult(
@@ -137,7 +166,8 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
         ) {
             item(key = "intro") {
                 Card(
-                    cornerRadius = CardDefaults.CornerRadius,
+                modifier = Modifier.fillMaxWidth(),
+                cornerRadius = CardDefaults.CornerRadius,
                     insideMargin = CardDefaults.InsideMargin,
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
@@ -171,28 +201,28 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
             item(key = "diff_title") { SectionTitle("更新难度") }
             item(key = "diff_card") {
                 Card(
-                    cornerRadius = CardDefaults.CornerRadius,
+                modifier = Modifier.fillMaxWidth(),
+                cornerRadius = CardDefaults.CornerRadius,
                     insideMargin = CardDefaults.InsideMargin,
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf(
-                                "BASIC" to 0, "ADVANCED" to 1, "EXPERT" to 2,
-                                "MASTER" to 3, "Re:MASTER" to 4,
-                            ).forEach { (name, idx) ->
-                                val selected = idx in difficulties
-                                TextButton(
-                                    text = if (selected) "✓ $name" else name,
-                                    onClick = {
-                                        difficulties = if (selected) {
-                                            difficulties - idx
-                                        } else {
-                                            difficulties + idx
-                                        }
-                                        VpnSettings.setUpdateDifficulty(difficulties)
-                                    },
-                                )
-                            }
+                        listOf(
+                            "BASIC" to 0, "ADVANCED" to 1, "EXPERT" to 2,
+                            "MASTER" to 3, "Re:MASTER" to 4,
+                        ).forEach { (name, idx) ->
+                            CheckboxPreference(
+                                title = name,
+                                checked = idx in difficulties,
+                                onCheckedChange = { checked ->
+                                    difficulties = if (checked) {
+                                        difficulties + idx
+                                    } else {
+                                        difficulties - idx
+                                    }
+                                    VpnSettings.setUpdateDifficulty(difficulties)
+                                },
+                                summary = "${chartCountHint(idx)}",
+                            )
                         }
                     }
                 }
@@ -201,7 +231,8 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
             item(key = "action_title") { SectionTitle("操作") }
             item(key = "action_card") {
                 Card(
-                    cornerRadius = CardDefaults.CornerRadius,
+                modifier = Modifier.fillMaxWidth(),
+                cornerRadius = CardDefaults.CornerRadius,
                     insideMargin = CardDefaults.InsideMargin,
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
@@ -212,13 +243,7 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
                             Button(
                                 onClick = {
                                     if (running) {
-                                        runCatching {
-                                            context.stopService(Intent(context, LocalVpnService::class.java))
-                                            context.stopService(Intent(context, HttpServerService::class.java))
-                                        }
-                                        LocalVpnService.IsRunning = false
-                                        running = false
-                                        logs.add("已停止抓包")
+                                        stopServices()
                                     } else {
                                         val prepare = LocalVpnService.prepare(context)
                                         if (prepare == null) {
@@ -230,23 +255,8 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
                                 },
                                 modifier = Modifier.weight(1f),
                             ) {
-                                Text(text = if (running) "停止抓包" else "启动抓包")
+                                Text(text = if (running) "停止抓包" else "开始抓包")
                             }
-                            TextButton(
-                                text = "获取微信授权",
-                                onClick = {
-                                    scope.launch {
-                                        runCatching { CrawlerCaller.getWechatAuthUrl() }
-                                            .onSuccess { url ->
-                                                if (url != null) {
-                                                    logs.add("微信授权链接：$url")
-                                                }
-                                            }
-                                            .onFailure { logs.add("出错：${it.message}") }
-                                    }
-                                },
-                                modifier = Modifier.weight(1f),
-                            )
                         }
                     }
                 }
@@ -256,7 +266,8 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
                 item(key = "log_title") { SectionTitle("运行日志") }
                 item(key = "log") {
                     Card(
-                        cornerRadius = CardDefaults.CornerRadius,
+                    modifier = Modifier.fillMaxWidth(),
+                    cornerRadius = CardDefaults.CornerRadius,
                         insideMargin = CardDefaults.InsideMargin,
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
@@ -273,6 +284,16 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
             }
         }
     }
+}
+
+/** 难度对应的曲库等级说明。 */
+private fun chartCountHint(difficultyIndex: Int): String = when (difficultyIndex) {
+    0 -> "BASIC 初级"
+    1 -> "ADVANCED 高级"
+    2 -> "EXPERT 专家"
+    3 -> "MASTER 大师"
+    4 -> "Re:MASTER 宗师"
+    else -> ""
 }
 
 /** 复制到剪贴板。 */
