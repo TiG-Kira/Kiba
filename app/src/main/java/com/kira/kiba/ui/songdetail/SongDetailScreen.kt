@@ -30,13 +30,17 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.asFlow
 import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.db.entity.ChartEntity
+import com.kira.kiba.core.db.entity.ChartStatsEntity
 import com.kira.kiba.core.db.entity.RecordEntity
 import com.kira.kiba.core.db.entity.SongDataEntity
+import com.kira.kiba.core.stats.RelativeDifficulty
 import com.kira.kiba.core.stats.SongRating
+import com.kira.kiba.core.stats.statsLevelIndex
 import com.kira.kiba.ui.common.ChartTypeChip
 import com.kira.kiba.ui.common.DifficultyChip
 import com.kira.kiba.ui.common.EmptyStateCard
 import com.kira.kiba.ui.common.HGap
+import com.kira.kiba.ui.common.InfoRow
 import com.kira.kiba.ui.common.SectionTitle
 import com.kira.kiba.ui.common.VGap
 import com.kira.kiba.ui.common.RankBadge
@@ -45,6 +49,7 @@ import com.kira.kiba.ui.common.SyncBadge
 import com.kira.kiba.ui.common.difficultyColor
 import com.kira.kiba.ui.common.difficultyLabel
 import com.kira.kiba.ui.common.pageContentPadding
+import kotlinx.coroutines.flow.flowOf
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
@@ -83,6 +88,19 @@ fun SongDetailScreen(
         db.recordDao().getRecordsBySongId(songId).asFlow()
     }.collectAsState(initial = emptyList())
 
+    // 相对难度数据源：取该曲最高定数谱面，观察其 chart_stats（拟合定数）
+    val topChart = remember(charts) { charts.maxByOrNull { it.ds } }
+    val topChartStats by remember(topChart) {
+        val idx = topChart?.difficultyType?.statsLevelIndex() ?: -1
+        if (idx < 0) {
+            flowOf<ChartStatsEntity?>(null)
+        } else {
+            db.chartStatsDao()
+                .getChartStatsBySongIdAndDifficultyIndex(songId, idx)
+                .asFlow()
+        }
+    }.collectAsState(initial = null)
+
     val currentSong = song
     Scaffold(
         modifier = Modifier
@@ -115,21 +133,32 @@ fun SongDetailScreen(
             contentPadding = pageContentPadding(withNavBar = false),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // ── tag 显示区：曲种 / ID / BPM / 流派 / 版本（封面、歌名、艺术家、收藏已上移到魔改 TopBar）──
+            // ── 信息列表：类型（SD/DX 贴图）/ ID / BPM / 流派 / 版本 ──
             item(key = "tags") {
                 Card(modifier = Modifier.fillMaxWidth()) {
-                    FlowRow(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 14.dp, vertical = 10.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        ChartTypeChip(type = currentSong.type)
-                        MetaChip("ID ${currentSong.id}")
-                        MetaChip("BPM ${currentSong.bpm}")
-                        MetaChip(currentSong.genre)
-                        MetaChip("版本 ${currentSong.from}")
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = "类型",
+                                style = MiuixTheme.textStyles.body2,
+                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            )
+                            Spacer(Modifier.weight(1f))
+                            ChartTypeChip(type = currentSong.type)
+                        }
+                        InfoRow("ID", "${currentSong.id}")
+                        InfoRow("BPM", "${currentSong.bpm}")
+                        InfoRow("流派", currentSong.genre)
+                        InfoRow("版本", currentSong.from)
+                        InfoRow(
+                            "相对难度",
+                            RelativeDifficulty.display(topChart?.ds ?: 0.0, topChartStats?.fitDiff),
+                        )
                     }
                 }
             }

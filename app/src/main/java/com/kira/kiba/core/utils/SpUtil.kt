@@ -6,6 +6,7 @@ import android.content.SharedPreferences
 import androidx.core.content.edit
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import com.kira.kiba.core.model.SongGroupMode
 import java.util.UUID
 
 object SpUtil {
@@ -352,5 +353,17 @@ object SpUtil {
 
     fun setCoverSource(prefix: String) {
         userInfoPrefs.edit { putString(KEY_COVER_SOURCE, prefix.trim()) }
+    }
+
+    // ================= 曲目列表归类 =================
+
+    private const val KEY_SONG_GROUP_MODE = "song_group_mode"
+
+    /** 曲目列表归类方式（none / version / charter / artist，默认 none）。 */
+    fun getSongGroupMode(): String =
+        userInfoPrefs.getString(KEY_SONG_GROUP_MODE, SongGroupMode.NONE.key) ?: SongGroupMode.NONE.key
+
+    fun setSongGroupMode(mode: String) {
+        userInfoPrefs.edit { putString(KEY_SONG_GROUP_MODE, mode) }
     }
 }

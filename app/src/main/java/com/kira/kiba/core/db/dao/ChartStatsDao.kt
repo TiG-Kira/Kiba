@@ -40,6 +40,10 @@ interface ChartStatsDao {
     @Query("SELECT * FROM chart_stats WHERE song_id = :songId AND level_index = :index")
     fun getChartStatsBySongIdAndDifficultyIndex(songId: Int, index: Int): LiveData<ChartStatsEntity>
 
+    /** 单次查询（分享图等非响应式场景）。 */
+    @Query("SELECT * FROM chart_stats WHERE song_id = :songId AND level_index = :index LIMIT 1")
+    suspend fun getChartStatsOnce(songId: Int, index: Int): ChartStatsEntity?
+
 
     @Insert
     fun insertAllChartStats(list: List<ChartStatsEntity>)

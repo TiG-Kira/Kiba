@@ -6,8 +6,11 @@ import com.google.gson.Gson
 import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.model.AppUpdateModel
 import com.kira.kiba.core.model.SongData
+import com.kira.kiba.core.network.MaimaiDataRequests
+import com.kira.kiba.core.repository.ChartStatsRepository
 import com.kira.kiba.core.repository.SongDataRepository
 import com.kira.kiba.core.repository.SongWithChartRepository
+import com.kira.kiba.core.utils.JsonConvertToDb
 import com.kira.kiba.core.utils.SpUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -145,8 +148,41 @@ object SongDataSync {
             SpUtil.setDataVersion(version)
             _updateAvailable.value = null
             _state.value = SyncState.Done(version)
+            // 曲库更新后顺带刷新谱面统计（拟合定数 / 相对难度数据源），失败不影响曲库结果
+            runCatching { syncChartStats(force = true) }
         } else {
             _state.value = SyncState.Failed("曲库导入失败，请重试")
+        }
+    }
+
+    // ---------- 谱面统计（chart_stats）同步 ----------
+
+    /** chart_stats 同步最小间隔：5 天。 */
+    private const val CHART_STATS_INTERVAL = 5L * 24 * 60 * 60 * 1000
+
+    /** chart_stats 是否需要同步（从未同步或已超 5 天）。 */
+    fun shouldSyncChartStats(): Boolean =
+        System.currentTimeMillis() - SpUtil.getLastUpdateChartStats() > CHART_STATS_INTERVAL
+
+    /**
+     * 全量拉取水鱼 chart_stats 并入库（相对难度 / 拟合定数的数据源）。
+     * 约 1.5MB、6600 行，[shouldSyncChartStats] 5 天节流；失败静默——
+     * 详情页将显示「暂时缺少数据」，待同步成功后 LiveData 自动刷新。
+     *
+     * @param force 跳过 5 天节流（曲库刚更新时用）
+     */
+    suspend fun syncChartStats(force: Boolean = false) {
+        if (!force && !shouldSyncChartStats()) return
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val response = MaimaiDataRequests.getChartStatus().blockingFirst()
+                val list = JsonConvertToDb.convertChatStats(response)
+                if (list.isEmpty()) throw IllegalStateException("chart_stats 响应为空")
+                ChartStatsRepository.getInstance(AppDataBase.getInstance().chartStatsDao())
+                    .replaceAllChartStats(list)
+                SpUtil.saveLastUpdateChartStats(System.currentTimeMillis())
+                Log.i(TAG, "chart_stats synced: ${list.size} rows")
+            }.onFailure { Log.w(TAG, "syncChartStats failed", it) }
         }
     }
 

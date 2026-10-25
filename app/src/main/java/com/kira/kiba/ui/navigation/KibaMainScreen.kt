@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.kira.kiba.core.account.DivingFishAccount
 import com.kira.kiba.core.best50.Best50ImageService
+import com.kira.kiba.core.share.ShareService
 import com.kira.kiba.core.state.KibaState
 import com.kira.kiba.core.utils.WeChatJump
 import com.kira.kiba.ui.agent.AgentScreen
@@ -46,11 +47,13 @@ import com.kira.kiba.ui.me.RecordsScreen
 import com.kira.kiba.ui.me.VersionProgressScreen
 import com.kira.kiba.ui.settings.AboutScreen
 import com.kira.kiba.ui.settings.SettingsScreen
+import com.kira.kiba.ui.share.ShareImageAction
 import com.kira.kiba.ui.songdetail.ChartDetailScreen
 import com.kira.kiba.ui.tools.DxConverterScreen
 import com.kira.kiba.ui.tools.MachineUpdateScreen
 import com.kira.kiba.ui.songdetail.SongDetailScreen
 import com.kira.kiba.ui.songdetail.SongDetailTopBarSlot
+import com.kira.kiba.ui.songs.SongGroupScreen
 import com.kira.kiba.ui.songs.SongsScreen
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
@@ -157,6 +160,14 @@ sealed interface KibaSubPage {
         override val title: String = groupKey
     }
 
+    /** 曲目归类分组子页面（按版本 / MASTER 谱师 / 曲师）。 */
+    data class SongGroup(
+        val mode: com.kira.kiba.core.model.SongGroupMode,
+        val key: String,
+    ) : KibaSubPage {
+        override val title: String = key
+    }
+
     /** 机台成绩更新（VPN 抓包方案）。 */
     data object MachineUpdate : KibaSubPage {
         override val title: String = "机台成绩更新"
@@ -220,6 +231,7 @@ fun KibaMainScreen() {
         is KibaSubPage.SongDetail -> "sub:song:${page.songId}"
         is KibaSubPage.ChartDetail -> "sub:chart:${page.songId}:${page.difficultyOrdinal}"
         is KibaSubPage.ProgressDetail -> "sub:progress:${page.groupType}:${page.groupKey}"
+        is KibaSubPage.SongGroup -> "sub:group:${page.mode.key}:${page.key}"
         is KibaSubPage -> "sub:${page.javaClass.simpleName}"
         else -> page.toString()
     }
@@ -324,6 +336,21 @@ fun KibaMainScreen() {
                         actions = {
                             if (sub is KibaSubPage.Records) {
                                 KibaRefreshAction { KibaState.refreshRecords() }
+                            }
+                            if (sub is KibaSubPage.ChartDetail) {
+                                // 分享谱面详情图（保存相册 / 分享给好友）
+                                ShareImageAction(
+                                    fileName = ShareService.defaultName(
+                                        "chart_${sub.songId}_${sub.difficultyOrdinal}"
+                                    ),
+                                    build = {
+                                        ShareService.buildChartPng(
+                                            context,
+                                            sub.songId,
+                                            sub.difficultyOrdinal,
+                                        )
+                                    },
+                                )
                             }
                         },
                     )
@@ -449,6 +476,12 @@ fun KibaMainScreen() {
                                 scrollBehavior = scrollBehavior,
                                 onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
                             )
+                            is KibaSubPage.SongGroup -> SongGroupScreen(
+                                mode = target.mode,
+                                groupKey = target.key,
+                                scrollBehavior = scrollBehavior,
+                                onSongClick = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
+                            )
                             is KibaSubPage.DxConverter -> DxConverterScreen(scrollBehavior = scrollBehavior)
                             is KibaSubPage.MachineUpdate -> MachineUpdateScreen(scrollBehavior = scrollBehavior)
                             is KibaSubPage.Favorites -> FavoritesScreen(
@@ -464,6 +497,9 @@ fun KibaMainScreen() {
                                 searchTrigger = songsSearchTrigger,
                                 onSongClick = { song ->
                                     pushPage(KibaSubPage.SongDetail(song.songData.id))
+                                },
+                                onOpenGroup = { mode, key ->
+                                    pushPage(KibaSubPage.SongGroup(mode, key))
                                 },
                             )
                             KibaTab.Agent -> AgentScreen(

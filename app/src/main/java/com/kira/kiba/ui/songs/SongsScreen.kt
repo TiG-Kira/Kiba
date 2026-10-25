@@ -1,6 +1,8 @@
 package com.kira.kiba.ui.songs
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -14,10 +16,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -34,6 +38,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -42,6 +47,7 @@ import com.kira.kiba.core.data.SongDataSync
 import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.db.entity.ChartEntity
 import com.kira.kiba.core.db.entity.SongWithChartsEntity
+import com.kira.kiba.core.model.SongGroupMode
 import com.kira.kiba.core.repository.SongWithChartRepository
 import com.kira.kiba.core.state.KibaState
 import com.kira.kiba.core.utils.SpUtil
@@ -63,6 +69,8 @@ import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
+import top.yukonga.miuix.kmp.basic.Icon
+import top.yukonga.miuix.kmp.icon.glass.*
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
@@ -90,6 +98,7 @@ fun SongsScreen(
     scrollBehavior: ScrollBehavior,
     searchTrigger: Int = 0,
     onSongClick: (SongWithChartsEntity) -> Unit = {},
+    onOpenGroup: (mode: SongGroupMode, key: String) -> Unit = { _, _ -> },
 ) {
     val context = LocalContext.current
     var query by remember { mutableStateOf("") }
@@ -139,6 +148,17 @@ fun SongsScreen(
         ).asFlow()
     }
     val songs by songsFlow.collectAsStateCached(SongsListCache)
+
+    // ── 归类：不归类（默认）/ 按版本 / 按 MASTER 谱师 / 按曲师 ──
+    // 搜索进行中强制平铺（搜索结果跨分组，归类入口暂隐），搜索清空后恢复。
+    var groupMode by remember {
+        mutableStateOf(SongGroupMode.fromKey(SpUtil.getSongGroupMode()))
+    }
+    var showGroupPicker by remember { mutableStateOf(false) }
+    val grouping = groupMode != SongGroupMode.NONE && query.isBlank()
+    val groups = remember(songs, groupMode, grouping) {
+        if (grouping) buildSongGroups(songs, groupMode) else emptyList()
+    }
 
     val syncState by SongDataSync.state.collectAsState()
     val updateAvailable by SongDataSync.updateAvailable.collectAsState()
@@ -213,6 +233,28 @@ fun SongsScreen(
                 )
             }
 
+            // 归类方式选择（搜索中隐藏：搜索结果强制平铺）
+            if (query.isBlank()) {
+                item(key = "group_mode") {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = { showGroupPicker = true },
+                    ) {
+                        BasicComponent(
+                            title = "归类方式",
+                            summary = "${groupMode.label} · 点击切换",
+                            endActions = {
+                                Icon(
+                                    MiuixGlassIcons.Regular.ChevronForward,
+                                    contentDescription = null,
+                                    tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                )
+                            },
+                        )
+                    }
+                }
+            }
+
             if (songs.isEmpty()) {
                 item(key = "state") {
                     EmptyStateCard(
@@ -236,8 +278,81 @@ fun SongsScreen(
                 }
             }
 
-            items(items = songs, key = { it.songData.id }) { song ->
-                SongCard(song = song, onClick = { onSongClick(song) })
+            // 归类视图：分组入口（组名 + 歌曲数），点击进子页面
+            if (grouping) {
+                items(items = groups, key = { it.key }) { group ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = { onOpenGroup(groupMode, group.key) },
+                    ) {
+                        BasicComponent(
+                            title = group.name,
+                            summary = "${group.count} 首",
+                            endActions = {
+                                Icon(
+                                    MiuixGlassIcons.Regular.ChevronForward,
+                                    contentDescription = null,
+                                    tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                )
+                            },
+                        )
+                    }
+                }
+            } else {
+                items(items = songs, key = { it.songData.id }) { song ->
+                    SongCard(song = song, onClick = { onSongClick(song) })
+                }
+            }
+        }
+    }
+
+    // 归类方式选择弹层（单选圆点指示）
+    if (showGroupPicker) {
+        OverlayDialog(
+            show = true,
+            title = "归类方式",
+            summary = "选择曲目列表的归类维度，子页面展示对应谱面",
+            onDismissRequest = { showGroupPicker = false },
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                SongGroupMode.entries.forEach { mode ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable {
+                                groupMode = mode
+                                SpUtil.setSongGroupMode(mode.key)
+                                showGroupPicker = false
+                            }
+                            .padding(horizontal = 8.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(20.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (groupMode == mode) {
+                                        MiuixTheme.colorScheme.primary
+                                    } else {
+                                        Color.Transparent
+                                    },
+                                )
+                                .border(
+                                    width = if (groupMode == mode) 0.dp else 1.5.dp,
+                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                    shape = CircleShape,
+                                ),
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            text = mode.label,
+                            style = MiuixTheme.textStyles.body1,
+                            color = MiuixTheme.colorScheme.onSurface,
+                        )
+                    }
+                }
             }
         }
     }

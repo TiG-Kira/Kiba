@@ -30,4 +30,11 @@ class ChartStatsRepository private constructor(val chartStatsDao: ChartStatsDao)
     ): LiveData<ChartStatsEntity> {
         return chartStatsDao.getChartStatsBySongIdAndDifficultyIndex(songId, index)
     }
+
+    /** 单次查询（分享图等非响应式场景）。 */
+    suspend fun getChartStatsOnce(songId: Int, index: Int): ChartStatsEntity? {
+        return withContext(Dispatchers.IO) {
+            chartStatsDao.getChartStatsOnce(songId, index)
+        }
+    }
 }

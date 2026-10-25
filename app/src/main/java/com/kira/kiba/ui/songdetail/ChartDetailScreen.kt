@@ -28,11 +28,15 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.asFlow
+import kotlinx.coroutines.flow.flowOf
 import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.db.entity.ChartEntity
+import com.kira.kiba.core.db.entity.ChartStatsEntity
 import com.kira.kiba.core.db.entity.RecordEntity
 import com.kira.kiba.core.db.entity.SongDataEntity
+import com.kira.kiba.core.stats.RelativeDifficulty
 import com.kira.kiba.core.stats.SongRating
+import com.kira.kiba.core.stats.statsLevelIndex
 import com.kira.kiba.ui.common.DifficultyChip
 import com.kira.kiba.ui.common.EmptyStateCard
 import com.kira.kiba.ui.common.HGap
@@ -91,6 +95,19 @@ fun ChartDetailScreen(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
     ) { padding ->
         val currentChart = chart
+
+        // 拟合定数（水鱼 chart_stats）：相对难度数据源；未同步时为 null → 显示「暂时缺少数据」
+        val chartStats by remember(currentChart) {
+            val idx = currentChart?.difficultyType?.statsLevelIndex() ?: -1
+            if (idx < 0) {
+                flowOf<ChartStatsEntity?>(null)
+            } else {
+                db.chartStatsDao()
+                    .getChartStatsBySongIdAndDifficultyIndex(songId, idx)
+                    .asFlow()
+            }
+        }.collectAsState(initial = null)
+
         if (currentChart == null) {
             LazyColumn(
                 modifier = Modifier
@@ -112,7 +129,7 @@ fun ChartDetailScreen(
         ) {
             // ── 谱面头 ──
             item(key = "head") {
-                ChartHeaderCard(chart = currentChart, song = song)
+                ChartHeaderCard(chart = currentChart, song = song, fitDiff = chartStats?.fitDiff)
             }
 
             // ── notes 构成 ──
@@ -145,7 +162,7 @@ fun ChartDetailScreen(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ChartHeaderCard(chart: ChartEntity, song: SongDataEntity?) {
+private fun ChartHeaderCard(chart: ChartEntity, song: SongDataEntity?, fitDiff: Double? = null) {
     val diffColor = difficultyColor(chart.difficultyType)
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -183,6 +200,13 @@ private fun ChartHeaderCard(chart: ChartEntity, song: SongDataEntity?) {
                 )
                 VGap(2.dp)
             }
+            VGap(2.dp)
+            Text(
+                text = "相对难度：${RelativeDifficulty.display(chart.ds, fitDiff)}",
+                style = MiuixTheme.textStyles.body2,
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            )
+            VGap(2.dp)
             Text(
                 text = "谱师：${chart.charter}",
                 style = MiuixTheme.textStyles.body2,

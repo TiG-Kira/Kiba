@@ -36,10 +36,12 @@ import coil.request.ImageRequest
 import com.kira.kiba.R
 import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.db.entity.SongDataEntity
+import com.kira.kiba.core.share.ShareService
 import com.kira.kiba.core.utils.SpUtil
 import com.kira.kiba.ui.common.coverCandidateUrls
 import com.kira.kiba.ui.navigation.KibaBackAction
 import com.kira.kiba.ui.navigation.LocalGlassTopAppBarBackdrop
+import com.kira.kiba.ui.share.ShareImageAction
 import kotlinx.coroutines.delay
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Icon
@@ -188,6 +190,12 @@ fun SongDetailTopBarSlot(
                     tint = onCoverColor,
                 )
             }
+            // 分享歌曲详情图（生成后可选保存相册 / 分享给好友）
+            ShareImageAction(
+                fileName = ShareService.defaultName("song_$songId"),
+                build = { ShareService.buildSongPng(context, songId) },
+                tint = onCoverColor,
+            )
         },
         background = {
             Box(modifier = Modifier.fillMaxSize()) {

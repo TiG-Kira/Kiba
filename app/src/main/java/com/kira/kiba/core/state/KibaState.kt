@@ -46,6 +46,10 @@ object KibaState {
         scope.launch {
             runCatching { SongDataSync.checkForUpdate() }
         }
+        // 谱面统计（拟合定数 / 相对难度数据源）：5 天节流的后台同步
+        scope.launch {
+            runCatching { SongDataSync.syncChartStats() }
+        }
     }
 
     /** 用户手动触发：检查曲库更新（只检查；有更新则 [SongDataSync.updateAvailable] 提示）。 */

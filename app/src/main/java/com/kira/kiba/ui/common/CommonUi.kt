@@ -24,6 +24,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.colorResource
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -295,11 +296,57 @@ fun DifficultyChip(
     }
 }
 
-/** DX / SD 谱面类型徽标。 */
+/**
+ * DX / SD 谱面类型徽标 —— 用舞萌原版贴图（UI_UPE_Infoicon_StandardMode / DeluxeMode）。
+ *
+ * 贴图原始尺寸 113×32，其中「标准 / DX」文字高 19px。原文字 tag 字号为 11.sp
+ * （密度 3 的设备上约 33px），故缩放比 ≈ 33/19 ≈ 1.74：宽 64dp × 高 18dp，
+ * 贴图内文字与原本 tag 的字号基本一致。
+ */
 @Composable
 fun ChartTypeChip(type: String, modifier: Modifier = Modifier) {
-    val color = if (type == "DX") MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onSurfaceVariantSummary
-    DifficultyChip(text = type, color = color, modifier = modifier)
+    val icon = if (type == "DX") {
+        R.drawable.kiba_ui_upe_infoicon_deluxemode
+    } else {
+        R.drawable.kiba_ui_upe_infoicon_standardmode
+    }
+    Image(
+        painter = painterResource(icon),
+        contentDescription = type,
+        contentScale = ContentScale.Fit,
+        modifier = modifier.size(width = 64.dp, height = 18.dp),
+    )
+}
+
+/**
+ * 详情页信息列表行：标签在左（次要色）、值在右（主色）。
+ * 用于歌曲详情的 ID / BPM / 流派 / 版本等键值对展示（替代原来的 tag 堆叠）。
+ */
+@Composable
+fun InfoRow(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            style = MiuixTheme.textStyles.body2,
+            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+        )
+        Spacer(Modifier.weight(1f))
+        Text(
+            text = value,
+            style = MiuixTheme.textStyles.body2,
+            color = MiuixTheme.colorScheme.onSurface,
+            textAlign = TextAlign.End,
+        )
+    }
 }
 
 /** 空状态卡片（数据未就绪时引导用户）。 */
