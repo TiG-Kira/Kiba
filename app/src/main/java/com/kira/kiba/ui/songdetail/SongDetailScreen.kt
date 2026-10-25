@@ -30,12 +30,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.asFlow
 import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.db.entity.ChartEntity
-import com.kira.kiba.core.db.entity.ChartStatsEntity
 import com.kira.kiba.core.db.entity.RecordEntity
 import com.kira.kiba.core.db.entity.SongDataEntity
-import com.kira.kiba.core.stats.RelativeDifficulty
 import com.kira.kiba.core.stats.SongRating
-import com.kira.kiba.core.stats.statsLevelIndex
 import com.kira.kiba.ui.common.ChartTypeChip
 import com.kira.kiba.ui.common.DifficultyChip
 import com.kira.kiba.ui.common.EmptyStateCard
@@ -49,7 +46,6 @@ import com.kira.kiba.ui.common.SyncBadge
 import com.kira.kiba.ui.common.difficultyColor
 import com.kira.kiba.ui.common.difficultyLabel
 import com.kira.kiba.ui.common.pageContentPadding
-import kotlinx.coroutines.flow.flowOf
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
@@ -87,19 +83,6 @@ fun SongDetailScreen(
     val records by remember(songId) {
         db.recordDao().getRecordsBySongId(songId).asFlow()
     }.collectAsState(initial = emptyList())
-
-    // 相对难度数据源：取该曲最高定数谱面，观察其 chart_stats（拟合定数）
-    val topChart = remember(charts) { charts.maxByOrNull { it.ds } }
-    val topChartStats by remember(topChart) {
-        val idx = topChart?.difficultyType?.statsLevelIndex() ?: -1
-        if (idx < 0) {
-            flowOf<ChartStatsEntity?>(null)
-        } else {
-            db.chartStatsDao()
-                .getChartStatsBySongIdAndDifficultyIndex(songId, idx)
-                .asFlow()
-        }
-    }.collectAsState(initial = null)
 
     val currentSong = song
     Scaffold(
@@ -155,10 +138,6 @@ fun SongDetailScreen(
                         InfoRow("BPM", "${currentSong.bpm}")
                         InfoRow("流派", currentSong.genre)
                         InfoRow("版本", currentSong.from)
-                        InfoRow(
-                            "相对难度",
-                            RelativeDifficulty.display(topChart?.ds ?: 0.0, topChartStats?.fitDiff),
-                        )
                     }
                 }
             }
