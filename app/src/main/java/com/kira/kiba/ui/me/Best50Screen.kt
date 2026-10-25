@@ -1,5 +1,11 @@
 package com.kira.kiba.ui.me
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -28,6 +35,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -45,6 +55,8 @@ import com.kira.kiba.ui.common.InfoPill
 import com.kira.kiba.ui.common.difficultyColor
 import com.kira.kiba.ui.common.difficultyLabel
 import com.kira.kiba.ui.common.pageContentPadding
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
@@ -59,16 +71,30 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  * 歌曲卡与「生成 Best 50 图片」的单曲贴图同一套视觉（见 [Best50Tile]），
  * 按屏幕宽度自适应一行列数；点击进入该歌曲的歌曲详情页。
  */
+/** B50 页数据状态：加载中 / 已就绪（produceState 在 IO 线程读缓存）。 */
+private sealed interface B50UiState {
+    data object Loading : B50UiState
+    data class Done(val b50: DivingFishAccount.Best50) : B50UiState
+}
+
 @Composable
 fun Best50Screen(
     scrollBehavior: ScrollBehavior,
     onOpenSong: (songId: Int) -> Unit = {},
     onSaveImage: suspend () -> String? = { null },
 ) {
-    val b50 by produceState(initialValue = DivingFishAccount.Best50()) {
-        value = DivingFishAccount.best50()
-    }
     val account by DivingFishAccount.state.collectAsState()
+
+    // ── 异步加载：进页先显示加载态，缓存读完后渲染卡片；账号刷新后重读 ──
+    val b50State by produceState<B50UiState>(B50UiState.Loading, account.recordCount) {
+        value = B50UiState.Loading
+        val result = runCatching {
+            withContext(Dispatchers.Default) { DivingFishAccount.best50() }
+        }.getOrDefault(DivingFishAccount.Best50())
+        value = B50UiState.Done(result)
+    }
+    val b50Loading = b50State is B50UiState.Loading
+    val b50 = (b50State as? B50UiState.Done)?.b50 ?: DivingFishAccount.Best50()
     val old = b50.old
     val new = b50.new
     val total = b50.rating
@@ -113,8 +139,11 @@ fun Best50Screen(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            if (b50.old.isEmpty() && b50.new.isEmpty()) {
-                item(key = "empty", span = { GridItemSpan(maxLineSpan) }) {
+            when {
+                b50Loading -> item(key = "loading", span = { GridItemSpan(maxLineSpan) }) {
+                    LoadingCard(text = "正在加载 Best 50…")
+                }
+                old.isEmpty() && new.isEmpty() -> item(key = "empty", span = { GridItemSpan(maxLineSpan) }) {
                     EmptyStateCard(
                         text = if (account.bound) {
                             "还没有成绩数据\n可在「我」页面下拉刷新，或稍后重试"
@@ -123,7 +152,7 @@ fun Best50Screen(
                         },
                     )
                 }
-            } else {
+                else -> {
                 item(key = "save", span = { GridItemSpan(maxLineSpan) }) {
                     Card(modifier = Modifier.fillMaxWidth()) {
                         Row(
@@ -240,6 +269,45 @@ fun Best50Screen(
                     }
                 }
             }
+        }
+    }
+}
+}
+
+/** 加载态卡片：小旋转环 + 提示文字（Best 50 数据异步加载期间显示）。 */@Composable
+private fun LoadingCard(text: String) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center,
+        ) {
+            val angle by rememberInfiniteTransition(label = "b50spin").animateFloat(
+                initialValue = 0f,
+                targetValue = 360f,
+                animationSpec = infiniteRepeatable(tween(900, easing = LinearEasing)),
+                label = "b50angle",
+            )
+            val spinnerColor = MiuixTheme.colorScheme.primary
+            Canvas(modifier = Modifier.size(18.dp)) {
+                rotate(angle) {
+                    drawArc(
+                        color = spinnerColor,
+                        startAngle = 0f,
+                        sweepAngle = 270f,
+                        useCenter = false,
+                        style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round),
+                    )
+                }
+            }
+            Spacer(Modifier.width(10.dp))
+            Text(
+                text = text,
+                style = MiuixTheme.textStyles.body2,
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            )
         }
     }
 }

@@ -207,7 +207,17 @@ fun KibaMainScreen() {
     val pageStateHolder = rememberSaveableStateHolder()
     val topBarMemory = remember { mutableMapOf<Any, Pair<Float, Float>>() }
 
-    fun pageKey(page: Any): Any = page
+    // SaveableStateProvider 的 key 必须是 Bundle 可存类型（data class 会直接抛
+    // IllegalArgumentException 崩溃），所以统一用稳定字符串作页面 key，
+    // topBarMemory 也用同一个 key，保证存取一致。
+    fun pageKey(page: Any): String = when (page) {
+        is KibaTab -> "tab:${page.name}"
+        is KibaSubPage.SongDetail -> "sub:song:${page.songId}"
+        is KibaSubPage.ChartDetail -> "sub:chart:${page.songId}:${page.difficultyOrdinal}"
+        is KibaSubPage.ProgressDetail -> "sub:progress:${page.groupType}:${page.groupKey}"
+        is KibaSubPage -> "sub:${page.javaClass.simpleName}"
+        else -> page.toString()
+    }
 
     fun saveTopBar(page: Any) {
         topBarMemory[pageKey(page)] = topAppBarState.heightOffset to topAppBarState.contentOffset

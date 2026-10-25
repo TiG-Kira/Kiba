@@ -99,12 +99,12 @@ fun Best50Tile(
         }
         modeAsset?.let {
             ScaledAsset(
-                it, 0.6f,
+                it, 0.6f, u,
                 Modifier.offset(x = u * 170f, y = u * (if (dxStar == 0) 6f else 16f)),
             )
         }
         if (dxStar > 0) {
-            ScaledAsset("kiba_dxstar_$dxStar", 0.65f, Modifier.offset(u * 170f, u * 4f))
+            ScaledAsset("kiba_dxstar_$dxStar", 0.65f, u, Modifier.offset(u * 170f, u * 4f))
         }
 
         // ── 文本（白字区）──
@@ -120,21 +120,21 @@ fun Best50Tile(
         if (rankIdx >= 0) {
             ScaledAsset(
                 "kiba_ui_gam_rank_${RANK_PIC[rankIdx].lowercase()}",
-                0.8f, Modifier.offset(u * 156f, u * 40f),
+                0.8f, u, Modifier.offset(u * 156f, u * 40f),
             )
         }
         val comboIdx = FC_KEYS.indexOf(record.fc.lowercase()).coerceAtLeast(0)
         if (comboIdx > 0) {
             ScaledAsset(
                 "kiba_ui_mss_mbase_icon_${COMBO_PIC[comboIdx].lowercase()}_s",
-                0.6f, Modifier.offset(u * 172f, u * 81f),
+                0.6f, u, Modifier.offset(u * 172f, u * 81f),
             )
         }
         val syncIdx = FS_KEYS.indexOf(record.fs.lowercase()).coerceAtLeast(0)
         if (syncIdx > 0) {
             ScaledAsset(
                 "kiba_ui_mss_mbase_icon_${SYNC_PIC[syncIdx].lowercase()}_s",
-                0.6f, Modifier.offset(u * 201f, u * 81f),
+                0.6f, u, Modifier.offset(u * 201f, u * 81f),
             )
         }
 
@@ -221,11 +221,12 @@ private fun AssetImage(
     )
 }
 
-/** 名义尺寸 × [factor] 的素材图标（对应位图管线里的 scale()；无 dpi 限定 → intrinsic dp == 原始 px）。 */
+/** 名义尺寸 × [factor] × [u]（卡片缩放）的素材图标；对应位图管线里的 scale()。 */
 @Composable
 private fun ScaledAsset(
     name: String,
     factor: Float,
+    u: Dp,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -243,7 +244,7 @@ private fun ScaledAsset(
     Image(
         painter = painter,
         contentDescription = null,
-        modifier = modifier.size((w * factor).dp, (h * factor).dp),
+        modifier = modifier.size((w * factor * u.value).dp, (h * factor * u.value).dp),
     )
 }
 
