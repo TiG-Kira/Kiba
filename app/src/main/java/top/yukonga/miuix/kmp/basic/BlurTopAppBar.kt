@@ -36,6 +36,7 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.Saver
@@ -222,12 +223,23 @@ private fun TopAppBarLayout(
     // 展开态贴底标题块与顶栏底边（封面底缘）之间的空白。
     val bottomAlignedGapPx = with(LocalDensity.current) { BottomAlignedTitleGap.roundToPx() }
 
+    // heightOffsetLimit 是 TopAppBarState 的普通字段（非 snapshot state）：顶栏换页重新
+    // 测量出新的 limit 时（如歌曲详情 minExpansionPx ↔ 普通页、多级子页互返），仅改这个
+    // 字段不会让读 collapsedFraction 的 derivedStateOf 失效。
+    // 典型事故：从已折叠的上一级页面进详情页（limit 变得很大）再返回，restoreTopBar 恢复的
+    // heightOffset 与当前值相同 → derivedStateOf 不重算 → smallTitleVisible 卡在旧 limit
+    // 算出的 false，而大标题 alpha 在 draw phase 按新 limit 实时算已折叠淡出，标题整体消失，
+    // 只能等用户手动滑动让 heightOffset 变化才刷新（KibaMainScreen.restoreTopBar 的
+    // 两帧补写同样因同值 no-op 而救不回来）。
+    // 解法：用一枚计数器把 limit 写入并入 snapshot 依赖，limit 一变即广播失效。
+    val heightOffsetLimitVersion = remember(scrollBehavior) { mutableIntStateOf(0) }
     val updateHeightOffsetLimit = remember(scrollBehavior, minExpansionPx) {
         { height: Int ->
             scrollBehavior?.state?.let { state ->
                 val limit = -height.toFloat() - minExpansionPx
                 if (state.heightOffsetLimit != limit) {
                     state.heightOffsetLimit = limit
+                    heightOffsetLimitVersion.intValue++
                 }
             }
             Unit
@@ -237,6 +249,8 @@ private fun TopAppBarLayout(
     // Boolean derivedStateOf invalidates only on flip → the spring fires once per crossing, not per frame.
     val smallTitleVisible by remember(scrollBehavior) {
         derivedStateOf {
+            // 依赖 limit 写入广播：limit 变化（顶栏换页重新测量）时按新 limit 重算 collapsedFraction。
+            heightOffsetLimitVersion.intValue
             scrollBehavior?.state?.let { state ->
                 state.collapsedFraction * 3f >= 1f
             } ?: false

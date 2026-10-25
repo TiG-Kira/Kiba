@@ -8,10 +8,13 @@ import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.db.entity.RecordEntity
 import com.kira.kiba.core.repository.RecordRepository
 import com.kira.kiba.core.utils.SpUtil
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.FormBody
 import okhttp3.MediaType.Companion.toMediaType
@@ -122,6 +125,19 @@ object DivingFishAccount {
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .build()
+
+    /**
+     * 账户层自己的应用级作用域：登录成功后的成绩拉取在这里跑，
+     * 不挂在任何 UI 组合的 `rememberCoroutineScope` 上。
+     *
+     * 背景（修复「登录后卡在获取成绩」）：LoginScreen 绑定成功即退页
+     * （LaunchedEffect 见 bound=true 就 popPage），UI 作用域随之取消；
+     * 若在登录协程里直接 await [refreshRecords]，拉取会死在半路，
+     * loading 永远停在 true，只能靠手动刷新（走 KibaState 的应用级
+     * scope）救活。与 KibaState.refreshRecords 同款 SupervisorJob，
+     * 单次失败不影响后续任务。
+     */
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     private val gson = Gson()
 
@@ -274,7 +290,9 @@ object DivingFishAccount {
                 // 否则「我」页显示已登录但机台页显示"未登录"，两处状态不一致。
                 SpUtil.putLoginInfo(user, password, cookie)
                 _state.value = AccountState(bound = true, loading = true)
-                refreshRecords()
+                // 拉取成绩切应用级作用域：登录页随即退页，UI 作用域一取消
+                // 就会把拉取掐死在半路（loading 卡死，见 appScope 注释）
+                appScope.launch { runCatching { refreshRecords() } }
             }.onFailure { e ->
                 Log.w(TAG, "loginWithPassword failed", e)
                 _state.value = _state.value.copy(loading = false, error = e.message ?: "登录失败")
@@ -382,7 +400,8 @@ object DivingFishAccount {
                 pendingDeviceCode = null
                 SpUtil.setDivingFishBound(true)
                 _state.value = AccountState(bound = true, loading = true)
-                refreshRecords()
+                // 同账号密码通道：拉取成绩走应用级作用域，避免退页取消
+                appScope.launch { runCatching { refreshRecords() } }
             }.onFailure { e ->
                 Log.w(TAG, "finishDeviceAuth failed", e)
                 _state.value = _state.value.copy(loading = false, error = e.message ?: "绑定失败")

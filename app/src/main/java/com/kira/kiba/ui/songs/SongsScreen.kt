@@ -23,9 +23,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -47,6 +49,8 @@ import com.kira.kiba.ui.common.ChartTypeChip
 import com.kira.kiba.ui.common.CoverFrame
 import com.kira.kiba.ui.common.DifficultyChip
 import com.kira.kiba.ui.common.EmptyStateCard
+import com.kira.kiba.ui.common.ListSnapshotCache
+import com.kira.kiba.ui.common.collectAsStateCached
 import com.kira.kiba.ui.common.difficultyColor
 import com.kira.kiba.ui.common.difficultyLabel
 import com.kira.kiba.ui.common.pageContentPadding
@@ -61,6 +65,12 @@ import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+
+/**
+ * 曲目列表快照（进程级）：从歌曲详情返回时首帧即渲染上次的完整列表，
+ * 否则 LazyColumn 空测量会把恢复出的滚动位置钳回 0（详见 [ListSnapshotCache]）。
+ */
+object SongsListCache : ListSnapshotCache<List<SongWithChartsEntity>>(emptyList())
 
 /**
  * 曲目页：真实曲库数据（SongWithChartRepository → Room → LiveData 响应式刷新）。
@@ -85,7 +95,10 @@ fun SongsScreen(
     var query by remember { mutableStateOf("") }
     var searchVisible by remember { mutableStateOf(false) }
     val searchFocusRequester = remember { FocusRequester() }
-    var lastTrigger by remember { mutableStateOf(0) }
+    // lastTrigger 必须 rememberSaveable：普通 remember 会在页面重建时归零，
+    // 而此时 searchTrigger（MainScreen 作用域）还保留旧值 → LaunchedEffect 误触发，
+    // 表现为「用过搜索后从详情返回，搜索栏弹出且列表滚回顶部」。
+    var lastTrigger by rememberSaveable { mutableIntStateOf(0) }
     // 列表滚动状态：搜索按钮点击时用它做「回到顶部」动画
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -125,7 +138,7 @@ fun SongsScreen(
             isMatchSongId = true,
         ).asFlow()
     }
-    val songs by songsFlow.collectAsState(initial = emptyList())
+    val songs by songsFlow.collectAsStateCached(SongsListCache)
 
     val syncState by SongDataSync.state.collectAsState()
     val updateAvailable by SongDataSync.updateAvailable.collectAsState()
@@ -359,10 +372,9 @@ fun SongCard(
         BasicComponent(
             title = song.songData.title,
             summary = buildString {
-                // 曲师 = 歌曲艺术家（artist），不是谱师（charter）
+                // 曲师 = 歌曲艺术家（artist），不是谱师（charter）；直接展示名字不加前缀
                 val artist = song.songData.artist.takeIf { it.isNotBlank() && it != "-" }
                 if (artist != null) {
-                    append("曲师 ")
                     append(artist)
                     append(" · ")
                 }

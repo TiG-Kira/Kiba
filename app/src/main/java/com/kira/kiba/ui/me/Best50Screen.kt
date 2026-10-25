@@ -27,6 +27,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -52,6 +53,7 @@ import kotlinx.coroutines.launch
 import com.kira.kiba.ui.common.EmptyStateCard
 import com.kira.kiba.ui.common.HGap
 import com.kira.kiba.ui.common.InfoPill
+import com.kira.kiba.ui.common.ListSnapshotCache
 import com.kira.kiba.ui.common.difficultyColor
 import com.kira.kiba.ui.common.difficultyLabel
 import com.kira.kiba.ui.common.pageContentPadding
@@ -337,6 +339,12 @@ private fun Best50TileCard(
 }
 
 /**
+ * 成绩记录快照（进程级）：从歌曲详情返回时首帧即渲染上次的成绩列表，
+ * 否则 LazyColumn 空测量会把恢复出的滚动位置钳回 0（详见 [ListSnapshotCache]）。
+ */
+object RecordsListCache : ListSnapshotCache<List<RecordEntity>>(emptyList())
+
+/**
  * 成绩记录页（查分器更新）：全量成绩 + 顶栏刷新按钮。
  * 刷新 = [com.kira.kiba.core.state.KibaState.refreshRecords]（水鱼服务端重新拉取）。
  *
@@ -349,7 +357,7 @@ fun RecordsScreen(
     onOpenSong: (songId: Int) -> Unit = {},
 ) {
     val account by DivingFishAccount.state.collectAsState()
-    val records by produceState(initialValue = emptyList<RecordEntity>()) {
+    val records by produceState(initialValue = RecordsListCache.current) {
         value = runCatching {
             com.kira.kiba.core.db.AppDataBase.getInstance().recordDao().getAllRecordList()
         }.getOrDefault(emptyList())
@@ -362,6 +370,8 @@ fun RecordsScreen(
         }.getOrDefault(emptyList())
     }
     val list = refreshed.ifEmpty { records }
+    // 数据到达后发布快照，供下次从二级页返回时首帧使用
+    LaunchedEffect(list) { RecordsListCache.publish(list) }
 
     Scaffold(
         modifier = Modifier

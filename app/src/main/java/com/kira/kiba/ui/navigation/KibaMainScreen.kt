@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import com.kira.kiba.core.account.DivingFishAccount
 import com.kira.kiba.core.best50.Best50ImageService
 import com.kira.kiba.core.state.KibaState
+import com.kira.kiba.core.utils.WeChatJump
 import com.kira.kiba.ui.agent.AgentScreen
 import com.kira.kiba.ui.agent.LlmConfigScreen
 import com.kira.kiba.ui.me.Best50Screen
@@ -481,6 +482,10 @@ fun KibaMainScreen() {
                                 },
                                 onOpenDxConverter = { pushPage(KibaSubPage.DxConverter) },
                                 onOpenFavorites = { pushPage(KibaSubPage.Favorites) },
+                                // 登录机台：拉起微信「舞萌 | 中二」公众号拿玩家二维码
+                                onOpenMachineLogin = {
+                                    WeChatJump.openOfficialAccount(context)
+                                },
                             )
                             KibaTab.Settings -> SettingsScreen(
                                 scrollBehavior = scrollBehavior,

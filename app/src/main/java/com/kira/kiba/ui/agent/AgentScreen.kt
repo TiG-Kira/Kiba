@@ -57,6 +57,7 @@ import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
@@ -85,6 +86,9 @@ fun AgentScreen(
     // 会话持久化：首次进入恢复历史
     AgentSession.ensureLoaded()
     val messages by AgentSession.turns.collectAsState()
+    // 猜歌对局进行中：底部输入框切换成答题卡（歌名/别名/ID），提交走本地判定
+    val guessPending by KibaAgent.pendingGuess.collectAsState()
+    val guessing = guessPending != null
 
     val clearance = LocalTopBarClearance.current
     val navBarBottom = LocalNavBarBottomPadding.current
@@ -104,7 +108,8 @@ fun AgentScreen(
                         "· 随机来一首 —— 曲库随机选曲\n" +
                         "· 查歌曲信息 —— 按歌名/别名/ID 查谱面\n" +
                         "· 今日舞萌运势 —— 今日运势与推荐曲目\n" +
-                        "· 定数查歌 / 分数线 / 随机条件曲 / 猜歌 —— KibaBot 移植技能（带参数，点卡片填条件）\n" +
+                        "· 定数查歌 / 分数线 / 随机条件曲 —— KibaBot 移植技能（带参数，点卡片填条件）\n" +
+                        "· 猜歌 —— 给线索猜答案，在输入框提交（歌名 / 别名 / ID 均可），猜错逐步揭示\n" +
                         "配置 LLM 后还可以直接提问，我会自动调用对应技能；\n" +
                         "问「我该怎么推分」这类问题时，我会先读你的 Best 50 再给针对性结论。\n" +
                         "（Best 50 / 推分需要先在「我」页面登录查分器）",
@@ -128,6 +133,8 @@ fun AgentScreen(
     /** 直接执行技能卡（不走 LLM）。[arg] 为带参技能的输入。 */
     fun runSkill(skill: KibaAgent.AgentSkill, arg: String = "") {
         if (thinking) return
+        // 开新猜歌局：清掉输入框残留，免得上一局没发出去的话被当成答案误提交
+        if (skill.id == "guess_song") input = ""
         thinking = true
         scope.launch {
             val reply = runCatching { agent.runSkill(skill.id, arg) }.getOrElse {
@@ -153,6 +160,33 @@ fun AgentScreen(
     fun send(text: String) {
         val trimmed = text.trim()
         if (trimmed.isEmpty() || thinking) return
+        // 猜歌对局进行中：输入框优先当答题卡 —— 本地判定（确定、不烧 LLM token），
+        // 用户消息正常入历史，答案对错由 submitGuess 给结论。
+        if (KibaAgent.pendingGuess.value != null) {
+            AgentSession.add(AgentSession.Turn(fromUser = true, text = trimmed))
+            input = ""
+            thinking = true
+            scope.launch { listState.scrollToItem(AgentSession.turns.value.lastIndex) }
+            scope.launch {
+                val reply = runCatching { agent.submitGuess(trimmed) }.getOrElse {
+                    KibaAgent.AgentReply("出错了：${it.message ?: "未知错误"}")
+                }
+                thinking = false
+                AgentSession.add(
+                    AgentSession.Turn(
+                        fromUser = false,
+                        text = reply.text,
+                        songs = reply.songs,
+                        skills = reply.skills,
+                        b50 = reply.b50,
+                        imageUri = reply.imageUri,
+                    )
+                )
+                val idx = AgentSession.turns.value.lastIndex
+                if (idx >= 0) listState.animateScrollToItem(idx)
+            }
+            return
+        }
         AgentSession.add(AgentSession.Turn(fromUser = true, text = trimmed))
         // 先插一条空的 Agent 记录，流式往里追加
         AgentSession.add(AgentSession.Turn(fromUser = false, text = "", streaming = true))
@@ -245,9 +279,31 @@ fun AgentScreen(
                 }
             }
 
-            // ── 底部：已配置 LLM 才有输入框；否则提示用技能卡 ──
-            if (llmReady) {
-                Row(
+            // ── 底部输入区：猜歌对局中 → 答题卡（无需 LLM）；
+            //    否则已配置 LLM 才是聊天输入框；都没有则提示走技能卡 ──
+            when {
+                guessing -> Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = navBarBottom + 22.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextField(
+                        value = input,
+                        onValueChange = { input = it },
+                        label = "答案是…（歌名 / 别名 / ID）",
+                        useLabelAsPlaceholder = true,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    // 放弃：直接公布答案、结束对局（输入「放弃 / 不猜了」等效）
+                    TextButton(text = "放弃", onClick = { send("放弃") })
+                    Spacer(Modifier.width(4.dp))
+                    Button(onClick = { send(input) }) {
+                        Text(text = if (thinking) "…" else "猜猜看")
+                    }
+                }
+                llmReady -> Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = navBarBottom + 22.dp),
@@ -265,8 +321,7 @@ fun AgentScreen(
                         Text(text = if (thinking) "…" else "发送")
                     }
                 }
-            } else {
-                Text(
+                else -> Text(
                     text = "未配置 LLM · 点上方技能卡可直接使用（设置 → Agent 模型配置 可开启对话）",
                     style = MiuixTheme.textStyles.footnote1,
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,

@@ -36,6 +36,7 @@ import top.yukonga.miuix.kmp.preference.ArrowPreference
  * - 我的收藏：收藏的歌曲列表；
  * - 进度入口：版本进度 / 等级进度（可下钻到歌曲明细）；
  * - 工具：DX 分数转换 / 退出登录。
+ * - 登录机台：跳微信「舞萌 | 中二」公众号拿玩家二维码（国行机台扫码登录）。
  */
 @Composable
 fun MeScreen(
@@ -47,6 +48,7 @@ fun MeScreen(
     onOpenLevelProgress: () -> Unit,
     onOpenDxConverter: () -> Unit,
     onOpenFavorites: () -> Unit,
+    onOpenMachineLogin: () -> Unit,
     onOpenProgressDetail: (ProgressDetail.GroupType, String) -> Unit,
 ) {
     val account by DivingFishAccount.state.collectAsState()
@@ -142,6 +144,11 @@ fun MeScreen(
             item(key = "tools_title") { SectionTitle("工具") }
             item(key = "tools_card") {
                 Card(modifier = Modifier.fillMaxWidth()) {
+                    ArrowPreference(
+                        title = "登录机台",
+                        summary = "打开微信「舞萌 | 中二」公众号，点底部「玩家二维码」菜单即可扫码上机",
+                        onClick = onOpenMachineLogin,
+                    )
                     ArrowPreference(
                         title = "DX 分数转换",
                         summary = "由判定数量反推达成率与单曲 Rating",

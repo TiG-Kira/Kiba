@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -23,11 +22,19 @@ import com.kira.kiba.core.db.entity.SongWithChartsEntity
 import com.kira.kiba.core.repository.SongWithChartRepository
 import com.kira.kiba.core.utils.SpUtil
 import com.kira.kiba.ui.common.EmptyStateCard
+import com.kira.kiba.ui.common.ListSnapshotCache
 import com.kira.kiba.ui.common.SectionTitle
+import com.kira.kiba.ui.common.collectAsStateCached
 import com.kira.kiba.ui.common.pageContentPadding
 import com.kira.kiba.ui.songs.SongCard
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
+
+/**
+ * 收藏列表快照（进程级）：从歌曲详情返回时首帧即渲染上次的收藏列表，
+ * 否则 LazyColumn 空测量会把恢复出的滚动位置钳回 0（详见 [ListSnapshotCache]）。
+ */
+object FavoritesListCache : ListSnapshotCache<List<SongWithChartsEntity>>(emptyList())
 
 /**
  * 我的收藏：列出在歌曲详情页标记过收藏的歌曲。
@@ -62,7 +69,7 @@ fun FavoritesScreen(
             isMatchCharter = false,
             isMatchSongId = true,
         ).asFlow()
-    }.collectAsState(initial = emptyList())
+    }.collectAsStateCached(FavoritesListCache)
 
     Scaffold(
         modifier = Modifier

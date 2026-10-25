@@ -13,6 +13,9 @@ import com.kira.kiba.core.db.entity.SongDataEntity
 import com.kira.kiba.core.model.DifficultyType
 import com.kira.kiba.core.utils.SpUtil
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -595,39 +598,48 @@ class KibaAgent(private val context: Context) {
             .take(10)
 
         val sb = StringBuilder()
-        sb.append("推分推荐（基于 Best 50 地板）：\n")
-        sb.append("· B35 地板 ra ${b35Floor} · B15 地板 ra ${b15Floor}\n\n")
+        // ── Markdown 排版（AgentScreen 走 GFM 渲染器）──
+        // 歌名加粗作每条锚点；难度定数用行内代码做「chip」；条目间 `---` 分隔线明确分批。
+        sb.append("## 推分推荐\n\n")
+        sb.append("B35 地板 ra ${b35Floor ?: "—"} · B15 地板 ra ${b15Floor ?: "—"}\n\n")
         if (candidates.isEmpty()) {
-            sb.append("· 暂无合适目标：高于地板的谱面你都贴着档位上限了，去冲更高定数的新谱面吧。")
+            sb.append("暂无合适目标：高于地板的谱面你都贴着档位上限了，去冲更高定数的新谱面吧。")
         } else {
-            candidates.forEach { c ->
-                sb.append(
-                    "· ${titleById[c.songId] ?: "id ${c.songId}"} " +
-                        "[${difficultyLabel(c.levelIndex)} ${c.level}] 定数 ${c.ds}\n"
-                )
+            candidates.forEachIndexed { index, c ->
+                // 条目之间插分隔线（最后一条之后不留尾线）
+                if (index > 0) sb.append("\n---\n\n")
                 val cur = c.current
                 val rank = rankName(c.tierAch)
                 val listName = if (c.isNew) "B15" else "B35"
-                if (cur == null) {
-                    // 未游玩：打上目标档位即进入 Best 50，顶替地板
-                    sb.append(
-                        "  未游玩 → 达成 %.1f%%（%s）得 ra ${c.potential}，顶替$listName 地板（+${c.potential - c.floor}）\n"
-                            .format(c.tierAch, rank)
-                    )
-                } else if (cur.ra > c.floor) {
-                    // 已在列表内：本曲涨多少，总分就加多少
-                    sb.append(
-                        "  当前 %.4f%%（ra ${cur.ra}）→ 还差 %.2f%% 达成 %.1f%%（%s）得 ra ${c.potential}，还可 +${c.potential - cur.ra}\n"
-                            .format(cur.achievements, c.gap, c.tierAch, rank)
-                    )
-                } else {
-                    // 成绩低于地板（不在列表内）：打上去是顶替地板进榜，
-                    // 实际 Rating 增益 = potential - floor，不能按 potential - cur.ra 算
-                    //（那会把地板与现有成绩的差距也错算成增益，虚高好几 ra）。
-                    sb.append(
-                        "  当前 %.4f%%（ra ${cur.ra}，低于$listName 地板 ${c.floor}）→ 还差 %.2f%% 达成 %.1f%%（%s）得 ra ${c.potential}，顶替地板 Rating +${c.potential - c.floor}\n"
-                            .format(cur.achievements, c.gap, c.tierAch, rank)
-                    )
+                // 歌名先转义 Markdown 元字符再加粗，防止歌名里的 * _ ` [ ] ~ 破坏排版
+                val title = mdEscape(titleById[c.songId] ?: "id ${c.songId}")
+                sb.append(
+                    "**$title** · `${difficultyLabel(c.levelIndex)} ${c.level}` · 定数 ${c.ds}\n"
+                )
+                when {
+                    cur == null -> {
+                        // 未游玩：打上目标档位即进入 Best 50，顶替地板
+                        sb.append(
+                            "未游玩：达成 %.1f%%（%s）得 ra ${c.potential} → 顶替 $listName 地板（**+${c.potential - c.floor}**）\n"
+                                .format(c.tierAch, rank)
+                        )
+                    }
+                    cur.ra > c.floor -> {
+                        // 已在列表内：本曲涨多少，总分就加多少
+                        sb.append(
+                            "当前 %.4f%%（ra ${cur.ra}）：还差 %.2f%% 达成 %.1f%%（%s）得 ra ${c.potential} → 总分还可 **+${c.potential - cur.ra}**\n"
+                                .format(cur.achievements, c.gap, c.tierAch, rank)
+                        )
+                    }
+                    else -> {
+                        // 成绩低于地板（不在列表内）：打上去是顶替地板进榜，
+                        // 实际 Rating 增益 = potential - floor，不能按 potential - cur.ra 算
+                        //（那会把地板与现有成绩的差距也错算成增益，虚高好几 ra）。
+                        sb.append(
+                            "当前 %.4f%%（ra ${cur.ra}，低于 $listName 地板 ${c.floor}）：还差 %.2f%% 达成 %.1f%%（%s）得 ra ${c.potential} → 顶替地板 **+${c.potential - c.floor}**\n"
+                                .format(cur.achievements, c.gap, c.tierAch, rank)
+                        )
+                    }
                 }
             }
         }
@@ -1245,7 +1257,13 @@ class KibaAgent(private val context: Context) {
         return AgentReply(sb.toString().trimEnd(), songs = cards)
     }
 
-    /** 猜歌（源自 KibaBot「猜歌」）：随机一首歌给线索，让用户猜。 */
+    /**
+     * 猜歌（源自 KibaBot「猜歌」）：随机一首歌给线索，让用户在输入框猜。
+     *
+     * **不直接给答案**：线索只含遮罩歌名 / 曲师 / 流派 / 难度定数 / BPM / 版本，
+     * 也不挂歌曲卡（卡面会泄底）。答案由 [submitGuess] 判定：用户输入
+     * 歌名 / 别名 / 歌曲 ID 任一指向答案歌曲即算对。
+     */
     private suspend fun guessSong(): AgentReply {
         val song = withContext(Dispatchers.IO) {
             runCatching { AppDataBase.getInstance().songDao().randomSong() }.getOrNull()
@@ -1256,20 +1274,118 @@ class KibaAgent(private val context: Context) {
             }.getOrDefault(emptyList())
         }
         val top = charts.maxByOrNull { it.ds }
-        val masked = maskTitle(song.title)
+        _pendingGuess.value = GuessSession(songId = song.id)
         val sb = StringBuilder()
-        sb.append("猜歌开始！\n")
-        sb.append("线索 1：曲名 ${masked}\n")
+        sb.append("猜歌开始！在下方输入框提交你的答案（歌名 / 别名 / 歌曲 ID 均可），不想猜了就点「放弃」。\n")
+        sb.append("线索 1：曲名 ${maskTitle(song.title)}\n")
         sb.append("线索 2：曲师 ${maskArtist(song.artist)}\n")
         sb.append("线索 3：流派 ${song.genre}　类型 ${song.type}\n")
         if (top != null) {
             sb.append("线索 4：最高难度 ${difficultyLabel(top.difficultyType.ordinal)} ${top.level}，定数 ${top.ds}\n")
         }
-        sb.append("答案：${song.title}（点击下方歌曲卡可直接查看详情）")
-        return AgentReply(
-            sb.toString(),
-            songs = listOf(song.toAgentSong(top)),
-        )
+        if (song.bpm > 0) {
+            sb.append("线索 5：BPM ${song.bpm}\n")
+        }
+        val version = song.from.ifBlank { song.version }
+        if (version.isNotBlank() && version != "-") {
+            sb.append("线索 6：来自 ${version}\n")
+        }
+        sb.append("猜错会逐步揭示歌名，慢慢来～")
+        return AgentReply(sb.toString())
+    }
+
+    /**
+     * 提交猜歌答案。输入命中答案歌曲的**歌名 / 别名 / 歌曲 ID 任一**即算猜中：
+     * - 纯数字 → 按歌曲 ID 精确比对；
+     * - 否则归一化（去空白 / 小写）后与歌名、别名（alias 表）、标题假名互相包含。
+     *
+     * 放弃（输入「放弃 / 不猜了 / 投降」，或点答题栏的放弃按钮）：公布答案并挂上歌曲卡。
+     * 猜对：同样公布答案 + 歌曲卡，清除对局。
+     * 猜错：累计次数，按次数逐步揭示歌名，保持对局继续。
+     */
+    suspend fun submitGuess(input: String): AgentReply {
+        val session = _pendingGuess.value
+            ?: return AgentReply("当前没有进行中的猜歌对局，先点上方「猜歌」卡片开一局吧。")
+        val text = input.trim()
+        if (text.isEmpty()) return AgentReply("输入点什么再提交哦（歌名 / 别名 / 歌曲 ID）。")
+        val song = withContext(Dispatchers.IO) {
+            runCatching { AppDataBase.getInstance().songDao().getSongById(session.songId) }.getOrNull()
+        }
+        if (song == null) {
+            // 答案歌曲不见了（曲库被更新清掉）：对局作废
+            _pendingGuess.value = null
+            return AgentReply("答案歌曲已不在曲库里（曲库可能刚更新过），这一局作废，再开一局吧。")
+        }
+        // 公布答案用的公共尾部（猜对 / 放弃共用）：答案 + 曲师流派 + 歌曲卡
+        suspend fun revealAnswer(prefix: String, tail: String): AgentReply {
+            val charts = withContext(Dispatchers.IO) {
+                runCatching {
+                    AppDataBase.getInstance().chartDao().getChartsBySongId(song.id)
+                }.getOrDefault(emptyList())
+            }
+            val top = charts.maxByOrNull { it.ds }
+            val sb = StringBuilder()
+            sb.append("$prefix 答案是 **${mdEscape(song.title)}**。\n")
+            sb.append("曲师 ${song.artist.ifBlank { "—" }} · ${song.genre} · ${song.type}")
+            if (top != null) {
+                sb.append(" · 最高 ${difficultyLabel(top.difficultyType.ordinal)} ${top.level}（定数 ${top.ds}）")
+            }
+            sb.append("\n$tail")
+            return AgentReply(sb.toString(), songs = listOf(song.toAgentSong(top)))
+        }
+        // 放弃：关键词命中即公布答案，结束对局
+        if (text in GIVE_UP_WORDS) {
+            _pendingGuess.value = null
+            return revealAnswer(
+                "已放弃～",
+                "共猜错 ${session.wrongCount} 次。想再来一局就点上方「猜歌」卡片～",
+            )
+        }
+        if (isGuessCorrect(song, text)) {
+            _pendingGuess.value = null
+            return revealAnswer(
+                "🎉 猜对了！",
+                "共猜错 ${session.wrongCount} 次。想再来一局就点上方「猜歌」卡片～",
+            )
+        }
+        val wrong = session.wrongCount + 1
+        _pendingGuess.value = session.copy(wrongCount = wrong)
+        val sb = StringBuilder()
+        sb.append("不对哦～ 再试试！（已猜错 $wrong 次）\n")
+        sb.append("线索更新：曲名 ${revealTitle(song.title, wrong)}\n")
+        sb.append("还是没头绪的话，换个方向：流派 / 难度定数 / BPM 都对得上吗？")
+        return AgentReply(sb.toString())
+    }
+
+    /** 猜歌判定：输入命中答案歌曲的歌名 / 别名 / 标题假名 / ID 任一即算对。 */
+    private suspend fun isGuessCorrect(song: SongDataEntity, input: String): Boolean {
+        // 纯数字按歌曲 ID 精确匹配
+        input.toIntOrNull()?.let { return it == song.id }
+        val needle = normalizeGuess(input)
+        if (needle.length < 2) return false
+        if (normalizeGuess(song.title).contains(needle)) return true
+        val kana = song.titleKana.trim()
+        if (kana.isNotBlank() && kana != "-" && normalizeGuess(kana).contains(needle)) return true
+        val aliases = withContext(Dispatchers.IO) {
+            runCatching {
+                AppDataBase.getInstance().aliasDao().getAliasesBySongIdSync(song.id)
+            }.getOrDefault(emptyList())
+        }
+        return aliases.any { normalizeGuess(it.alias).contains(needle) }
+    }
+
+    /** 归一化猜歌输入 / 比对目标：去空白（含全角）、统一小写。 */
+    private fun normalizeGuess(text: String): String =
+        text.lowercase().replace(Regex("[\\s\\u3000]+"), "")
+
+    /**
+     * 逐步揭示歌名：首轮（[wrong] = 0）交给 [maskTitle]（首尾保留）；
+     * 每猜错一次多揭示一个字，直到只剩最后一个字。
+     */
+    private fun revealTitle(title: String, wrong: Int): String {
+        if (title.length <= 2) return title
+        val shown = (wrong + 1).coerceIn(1, title.length - 1)
+        return title.substring(0, shown) + "＊".repeat(title.length - shown)
     }
 
     // ---------- 工具函数 ----------
@@ -1311,6 +1427,20 @@ class KibaAgent(private val context: Context) {
 
     private fun fmtRange(lo: Double, hi: Double): String =
         if (lo == hi) "${"%.2f".format(lo)}" else "${"%.2f".format(lo)} - ${"%.2f".format(hi)}"
+
+    /**
+     * 转义 Markdown 元字符：歌名等动态文本进 GFM 排版前过一遍，
+     * 防止歌名里的 `*` `_` `` ` `` `[` `]` `~` 被解析成强调/代码/链接而破坏版式。
+     * 反斜杠转义由 MarkdownContent 的行内解析统一还原。
+     */
+    private fun mdEscape(text: String): String = buildString(text.length + 4) {
+        text.forEach { ch ->
+            when (ch) {
+                '\\', '*', '_', '`', '[', ']', '~' -> append('\\').append(ch)
+                else -> append(ch)
+            }
+        }
+    }
 
     /**
      * 宴会场谱面判定（官方设定这类谱面不获 Rating，推分/随机/定数类技能一律排除）：
@@ -1405,6 +1535,23 @@ class KibaAgent(private val context: Context) {
 
         /** 宴会場流派：官方设定该类歌曲不获 Rating。 */
         private const val GENRE_UTAGE = "宴会場"
+
+        /**
+         * 进行中的猜歌对局：答案歌曲 id + 已猜错次数（驱动逐步揭示）。
+         *
+         * 进程级状态：AgentScreen 的 KibaAgent 实例随导航销毁重组，
+         * 对局必须活在 companion 里才能「出了 Agent 页再回来接着猜」。
+         * null = 当前没有对局（输入框按普通聊天 / 提示处理）。
+         */
+        data class GuessSession(val songId: Int, val wrongCount: Int = 0)
+
+        private val _pendingGuess = MutableStateFlow<GuessSession?>(null)
+
+        /** 当前进行中的猜歌对局（UI 据此把输入框切成答题卡，无需 LLM）。 */
+        val pendingGuess: StateFlow<GuessSession?> = _pendingGuess.asStateFlow()
+
+        /** 猜歌放弃关键词：命中即公布答案、结束对局（答题栏也有放弃按钮）。 */
+        private val GIVE_UP_WORDS = setOf("放弃", "不猜了", "投降", "公布答案", "不知道")
 
         /**
          * 工具调用循环的最大轮数。
@@ -1504,7 +1651,7 @@ class KibaAgent(private val context: Context) {
             ),
             AgentSkill(
                 "guess_song", "猜歌",
-                "随机挑一首歌给出线索（遮罩歌名 / 曲师），让用户来猜",
+                "随机挑一首歌给出线索，在输入框提交答案（歌名/别名/ID），猜错逐步揭示",
             ),
             AgentSkill(
                 "random_number", "随机数",

@@ -26,4 +26,8 @@ interface SongDao {
     @Query("SELECT * FROM song_data ORDER BY RANDOM() LIMIT 1")
     suspend fun randomSong(): SongDataEntity?
 
+    /** 按 id 取单首（Agent 猜歌判定用：提交答案时按 id 拿回答案歌曲）。 */
+    @Query("SELECT * FROM song_data WHERE id = :songId LIMIT 1")
+    suspend fun getSongById(songId: Int): SongDataEntity?
+
 }

@@ -18,6 +18,14 @@ interface AliasDao {
     @Query("SELECT * FROM alias WHERE song_id = :songId")
     fun getAliasListBySongId(songId: Int): LiveData<List<AliasEntity>>
 
+    /**
+     * 根据歌曲 ID 查询对应的别名列表（挂起版，一次性读取）。
+     *
+     * 用于 Agent 猜歌判定：用户输入别名时要能和答案歌曲对上，
+     * LiveData 版需要观察才有值，这里走挂起查询直接拿结果。
+     */
+    @Query("SELECT * FROM alias WHERE song_id = :songId")
+    suspend fun getAliasesBySongIdSync(songId: Int): List<AliasEntity>
 
     @Insert
     fun insertAllAlias(aliasList: List<AliasEntity>)
