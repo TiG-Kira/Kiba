@@ -1,5 +1,6 @@
 package com.kira.kiba.ui.me
 
+import android.content.Context
 import android.graphics.Typeface
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -15,7 +16,6 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -30,12 +30,13 @@ import coil.compose.SubcomposeAsyncImage
 import com.kira.kiba.core.best50.Best50ImageBuilder
 import com.kira.kiba.core.db.entity.RecordEntity
 import com.kira.kiba.ui.common.coverCandidateUrls
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Best 50 单曲贴图（Compose 版）。
  *
  * 与 [Best50ImageBuilder]（B50 图片生成器的单格 246×132）同一套素材与坐标：
- * - 背景：封面铺满裁切 → 高斯模糊 → 亮度 ×0.72（黑 28% 叠层）→ `kiba_mb` 蒙版；
+ * - 背景：封面铺满裁切 → 亮度 ×0.72（黑 28% 叠层，不做模糊）→ `kiba_mb` 蒙版；
  * - 难度角标整框（左彩条 + 底部 DX 分数条）、SD/DX 模式图标、DX 星标；
  * - 曲号 / 歌名 / 达成率（白字）；DX 分 / 定数 / DX% / ra / 序号（黑字，画在分数条上）；
  * - 评级 / 连击 / 同步图标。
@@ -58,23 +59,41 @@ fun Best50Tile(
     modifier: Modifier = Modifier,
 ) {
     val fonts = rememberTileFonts()
+    // 外层只做尺寸测量；圆角裁切放在内层（半径依赖测出的 u）
     BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
-            .aspectRatio(246f / 132f)
-            .clip(RoundedCornerShape(9.dp))
-            .background(Color(0xFF101010)),
+            .aspectRatio(246f / 132f),
     ) {
         // 设计稿 246×132 → 每个设计像素对应的 Dp
         val u = maxWidth / 246f
 
-        // ── 背景封面：模糊 + 压暗（与位图管线一致：GaussianBlur(2) + ×0.72）──
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                // 与位图管线 applyAlphaMask 同口径：kiba_alpha 白角抹边 ≈ 15 设计 px
+                .clip(RoundedCornerShape((15f * u.value).dp))
+                .background(Color(0xFF101010)),
+        ) {
+            TileContent(record, fullScore, rankNum, listSize, fonts, u)
+        }
+    }
+}
+
+@Composable
+private fun TileContent(
+    record: RecordEntity,
+    fullScore: Int,
+    rankNum: Int,
+    listSize: Int,
+    fonts: TileFonts,
+    u: Dp,
+) {
+        // ── 背景封面：压暗层（不做模糊，降低滚动开销）──
         val candidates = remember(record.songId) { coverCandidateUrls(record.songId, "") }
         TileCoverImage(
             candidates = candidates,
-            modifier = Modifier
-                .fillMaxSize()
-                .blur((2f * u.value).dp),
+            modifier = Modifier.fillMaxSize(),
         )
         Box(
             modifier = Modifier
@@ -151,7 +170,6 @@ fun Best50Tile(
             "#$rankNum/$listSize",
             if (rankNum >= 9) 177f else 181f, 105f, 13f, fonts.andrea, Color.Black, u,
         )
-    }
 }
 
 // ---------- 贴图内部组件 ----------
@@ -201,6 +219,14 @@ private fun TileCoverImage(candidates: List<String>, modifier: Modifier = Modifi
     )
 }
 
+/** drawable 资源 ID 进程级缓存（getIdentifier 是逐次反射查表，50 卡滚动每次查太浪费）。 */
+private val drawableIdCache = ConcurrentHashMap<String, Int>()
+
+private fun drawableId(context: Context, name: String): Int =
+    drawableIdCache.getOrPut(name) {
+        context.resources.getIdentifier(name, "drawable", context.packageName)
+    }
+
 /** 按资源名取 drawable（资源缺失时整块跳过；mdpi 资源按密度实时渲染，放大不糊）。 */
 @Composable
 private fun AssetImage(
@@ -209,9 +235,7 @@ private fun AssetImage(
     contentScale: ContentScale = ContentScale.Fit,
 ) {
     val context = LocalContext.current
-    val id = remember(name) {
-        context.resources.getIdentifier(name, "drawable", context.packageName)
-    }
+    val id = remember(name) { drawableId(context, name) }
     if (id == 0) return
     Image(
         painter = painterResource(id),
@@ -230,9 +254,7 @@ private fun ScaledAsset(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    val id = remember(name) {
-        context.resources.getIdentifier(name, "drawable", context.packageName)
-    }
+    val id = remember(name) { drawableId(context, name) }
     if (id == 0) return
     val painter = painterResource(id)
     val w = painter.intrinsicSize.width
@@ -258,21 +280,27 @@ private data class TileFonts(
     val andrea: FontFamily,
 )
 
+/** 进程级字体单例：createFromAsset 开销大，50 张卡共享同一份 Typeface。 */
+private var tileFontsCache: TileFonts? = null
+
+private fun tileFontsSingleton(context: Context): TileFonts {
+    tileFontsCache?.let { return it }
+    fun asset(name: String): FontFamily = runCatching {
+        FontFamily(Typeface.createFromAsset(context.assets, "fonts/$name"))
+    }.getOrDefault(FontFamily.SansSerif)
+    return TileFonts(
+        exoM = asset("ExoM.ttf"),
+        exo = asset("Exo.ttf"),
+        simHei = asset("adobe_simhei.otf"),
+        hos = asset("HOS.ttf"),
+        andrea = asset("Andrea.otf"),
+    ).also { tileFontsCache = it }
+}
+
 @Composable
 private fun rememberTileFonts(): TileFonts {
     val context = LocalContext.current
-    return remember {
-        fun asset(name: String): FontFamily = runCatching {
-            FontFamily(Typeface.createFromAsset(context.assets, "fonts/$name"))
-        }.getOrDefault(FontFamily.SansSerif)
-        TileFonts(
-            exoM = asset("ExoM.ttf"),
-            exo = asset("Exo.ttf"),
-            simHei = asset("adobe_simhei.otf"),
-            hos = asset("HOS.ttf"),
-            andrea = asset("Andrea.otf"),
-        )
-    }
+    return remember { tileFontsSingleton(context) }
 }
 
 // ---------- 工具（与 Best50ImageBuilder 同口径） ----------

@@ -20,9 +20,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -49,6 +51,7 @@ import com.kira.kiba.ui.tools.MachineUpdateScreen
 import com.kira.kiba.ui.songdetail.SongDetailScreen
 import com.kira.kiba.ui.songdetail.SongDetailTopBarSlot
 import com.kira.kiba.ui.songs.SongsScreen
+import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
@@ -206,6 +209,7 @@ fun KibaMainScreen() {
     // - 强制「回顶 + 展开顶栏」只保留在两处：切主页 Tab、push 进新子页。
     val pageStateHolder = rememberSaveableStateHolder()
     val topBarMemory = remember { mutableMapOf<Any, Pair<Float, Float>>() }
+    val frameScope = rememberCoroutineScope()
 
     // SaveableStateProvider 的 key 必须是 Bundle 可存类型（data class 会直接抛
     // IllegalArgumentException 崩溃），所以统一用稳定字符串作页面 key，
@@ -227,6 +231,15 @@ fun KibaMainScreen() {
         val (h, c) = topBarMemory[pageKey(page)] ?: (0f to 0f)
         topAppBarState.heightOffset = h
         topAppBarState.contentOffset = c
+        // 返回后的第一帧，新页顶栏尚未重新测量出自己的 heightOffsetLimit，
+        // 恢复值会被上一页顶栏残留的（更小的）limit clamp 掉——表现为
+        // 从收窄态返回时顶栏半展开、大标题残影悬在内容上（不清不楚的 ghost）。
+        // 等两帧（新顶栏完成测量）后重新写入目标值。
+        frameScope.launch {
+            for (i in 0 until 2) withFrameNanos { }
+            topAppBarState.heightOffset = h
+            topAppBarState.contentOffset = c
+        }
     }
 
     // 每进入新页面（入栈/切 Tab）都把共享的顶栏状态归零：旧页面列表 state 已存入

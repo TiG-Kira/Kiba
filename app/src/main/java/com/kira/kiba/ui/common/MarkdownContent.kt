@@ -735,7 +735,9 @@ private fun buildInlineString(nodes: List<MdInline>, colors: MdColors): Annotate
 private fun AnnotatedString.Builder.appendInline(nodes: List<MdInline>, colors: MdColors) {
     for (node in nodes) {
         when (node) {
-            is MdInline.Plain -> append(node.text.replace('\n', ' '))
+            // 聊天/日志场景：保留单换行为真实换行（GFM 会把软换行折叠成空格，
+            // 但技能输出 / 更新日志大量使用单换行分条，折叠后挤成一坨不可读）。
+            is MdInline.Plain -> append(node.text)
             is MdInline.Strong -> {
                 pushStyle(SpanStyle(fontWeight = FontWeight.Bold))
                 appendInline(node.children, colors)

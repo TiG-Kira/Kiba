@@ -212,6 +212,10 @@ fun SongDetailTopBarSlot(
         // 展开态：歌名加粗，标题/副标题贴到顶栏底部（封面下部），距底边留空白
         largeTitleBottomAligned = true,
         largeTitleFontWeight = FontWeight.Bold,
+        // 关闭大标题折叠模糊：模糊半径随折叠进度逐帧变化，首帧要创建
+        // RenderEffect（shader 编译/分层分配），在滑动中正好撞上封面渐隐，
+        // 表现成「渐隐替换瞬间卡一下再继续流畅」；标题本身有位移+渐隐，无需模糊。
+        largeTitleBlurRadius = 0.dp,
     )
 }
 

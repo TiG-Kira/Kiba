@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -307,23 +308,41 @@ private fun SkillStrip(
     onSkillClick: (KibaAgent.AgentSkill) -> Unit,
     onClear: () -> Unit,
 ) {
-    // 统一卡宽：按「所有卡片（含清除卡）中，说明完整显示（单行不截断）所需的
-    // 最大文本宽度」设定每张卡的宽度，保证任何一张卡里说明都完整可见。
+    // 统一卡宽/卡高：宽度取「所有卡片标题与说明完整单行显示所需的最大宽度」
+    // 与上限 240.dp 的较小者；说明若在统一宽度内装不下则自动换行（不截断），
+    // 卡高取「标题 + 最高一条说明换行后的高度」的统一值，保证横向不超屏、
+    // 纵向紧凑且所有卡等高。
     val textMeasurer = rememberTextMeasurer()
     val density = LocalDensity.current
     val titleStyle = MiuixTheme.textStyles.subtitle
     val summaryStyle = MiuixTheme.textStyles.footnote2
-    val uniformCardWidth = remember(skills, titleStyle, summaryStyle) {
-        val titlePx = (skills.map { it.title } + "清除对话").maxOf {
-            textMeasurer.measure(it, titleStyle).size.width
+    val allTitles = skills.map { it.title } + "清除对话"
+    val allSummaries = skills.map { it.summary } + "清空聊天记录"
+    val cardSize = remember(skills, titleStyle, summaryStyle, density) {
+        val horizontalPadding = 24.dp /* 左右 padding */
+        val maxCardWidth = 240.dp
+        val titlePx = allTitles.maxOf { textMeasurer.measure(it, titleStyle).size.width }
+        val summaryPx = allSummaries.maxOf { textMeasurer.measure(it, summaryStyle).size.width }
+        val naturalWidth = with(density) {
+            maxOf(titlePx, summaryPx).toDp() + horizontalPadding + 1.dp /* 取整余量 */
         }
-        val summaryPx = (skills.map { it.summary } + "清空聊天记录").maxOf {
-            textMeasurer.measure(it, summaryStyle).size.width
+        val width = minOf(naturalWidth, maxCardWidth)
+        val innerPx = with(density) { (width - horizontalPadding).toPx() }.toInt()
+        val titleHeightPx = allTitles.maxOf { textMeasurer.measure(it, titleStyle).size.height }
+        val summaryHeightPx = allSummaries.maxOf {
+            textMeasurer.measure(
+                it,
+                summaryStyle,
+                constraints = Constraints(maxWidth = innerPx),
+            ).size.height
         }
         with(density) {
-            maxOf(titlePx, summaryPx).toDp() + 24.dp /* 左右 padding */ + 1.dp /* 取整余量 */
+            val innerHeight = titleHeightPx + summaryHeightPx
+            width to (innerHeight.toDp() + 4.dp /* 标题与说明间距 */ +
+                24.dp /* 上下 padding */ + 1.dp /* 取整余量 */)
         }
     }
+    val (uniformCardWidth, uniformCardHeight) = cardSize
     LazyRow(
         modifier = Modifier
             .fillMaxWidth()
@@ -333,7 +352,9 @@ private fun SkillStrip(
         items(skills.size) { index ->
             val skill = skills[index]
             Card(
-                modifier = Modifier.width(uniformCardWidth),
+                modifier = Modifier
+                    .width(uniformCardWidth)
+                    .height(uniformCardHeight),
                 onClick = { onSkillClick(skill) },
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
@@ -348,7 +369,6 @@ private fun SkillStrip(
                         text = skill.summary,
                         style = MiuixTheme.textStyles.footnote2,
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                        softWrap = false,
                     )
                 }
             }
@@ -356,7 +376,9 @@ private fun SkillStrip(
         // ── 清除对话（非技能）──
         item {
             Card(
-                modifier = Modifier.width(uniformCardWidth),
+                modifier = Modifier
+                    .width(uniformCardWidth)
+                    .height(uniformCardHeight),
                 onClick = onClear,
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
@@ -371,7 +393,6 @@ private fun SkillStrip(
                         text = "清空聊天记录",
                         style = MiuixTheme.textStyles.footnote2,
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                        softWrap = false,
                     )
                 }
             }
