@@ -595,13 +595,23 @@ class KibaAgent(private val context: Context) {
                 val rank = rankName(c.tierAch)
                 val listName = if (c.isDx) "B15" else "B35"
                 if (cur == null) {
+                    // 未游玩：打上目标档位即进入 Best 50，顶替地板
                     sb.append(
                         "  未游玩 → 达成 %.1f%%（%s）得 ra ${c.potential}，顶替$listName 地板（+${c.potential - c.floor}）\n"
                             .format(c.tierAch, rank)
                     )
-                } else {
+                } else if (cur.ra > c.floor) {
+                    // 已在列表内：本曲涨多少，总分就加多少
                     sb.append(
                         "  当前 %.4f%%（ra ${cur.ra}）→ 还差 %.2f%% 达成 %.1f%%（%s）得 ra ${c.potential}，还可 +${c.potential - cur.ra}\n"
+                            .format(cur.achievements, c.gap, c.tierAch, rank)
+                    )
+                } else {
+                    // 成绩低于地板（不在列表内）：打上去是顶替地板进榜，
+                    // 实际 Rating 增益 = potential - floor，不能按 potential - cur.ra 算
+                    //（那会把地板与现有成绩的差距也错算成增益，虚高好几 ra）。
+                    sb.append(
+                        "  当前 %.4f%%（ra ${cur.ra}，低于$listName 地板 ${c.floor}）→ 还差 %.2f%% 达成 %.1f%%（%s）得 ra ${c.potential}，顶替地板 Rating +${c.potential - c.floor}\n"
                             .format(cur.achievements, c.gap, c.tierAch, rank)
                     )
                 }

@@ -20,6 +20,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
@@ -198,8 +199,28 @@ fun KibaMainScreen() {
     val topAppBarState = rememberTopAppBarState()
     val scrollBehavior: ScrollBehavior = MiuixScrollBehavior(topAppBarState)
 
-    // 每进入新页面（入栈/出栈/切 Tab）都把共享的顶栏状态归零：旧页面列表 state 已随
-    // AnimatedContent 销毁重建回顶，顶栏也必须回到展开态，否则折叠状态会泄漏到新页面。
+    // ── 页面状态保留（返回不回顶）──
+    // - 页面内容包 SaveableStateProvider：push 子页时列表 state 存入 holder，
+    //   返回时原样恢复（滚动位置不丢）；
+    // - 顶栏塌缩状态按页面记忆：push 时存旧页，返回时恢复旧页（不强制展开）；
+    // - 强制「回顶 + 展开顶栏」只保留在两处：切主页 Tab、push 进新子页。
+    val pageStateHolder = rememberSaveableStateHolder()
+    val topBarMemory = remember { mutableMapOf<Any, Pair<Float, Float>>() }
+
+    fun pageKey(page: Any): Any = page
+
+    fun saveTopBar(page: Any) {
+        topBarMemory[pageKey(page)] = topAppBarState.heightOffset to topAppBarState.contentOffset
+    }
+
+    fun restoreTopBar(page: Any) {
+        val (h, c) = topBarMemory[pageKey(page)] ?: (0f to 0f)
+        topAppBarState.heightOffset = h
+        topAppBarState.contentOffset = c
+    }
+
+    // 每进入新页面（入栈/切 Tab）都把共享的顶栏状态归零：旧页面列表 state 已存入
+    // holder（返回时恢复），新页面顶栏必须回到展开态，否则折叠状态会泄漏到新页面。
     fun resetTopBar() {
         topAppBarState.contentOffset = 0f
         topAppBarState.heightOffset = 0f
@@ -207,6 +228,10 @@ fun KibaMainScreen() {
 
     fun pushPage(page: KibaSubPage) {
         navForward = true
+        saveTopBar(subStack.lastOrNull() ?: selectedTab)
+        // 进新子页 = 新导航：清掉该页残留的旧状态（比如之前访问过同一首歌）
+        pageStateHolder.removeState(page)
+        topBarMemory.remove(page)
         subStack = subStack + page
         resetTopBar()
     }
@@ -214,8 +239,10 @@ fun KibaMainScreen() {
     fun popPage() {
         if (subStack.isNotEmpty()) {
             navForward = false
+            val back = subStack.dropLast(1).lastOrNull() ?: selectedTab
             subStack = subStack.dropLast(1)
-            resetTopBar()
+            // 返回上一页：恢复其滚动位置与顶栏塌缩状态，不强制回顶/展开
+            restoreTopBar(back)
         }
     }
 
@@ -287,8 +314,11 @@ fun KibaMainScreen() {
                     onSelect = { index ->
                         val target = tabs.getOrElse(index) { selectedTab }
                         if (target != selectedTab) {
+                            // 切 Tab = 进新页面：目标页残留状态清掉，列表回顶 + 顶栏展开
+                            pageStateHolder.removeState(target)
+                            topBarMemory.remove(target)
                             selectedTab = target
-                            resetTopBar() // 切 Tab = 进新页面：列表回顶 + 顶栏展开
+                            resetTopBar()
                         }
                     },
                     backdrop = glassNavBackdrop,
@@ -333,8 +363,11 @@ fun KibaMainScreen() {
                     },
                     label = "kiba-page",
                 ) { target ->
-                    when (target) {
-                        is KibaSubPage -> when (target) {
+                    // 按页面隔离保存状态：push 子页时当前页 state 存入 holder，
+                    // 返回时恢复（滚动位置/输入内容不丢）；切 Tab 时已在 onSelect 清空目标页。
+                    pageStateHolder.SaveableStateProvider(pageKey(target)) {
+                        when (target) {
+                            is KibaSubPage -> when (target) {
                             is KibaSubPage.SongDetail -> SongDetailScreen(
                                 songId = target.songId,
                                 scrollBehavior = scrollBehavior,
@@ -430,6 +463,7 @@ fun KibaMainScreen() {
                                 onOpenAbout = { pushPage(KibaSubPage.About) },
                             )
                         }
+                    }
                     }
                 }
             }

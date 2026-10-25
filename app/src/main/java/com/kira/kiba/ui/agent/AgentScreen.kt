@@ -43,6 +43,7 @@ import com.kira.kiba.core.utils.SpUtil
 import com.kira.kiba.ui.common.ChartTypeChip
 import com.kira.kiba.ui.common.CoverFrame
 import com.kira.kiba.ui.common.DifficultyChip
+import com.kira.kiba.ui.common.MarkdownContent
 import com.kira.kiba.ui.common.difficultyColor
 import com.kira.kiba.ui.common.difficultyLabel
 import com.kira.kiba.ui.navigation.LocalNavBarBottomPadding
@@ -400,11 +401,21 @@ private fun ChatBubble(msg: AgentSession.Turn, onOpenSong: (Int) -> Unit) {
                         )
                         .padding(horizontal = 12.dp, vertical = 9.dp),
                 ) {
-                    Text(
-                        text = bodyText,
-                        style = MiuixTheme.textStyles.body2,
-                        color = MiuixTheme.colorScheme.onSurface,
-                    )
+                    if (msg.fromUser) {
+                        // 用户消息保持原样（原文本，不做 markdown 解析）
+                        Text(
+                            text = bodyText,
+                            style = MiuixTheme.textStyles.body2,
+                            color = MiuixTheme.colorScheme.onSurface,
+                        )
+                    } else {
+                        // Agent 回复走 GFM 渲染：标题 / 列表 / 表格 / 代码块 / 粗斜体等
+                        MarkdownContent(
+                            text = bodyText,
+                            modifier = Modifier.fillMaxWidth(),
+                            bodyFontSizeSp = 15,
+                        )
+                    }
                 }
             }
         }

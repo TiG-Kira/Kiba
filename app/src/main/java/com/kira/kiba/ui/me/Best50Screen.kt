@@ -1,6 +1,7 @@
 package com.kira.kiba.ui.me
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -13,21 +14,28 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.kira.kiba.core.account.DivingFishAccount
+import com.kira.kiba.core.db.AppDataBase
+import com.kira.kiba.core.db.entity.ChartEntity
 import com.kira.kiba.core.db.entity.RecordEntity
 import com.kira.kiba.core.model.DifficultyType
 import kotlinx.coroutines.launch
@@ -48,7 +56,8 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  * Best 50 页（官方口径 sd 35 + dx 15，ra 之和即 DX Rating）。
  * 数据源：绑定查分器后水鱼服务端下发的官方 B50；未绑定时引导去「我」页面授权。
  *
- * 每行是可点击的歌曲卡：点击进入该歌曲的歌曲详情页。
+ * 歌曲卡与「生成 Best 50 图片」的单曲贴图同一套视觉（见 [Best50Tile]），
+ * 按屏幕宽度自适应一行列数；点击进入该歌曲的歌曲详情页。
  */
 @Composable
 fun Best50Screen(
@@ -64,6 +73,25 @@ fun Best50Screen(
     val new = b50.new
     val total = b50.rating
 
+    // DX 满分表（notes 总数 × 3）：贴图右下的 DX 分/满分 与 星标 都要用
+    val charts by produceState<List<ChartEntity>>(initialValue = emptyList()) {
+        value = runCatching {
+            AppDataBase.getInstance().chartDao().getAllChartsList()
+        }.getOrDefault(emptyList())
+    }
+    val fullScoreByKey = remember(charts) {
+        charts.associate { (it.songId to it.difficultyType.ordinal) to it.notesTotal * 3 }
+    }
+
+    // ── 按屏幕宽度决定一行几列（贴图等比缩放，放大不糊）──
+    val screenWidthDp = LocalConfiguration.current.screenWidthDp
+    val columns = when {
+        screenWidthDp >= 1000 -> 4
+        screenWidthDp >= 640 -> 3
+        screenWidthDp >= 300 -> 2
+        else -> 1
+    }
+
     // ── 保存图片到相册 ──
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -76,15 +104,17 @@ fun Best50Screen(
             .nestedScroll(scrollBehavior.nestedScrollConnection),
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
     ) { padding ->
-        LazyColumn(
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(columns),
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
             contentPadding = pageContentPadding(withNavBar = false),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             if (b50.old.isEmpty() && b50.new.isEmpty()) {
-                item(key = "empty") {
+                item(key = "empty", span = { GridItemSpan(maxLineSpan) }) {
                     EmptyStateCard(
                         text = if (account.bound) {
                             "还没有成绩数据\n可在「我」页面下拉刷新，或稍后重试"
@@ -94,7 +124,7 @@ fun Best50Screen(
                     )
                 }
             } else {
-                item(key = "save") {
+                item(key = "save", span = { GridItemSpan(maxLineSpan) }) {
                     Card(modifier = Modifier.fillMaxWidth()) {
                         Row(
                             modifier = Modifier
@@ -134,7 +164,7 @@ fun Best50Screen(
                         }
                     }
                 }
-                item(key = "summary") {
+                item(key = "summary", span = { GridItemSpan(maxLineSpan) }) {
                     Card(modifier = Modifier.fillMaxWidth()) {
                         Row(
                             modifier = Modifier
@@ -166,7 +196,7 @@ fun Best50Screen(
                     }
                 }
                 if (new.isNotEmpty()) {
-                    item(key = "new_title") {
+                    item(key = "new_title", span = { GridItemSpan(maxLineSpan) }) {
                         Text(
                             text = "新曲 ${new.size}（当前版本，Best15）",
                             style = MiuixTheme.textStyles.subtitle,
@@ -174,19 +204,21 @@ fun Best50Screen(
                             modifier = Modifier.padding(start = 4.dp, top = 4.dp),
                         )
                     }
-                    new.forEachIndexed { index, r ->
-                        item(key = "b50_new_$index") {
-                            Best50Row(
-                                rank = index + 1,
-                                record = r,
-                                tag = "新",
-                                onClick = { onOpenSong(r.songId) },
-                            )
-                        }
+                    itemsIndexed(
+                        items = new,
+                        key = { _, r -> "b50_new_${r.songId}_${r.levelIndex}" },
+                    ) { index, r ->
+                        Best50TileCard(
+                            rank = index + 1,
+                            listSize = new.size,
+                            record = r,
+                            fullScore = fullScoreByKey[r.songId to r.levelIndex] ?: 0,
+                            onClick = { onOpenSong(r.songId) },
+                        )
                     }
                 }
                 if (old.isNotEmpty()) {
-                    item(key = "old_title") {
+                    item(key = "old_title", span = { GridItemSpan(maxLineSpan) }) {
                         Text(
                             text = "旧曲 ${old.size}（Best35）",
                             style = MiuixTheme.textStyles.subtitle,
@@ -194,15 +226,17 @@ fun Best50Screen(
                             modifier = Modifier.padding(start = 4.dp, top = 8.dp),
                         )
                     }
-                    old.forEachIndexed { index, r ->
-                        item(key = "b50_old_$index") {
-                            Best50Row(
-                                rank = index + 1,
-                                record = r,
-                                tag = "旧",
-                                onClick = { onOpenSong(r.songId) },
-                            )
-                        }
+                    itemsIndexed(
+                        items = old,
+                        key = { _, r -> "b50_old_${r.songId}_${r.levelIndex}" },
+                    ) { index, r ->
+                        Best50TileCard(
+                            rank = index + 1,
+                            listSize = old.size,
+                            record = r,
+                            fullScore = fullScoreByKey[r.songId to r.levelIndex] ?: 0,
+                            onClick = { onOpenSong(r.songId) },
+                        )
                     }
                 }
             }
@@ -211,62 +245,25 @@ fun Best50Screen(
 }
 
 /**
- * Best 50 行：序号 + 歌名 + 徽标行（难度 / 达成率 / 新旧 tag）+ ra。
- * 点击进入歌曲详情；徽标用 FlowRow，宽度不足自动换行不挤到卡片边缘。
+ * Best 50 贴图卡：单曲贴图（[Best50Tile]）包在可点击卡片里。
+ * 点击进入歌曲详情页（与旧版行卡行为一致）；贴图随卡片宽度等比缩放。
  */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun Best50Row(rank: Int, record: RecordEntity, tag: String, onClick: () -> Unit) {
-    val diffColor = difficultyColor(
-        DifficultyType.entries.getOrElse(record.levelIndex) { DifficultyType.UTAGE }
-    )
+private fun Best50TileCard(
+    rank: Int,
+    listSize: Int,
+    record: RecordEntity,
+    fullScore: Int,
+    onClick: () -> Unit,
+) {
     Card(modifier = Modifier.fillMaxWidth(), onClick = onClick) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = "$rank",
-                style = MiuixTheme.textStyles.footnote1,
-                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                modifier = Modifier.width(28.dp),
+        Box(modifier = Modifier.padding(4.dp)) {
+            Best50Tile(
+                record = record,
+                fullScore = fullScore,
+                rankNum = rank,
+                listSize = listSize,
             )
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = record.title,
-                    style = MiuixTheme.textStyles.body1,
-                    color = MiuixTheme.colorScheme.onSurface,
-                    maxLines = 2,
-                )
-                Spacer(Modifier.height(3.dp))
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(5.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    com.kira.kiba.ui.common.DifficultyChip(
-                        text = "${difficultyLabel(record.levelIndex)} ${record.level}",
-                        color = diffColor,
-                    )
-                    InfoPill("%.2f%%".format(record.achievements))
-                    InfoPill(tag)
-                }
-            }
-            HGap()
-            Column(horizontalAlignment = Alignment.End) {
-                Text(
-                    text = "${record.ra}",
-                    style = MiuixTheme.textStyles.subtitle,
-                    color = diffColor,
-                )
-                Text(
-                    text = "ra",
-                    style = MiuixTheme.textStyles.footnote2,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                )
-            }
         }
     }
 }
@@ -344,7 +341,7 @@ fun RecordsScreen(
                     )
                 }
             }
-            items@ list.sortedByDescending { it.ra }.forEachIndexed { index, r ->
+            list.sortedByDescending { it.ra }.forEachIndexed { index, r ->
                 item(key = "rec_${r.songId}_${r.levelIndex}") {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
