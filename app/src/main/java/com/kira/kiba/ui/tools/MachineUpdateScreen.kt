@@ -185,10 +185,22 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
                             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                         )
                         Spacer(Modifier.height(8.dp))
+                        // 登录状态以 isDivingFishLoggedIn 为准（OAuth 绑定或原版 jwt 任一即可），
+                        // 不能只看 getUserName——OAuth 设备码登录不落地用户名，
+                        // 否则实际已登录却显示"未登录"。
+                        val dfLoggedIn = SpUtil.isDivingFishLoggedIn()
+                        val dfDisplayName = SpUtil.getUserName()
+                            .ifBlank { SpUtil.getDivingFishOAuthNickname() }
+                            .ifBlank { "已登录" }
+                        val dfHint = when {
+                            !dfLoggedIn -> "未登录（无法上传成绩）"
+                            SpUtil.getUserName().isBlank() -> "$dfDisplayName（OAuth 授权）"
+                            else -> dfDisplayName
+                        }
                         Text(
-                            text = "水鱼账号：${if (SpUtil.getUserName().isBlank()) "未登录（无法上传成绩）" else SpUtil.getUserName()}",
+                            text = "水鱼账号：$dfHint",
                             style = MiuixTheme.textStyles.footnote1,
-                            color = if (SpUtil.getUserName().isBlank()) {
+                            color = if (!dfLoggedIn) {
                                 MiuixTheme.colorScheme.primary
                             } else {
                                 MiuixTheme.colorScheme.onSurfaceVariantSummary

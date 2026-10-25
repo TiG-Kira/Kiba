@@ -76,3 +76,15 @@ fun KibaRefreshAction(onClick: () -> Unit) {
         )
     }
 }
+
+/** 顶栏归类按钮（glass 系，曲目页用）。 */
+@Composable
+fun KibaSortAction(onClick: () -> Unit) {
+    GlassIconButton(onClick = onClick) {
+        Icon(
+            MiuixGlassIcons.Regular.Sort,
+            contentDescription = "归类方式",
+            tint = MiuixTheme.colorScheme.onSurface,
+        )
+    }
+}

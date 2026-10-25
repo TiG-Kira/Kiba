@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.Composable
@@ -24,9 +25,26 @@ import com.kira.kiba.ui.common.DxRatingTag
 import com.kira.kiba.ui.common.SectionTitle
 import com.kira.kiba.ui.common.pageContentPadding
 import top.yukonga.miuix.kmp.basic.Card
+import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
+import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
+import top.yukonga.miuix.kmp.icon.glass.*
 import top.yukonga.miuix.kmp.preference.ArrowPreference
+import top.yukonga.miuix.kmp.theme.MiuixTheme
+
+/**
+ * 「我」页面 ArrowPreference 的左侧功能图标（HyperOS 设置风格：次要色单色图标）。
+ */
+@Composable
+private fun PrefIcon(icon: androidx.compose.ui.graphics.vector.ImageVector) {
+    Icon(
+        imageVector = icon,
+        contentDescription = null,
+        tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+        modifier = Modifier.size(26.dp),
+    )
+}
 
 /**
  * “我”页面（miuix preference 规范 + miuix Card 分组包裹）：
@@ -87,6 +105,7 @@ fun MeScreen(
                         endActions = {
                             DxRatingTag(rating = if (account.bound) account.rating else 0)
                         },
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Contacts) },
                     )
                 }
             }
@@ -102,11 +121,13 @@ fun MeScreen(
                         } else {
                             "支持水鱼账号密码（原版）与 OAuth 授权两种方式"
                         },
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Lock) },
                         onClick = onOpenLogin,
                     )
                     ArrowPreference(
                         title = "成绩记录",
                         summary = "全量成绩列表，顶栏刷新按钮可从查分器更新",
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Notes) },
                         onClick = onOpenRecords,
                     )
                 }
@@ -119,6 +140,7 @@ fun MeScreen(
                     ArrowPreference(
                         title = "我的收藏",
                         summary = "在歌曲详情页标记过收藏的歌曲列表",
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Favorites) },
                         onClick = onOpenFavorites,
                     )
                 }
@@ -131,11 +153,13 @@ fun MeScreen(
                     ArrowPreference(
                         title = "版本进度",
                         summary = "各版本歌曲的收集 / 游玩情况（点击进入歌曲明细）",
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Months) },
                         onClick = onOpenVersionProgress,
                     )
                     ArrowPreference(
                         title = "等级进度",
                         summary = "各难度等级谱面的游玩情况（点击进入歌曲明细）",
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.GridView) },
                         onClick = onOpenLevelProgress,
                     )
                 }
@@ -147,17 +171,20 @@ fun MeScreen(
                     ArrowPreference(
                         title = "登录机台",
                         summary = "打开微信「舞萌 | 中二」公众号，点底部「玩家二维码」菜单即可扫码上机",
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Phone) },
                         onClick = onOpenMachineLogin,
                     )
                     ArrowPreference(
                         title = "DX 分数转换",
                         summary = "由判定数量反推达成率与单曲 Rating",
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.ConvertFile) },
                         onClick = onOpenDxConverter,
                     )
                     if (account.bound) {
                         ArrowPreference(
                             title = "退出登录",
                             summary = "清除本机成绩缓存与登录凭证；远端授权可在 auth.diving-fish.com/apps 撤销",
+                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Unlock) },
                             onClick = { DivingFishAccount.unbind() },
                         )
                     }

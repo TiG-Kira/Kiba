@@ -31,15 +31,33 @@ import com.kira.kiba.ui.common.pageContentPadding
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.DropdownItem
+import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
+import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
+import top.yukonga.miuix.kmp.icon.glass.*
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.OverlaySpinnerPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
+import top.yukonga.miuix.kmp.theme.MiuixTheme
+import androidx.compose.foundation.layout.size
+
+/**
+ * 设置页 ArrowPreference 的左侧功能图标（HyperOS 设置风格：次要色单色图标）。
+ */
+@Composable
+private fun PrefIcon(icon: androidx.compose.ui.graphics.vector.ImageVector) {
+    Icon(
+        imageVector = icon,
+        contentDescription = null,
+        tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+        modifier = Modifier.size(26.dp),
+    )
+}
 
 /**
  * 设置页（严格 miuix preference 规范：ArrowPreference / SwitchPreference / OverlaySpinnerPreference）。
@@ -128,6 +146,7 @@ fun SettingsScreen(
                         } else {
                             "配置任意 OpenAI 兼容端点（官方 / 中转 / 本地 ollama）"
                         },
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.AiScan) },
                         onClick = onOpenLlmConfig,
                     )
                 }
@@ -140,6 +159,7 @@ fun SettingsScreen(
                     ArrowPreference(
                         title = "机台成绩更新",
                         summary = "VPN 抓包方案：在机台 WiFi 下把成绩同步到水鱼",
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Update) },
                         onClick = onOpenMachineUpdate,
                     )
                 }
@@ -153,6 +173,7 @@ fun SettingsScreen(
                     title = "自定义封面源",
                     summary = coverSource.ifBlank { "使用内置候选链（水鱼 CDN + 官网镜像）" }
                         .let { if (coverSource.isBlank()) it else coverSource },
+                    startAction = { PrefIcon(MiuixGlassIcons.Regular.Photos) },
                     onClick = { showCoverSource = true },
                 )
                 ArrowPreference(
@@ -167,6 +188,7 @@ fun SettingsScreen(
                             else "已是最新版本 ${s.version}"
                         is SongDataSync.SyncState.Failed -> "更新失败：${s.message}（点击重试）"
                     },
+                    startAction = { PrefIcon(MiuixGlassIcons.Regular.Refresh) },
                     onClick = {
                         if (SongDataSync.updateAvailable.value != null) {
                             KibaState.refreshSongData(context)
@@ -185,6 +207,7 @@ fun SettingsScreen(
                     ArrowPreference(
                         title = "关于 Kiba",
                         summary = "版本 ${BuildConfig.VERSION_NAME} · 基于 MaimaiData 二次开发",
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Info) },
                         onClick = onOpenAbout,
                     )
                 }

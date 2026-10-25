@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -74,6 +73,7 @@ import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.icon.glass.*
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.utils.PressFeedbackType
 
 /**
  * 曲目列表快照（进程级）：从歌曲详情返回时首帧即渲染上次的完整列表，
@@ -98,6 +98,9 @@ object SongsListCache : ListSnapshotCache<List<SongWithChartsEntity>>(emptyList(
 fun SongsScreen(
     scrollBehavior: ScrollBehavior,
     searchTrigger: Int = 0,
+    // 归类方式选择弹层：由顶栏归类按钮控制（曲目页不再放独立归类卡）
+    showGroupPicker: Boolean = false,
+    onDismissGroupPicker: () -> Unit = {},
     onSongClick: (SongWithChartsEntity) -> Unit = {},
     onOpenGroup: (mode: SongGroupMode, key: String) -> Unit = { _, _ -> },
 ) {
@@ -155,7 +158,6 @@ fun SongsScreen(
     var groupMode by remember {
         mutableStateOf(SongGroupMode.fromKey(SpUtil.getSongGroupMode()))
     }
-    var showGroupPicker by remember { mutableStateOf(false) }
     val grouping = groupMode != SongGroupMode.NONE && query.isBlank()
     val groups = remember(songs, groupMode, grouping) {
         if (grouping) buildSongGroups(songs, groupMode) else emptyList()
@@ -216,45 +218,8 @@ fun SongsScreen(
                 }
             }
 
-            // 曲库数据卡：版本 / 歌曲数 / 检查更新 / 下载进度
-            item(key = "song_data") {
-                SongDataCard(
-                    syncState = syncState,
-                    localVersion = localVersion,
-                    songCount = songs.size,
-                    hasUpdate = updateAvailable != null,
-                    syncing = syncing,
-                    onCheckOrUpdate = {
-                        if (updateAvailable != null) {
-                            KibaState.refreshSongData(context)
-                        } else {
-                            KibaState.checkSongUpdate()
-                        }
-                    },
-                )
-            }
-
-            // 归类方式选择（搜索中隐藏：搜索结果强制平铺）
-            if (query.isBlank()) {
-                item(key = "group_mode") {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        onClick = { showGroupPicker = true },
-                    ) {
-                        BasicComponent(
-                            title = "归类方式",
-                            summary = "${groupMode.label} · 点击切换",
-                            endActions = {
-                                Icon(
-                                    MiuixGlassIcons.Regular.ChevronForward,
-                                    contentDescription = null,
-                                    tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                                )
-                            },
-                        )
-                    }
-                }
-            }
+            // 曲库数据卡与归类方式卡已移到顶栏按钮（刷新 / 归类），
+            // 列表直接从搜索栏 / 分组入口 / 歌曲卡片开始。
 
             if (songs.isEmpty()) {
                 item(key = "state") {
@@ -285,6 +250,7 @@ fun SongsScreen(
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         onClick = { onOpenGroup(groupMode, group.key) },
+                        pressFeedbackType = PressFeedbackType.Sink,
                     ) {
                         BasicComponent(
                             title = group.name,
@@ -307,13 +273,13 @@ fun SongsScreen(
         }
     }
 
-    // 归类方式选择弹层（单选圆点指示）
+    // 归类方式选择弹层（单选圆点指示；由顶栏归类按钮唤起）
     if (showGroupPicker) {
         OverlayDialog(
             show = true,
             title = "归类方式",
             summary = "选择曲目列表的归类维度，子页面展示对应谱面",
-            onDismissRequest = { showGroupPicker = false },
+            onDismissRequest = onDismissGroupPicker,
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
                 SongGroupMode.entries.forEach { mode ->
@@ -324,7 +290,7 @@ fun SongsScreen(
                             .clickable {
                                 groupMode = mode
                                 SpUtil.setSongGroupMode(mode.key)
-                                showGroupPicker = false
+                                onDismissGroupPicker()
                             }
                             .padding(horizontal = 8.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -356,84 +322,6 @@ fun SongsScreen(
                 }
             }
         }
-    }
-}
-
-/**
- * 曲库数据卡：常驻展示当前数据版本 / 歌曲数，提供「检查更新 / 立即更新」入口，
- * 下载中展示进度条（miuix Card + BasicComponent + TextButton 全走 miuix 规范）。
- */
-@Composable
-private fun SongDataCard(
-    syncState: SongDataSync.SyncState,
-    localVersion: String,
-    songCount: Int,
-    hasUpdate: Boolean,
-    syncing: Boolean,
-    onCheckOrUpdate: () -> Unit,
-) {
-    val countSuffix = if (songCount > 0) " · 共 $songCount 首" else ""
-    val summary = when (val s = syncState) {
-        SongDataSync.SyncState.Idle -> "当前版本 $localVersion$countSuffix"
-        SongDataSync.SyncState.Checking -> "正在检查更新…"
-        is SongDataSync.SyncState.Downloading ->
-            if (s.total > 0) {
-                "正在下载 ${s.received / 1024} / ${s.total / 1024} KB"
-            } else {
-                "正在下载 ${s.received / 1024} KB…"
-            }
-        is SongDataSync.SyncState.Done -> "已是最新版本 ${s.version}$countSuffix"
-        is SongDataSync.SyncState.Failed -> "更新失败：${s.message}"
-    }
-    Card(modifier = Modifier.fillMaxWidth()) {
-        BasicComponent(
-            title = "曲库数据",
-            summary = summary,
-            endActions = {
-                TextButton(
-                    text = when {
-                        syncing -> "更新中"
-                        hasUpdate -> "立即更新"
-                        else -> "检查更新"
-                    },
-                    onClick = onCheckOrUpdate,
-                    enabled = !syncing,
-                )
-            },
-        )
-        if (syncState is SongDataSync.SyncState.Downloading) {
-            SyncProgressBar(
-                received = syncState.received,
-                total = syncState.total,
-                modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
-            )
-        }
-    }
-}
-
-/** 细进度条（曲库下载进度），走 miuix 主色。 */
-@Composable
-private fun SyncProgressBar(
-    received: Long,
-    total: Long,
-    modifier: Modifier = Modifier,
-) {
-    if (total <= 0L) return
-    val fraction = (received.toFloat() / total.toFloat()).coerceIn(0f, 1f)
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(4.dp)
-            .clip(RoundedCornerShape(2.dp))
-            .background(MiuixTheme.colorScheme.primary.copy(alpha = 0.2f)),
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth(fraction)
-                .fillMaxHeight()
-                .clip(RoundedCornerShape(2.dp))
-                .background(MiuixTheme.colorScheme.primary),
-        )
     }
 }
 
@@ -483,6 +371,8 @@ fun SongCard(
     Card(
         modifier = modifier.fillMaxWidth(),
         onClick = onClick,
+        // HyperOS 风格按压缩放反馈（miuix Card 默认无反馈）
+        pressFeedbackType = PressFeedbackType.Sink,
     ) {
         BasicComponent(
             startAction = {

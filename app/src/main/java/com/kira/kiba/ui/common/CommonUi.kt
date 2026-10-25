@@ -423,7 +423,7 @@ private fun drawableId(name: String): Int {
  * 取不到素材时退回文字，保证不空白。
  */
 @Composable
-fun RankBadge(rate: String, height: androidx.compose.ui.unit.Dp = 26.dp) {
+fun RankBadge(rate: String, height: androidx.compose.ui.unit.Dp = 40.dp) {
     val file = when (rate.lowercase()) {
         "d" -> "d"; "c" -> "c"; "b" -> "b"; "bb" -> "bb"; "bbb" -> "bbb"
         "a" -> "a"; "aa" -> "aa"; "aaa" -> "aaa"
@@ -454,7 +454,7 @@ fun RankBadge(rate: String, height: androidx.compose.ui.unit.Dp = 26.dp) {
  * 空值不渲染（Bot 的同位置会贴 Blank，这里直接留白更干净）。
  */
 @Composable
-fun ComboBadge(fc: String, height: androidx.compose.ui.unit.Dp = 24.dp) {
+fun ComboBadge(fc: String, height: androidx.compose.ui.unit.Dp = 32.dp) {
     val file = when (fc.lowercase()) {
         "fc" -> "fc"; "fcp" -> "fcp"; "fc+" -> "fcp"
         "ap" -> "ap"; "app" -> "app"; "ap+" -> "app"
@@ -474,7 +474,7 @@ fun ComboBadge(fc: String, height: androidx.compose.ui.unit.Dp = 24.dp) {
  * 同步贴图（UI_MSS_MBase_Icon_*_S）：fs / fsp（FS+）/ fsd（FDX）/ fsdp（FDX+）。
  */
 @Composable
-fun SyncBadge(fs: String, height: androidx.compose.ui.unit.Dp = 24.dp) {
+fun SyncBadge(fs: String, height: androidx.compose.ui.unit.Dp = 32.dp) {
     val file = when (fs.lowercase()) {
         "fs" -> "fs"; "fsp" -> "fsp"; "fs+" -> "fsp"
         "fsd" -> "fsd"; "fsdp" -> "fsdp"; "fdx" -> "fsd"; "fdx+" -> "fsdp"

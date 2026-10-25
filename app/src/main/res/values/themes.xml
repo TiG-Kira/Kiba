@@ -1,7 +1,8 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <!-- Compose 全屏无 ActionBar 主题；miuix 自带主题接管界面，这里仅作窗口外壳 -->
+    <!-- Compose 全屏无 ActionBar 主题；miuix 自带主题接管界面，这里仅作窗口外壳。
+         edge-to-edge 由 MainActivity 显式 enableEdgeToEdge() 开启（不复写 windowOptOut），
+         系统栏透明 + 图标明暗跟随主题。 -->
     <style name="Theme.Kiba" parent="Theme.Material3.DayNight.NoActionBar">
-        <item name="android:windowOptOutEdgeToEdgeEnforcement">true</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">?attr/isLightTheme</item>

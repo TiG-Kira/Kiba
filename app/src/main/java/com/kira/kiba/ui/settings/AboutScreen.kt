@@ -55,6 +55,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.toBitmap
 import coil.imageLoader
 import coil.request.ImageRequest
+import com.kira.kiba.R
 import com.kira.kiba.BuildConfig
 import com.kira.kiba.core.update.ApkDownloader
 import com.kira.kiba.core.update.UpdateChecker
@@ -188,7 +189,8 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
                         .padding(top = 48.dp, bottom = 10.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    // App Logo：白色像素透明（透出渐变），其余染成文字色（Termux Ultra 同款处理）
+                    // App Logo：用 launcher 前景图（ic_launcher_foreground），
+                    // 白色像素透明（透出渐变），其余染成文字色（Termux Ultra 同款处理）
                     val appIcon = remember(darkTheme) {
                         val fgInt = android.graphics.Color.argb(
                             (headerFg.alpha * 255).toInt(),
@@ -197,7 +199,8 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
                             (headerFg.blue * 255).toInt(),
                         )
                         runCatching {
-                            ContextCompat.getDrawable(context, context.applicationInfo.icon)?.toBitmap()
+                            ContextCompat.getDrawable(context, R.drawable.ic_launcher_foreground)
+                                ?.toBitmap()
                         }.getOrNull()?.let { bm ->
                             val copy = bm.copy(android.graphics.Bitmap.Config.ARGB_8888, true)
                             val pixels = IntArray(copy.width * copy.height)
@@ -567,7 +570,7 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
                                 enabled = !downloadingApk,
                             )
                             TextButton(
-                                text = "手动下载",
+                                text = "手动",
                                 onClick = {
                                     openUrl(context, result.releaseUrl)
                                     showUpdateDialog = false

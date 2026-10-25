@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -32,6 +33,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.kira.kiba.core.account.DivingFishAccount
 import com.kira.kiba.core.best50.Best50ImageService
+import com.kira.kiba.core.data.SongDataSync
 import com.kira.kiba.core.share.ShareService
 import com.kira.kiba.core.state.KibaState
 import com.kira.kiba.core.utils.WeChatJump
@@ -286,6 +288,13 @@ fun KibaMainScreen() {
 
     // 顶栏搜索按钮：每次点击 +1，曲目页据此聚焦搜索框
     var songsSearchTrigger by remember { mutableIntStateOf(0) }
+    // 曲目页顶栏归类按钮 → 归类方式选择弹层（曲目页不再放独立归类卡）
+    var songsShowGroupPicker by remember { mutableStateOf(false) }
+    // 曲库同步状态：曲目页顶栏刷新按钮用（同步中禁点；有新版直接立即更新）
+    val songSyncState by SongDataSync.state.collectAsState()
+    val songUpdateAvailable by SongDataSync.updateAvailable.collectAsState()
+    val songSyncing = songSyncState is SongDataSync.SyncState.Checking ||
+        songSyncState is SongDataSync.SyncState.Downloading
 
     val density = LocalDensity.current
     // 隐藏手势提示线后 navigationBars inset 可能为 0，保底 12dp 贴屏幕底边
@@ -315,7 +324,20 @@ fun KibaMainScreen() {
                         scrollBehavior = scrollBehavior,
                         actions = {
                             when (selectedTab) {
-                                KibaTab.Songs -> KibaSearchAction { songsSearchTrigger++ }
+                                KibaTab.Songs -> {
+                                    // 曲库检查更新 / 立即更新（原曲目页「曲库数据」卡迁入顶栏）
+                                    KibaRefreshAction {
+                                        if (songSyncing) return@KibaRefreshAction
+                                        if (songUpdateAvailable != null) {
+                                            KibaState.refreshSongData(context)
+                                        } else {
+                                            KibaState.checkSongUpdate()
+                                        }
+                                    }
+                                    // 归类方式（原曲目页「归类方式」卡迁入顶栏）
+                                    KibaSortAction { songsShowGroupPicker = true }
+                                    KibaSearchAction { songsSearchTrigger++ }
+                                }
                                 KibaTab.Me -> KibaRefreshAction { KibaState.refreshRecords() }
                                 else -> Unit
                             }
@@ -495,6 +517,8 @@ fun KibaMainScreen() {
                             KibaTab.Songs -> SongsScreen(
                                 scrollBehavior = scrollBehavior,
                                 searchTrigger = songsSearchTrigger,
+                                showGroupPicker = songsShowGroupPicker,
+                                onDismissGroupPicker = { songsShowGroupPicker = false },
                                 onSongClick = { song ->
                                     pushPage(KibaSubPage.SongDetail(song.songData.id))
                                 },

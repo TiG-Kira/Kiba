@@ -132,6 +132,13 @@ fun ChartDetailScreen(
                 ChartHeaderCard(chart = currentChart, song = song, fitDiff = chartStats?.fitDiff)
             }
 
+            // ── 我的成绩（紧跟谱面信息，谱面构成之前）──
+            val record = records.firstOrNull { it.levelIndex == difficultyOrdinal }
+            record?.let { r ->
+                item(key = "record_title") { SectionTitle("我的成绩") }
+                item(key = "record") { RecordCard(chart = currentChart, record = r) }
+            }
+
             // ── notes 构成 ──
             item(key = "notes_title") { SectionTitle("谱面构成") }
             item(key = "notes") { NotesCard(chart = currentChart) }
@@ -149,13 +156,6 @@ fun ChartDetailScreen(
             // ── 单曲 Rating 档位 ──
             item(key = "rating_title") { SectionTitle("单曲 Rating（定数 × 完成度 × 乘数）") }
             item(key = "rating") { RatingTableCard(chart = currentChart) }
-
-            // ── 本地成绩 ──
-            val record = records.firstOrNull { it.levelIndex == difficultyOrdinal }
-            record?.let { r ->
-                item(key = "record_title") { SectionTitle("我的成绩") }
-                item(key = "record") { RecordCard(chart = currentChart, record = r) }
-            }
         }
     }
 }

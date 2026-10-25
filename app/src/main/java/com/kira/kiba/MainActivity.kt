@@ -3,6 +3,7 @@ package com.kira.kiba
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.navigationevent.NavigationEventDispatcher
 import androidx.navigationevent.NavigationEventDispatcherOwner
 import androidx.navigationevent.OnBackInvokedDefaultInput
@@ -30,6 +31,10 @@ class MainActivity : ComponentActivity(), NavigationEventDispatcherOwner {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 显式 edge-to-edge：窗口不再被系统栏/键盘 resize，insets 统一交给 Compose 处理。
+        // 修复「对话框弹输入法后与键盘之间出现大空白」：此前 opt-out e2e + adjustResize
+        // 下窗口缩放与 WindowInsets.ime 双重避让，miuix 弹层的 imePadding 被叠加放大。
+        enableEdgeToEdge()
         window.decorView.setViewTreeNavigationEventDispatcherOwner(this)
         navEventDispatcher.addInput(OnBackInvokedDefaultInput(onBackInvokedDispatcher))
         setContent {

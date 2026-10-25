@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -293,14 +294,19 @@ internal fun TextEditDialog(
                 onValueChange = { value = it },
                 label = title,
                 useLabelAsPlaceholder = true,
+                // 多行（系统提示词等长文本）时限高 + 内部滚动，防止内容把
+                // 确认/取消按钮挤出屏幕（内容增长只体现在输入框内部滚动）
                 singleLine = singleLine,
+                maxLines = if (singleLine) 1 else 8,
                 visualTransformation = if (password) {
                     PasswordVisualTransformation()
                 } else {
                     androidx.compose.ui.text.input.VisualTransformation.None
                 },
                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = keyboardType),
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(if (singleLine) Modifier else Modifier.heightIn(max = 220.dp)),
             )
             Spacer(Modifier.height(12.dp))
             Row(
