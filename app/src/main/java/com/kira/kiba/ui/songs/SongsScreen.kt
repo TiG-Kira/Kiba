@@ -34,6 +34,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
@@ -467,10 +468,10 @@ private fun SongDataUpdateDialog(
 }
 
 /**
- * 歌曲卡片：封面 + 标题 + 副标题（曲师 · 分类）+ 副标题下方的 SD/DX 与各难度等级。
+ * 歌曲卡片：封面 + 标题（SD/DX 贴图跟在标题后，放不下自动换到下一行）+ 副标题（曲师 · 分类）+ 各难度等级。
  *
- * 徽标（tag）换行策略：miuix BasicComponent 的中间列宽度会被封面与右侧区域挤压，
- * 这里统一用 FlowRow 承载徽标，宽度不足时自动换行，不再把徽标挤到卡片边缘。
+ * 标题行的换行策略：FlowRow 承载「歌名 + SD/DX 贴图」，歌名占满一行或剩余空间放不下贴图时，
+ * 贴图自动落到标题下一行；贴图与歌名垂直居中对齐。
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -479,37 +480,26 @@ fun SongCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val topChart: ChartEntity? = song.charts.maxByOrNull { it.ds }
     Card(
         modifier = modifier.fillMaxWidth(),
         onClick = onClick,
     ) {
         BasicComponent(
-            title = song.songData.title,
-            summary = buildString {
-                // 曲师 = 歌曲艺术家（artist），不是谱师（charter）；直接展示名字不加前缀
-                val artist = song.songData.artist.takeIf { it.isNotBlank() && it != "-" }
-                if (artist != null) {
-                    append(artist)
-                    append(" · ")
-                }
-                append(song.songData.genre)
-            },
             startAction = {
                 CoverFrame(
                     songId = song.songData.id,
                     imageUrl = song.songData.imageUrl,
                     genre = song.songData.genre,
+                    size = 64.dp,
                 )
             },
             bottomAction = {
-                // SD / DX + 各难度等级，放在副标题下方；FlowRow 保证放不下时自动换行
+                // 各难度等级，放在副标题下方；FlowRow 保证放不下时自动换行
                 FlowRow(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    ChartTypeChip(type = song.songData.type)
                     song.charts.sortedBy { it.difficultyType.ordinal }.forEach { chart ->
                         DifficultyChip(
                             text = "${difficultyLabel(chart.difficultyType)} ${chart.level}",
@@ -518,6 +508,37 @@ fun SongCard(
                     }
                 }
             },
-        )
+        ) {
+            // ── 标题行：歌名 + SD/DX 贴图（样式对齐 miuix BasicComponent 默认 title）──
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    text = song.songData.title,
+                    fontSize = MiuixTheme.textStyles.headline1.fontSize,
+                    fontWeight = FontWeight.Medium,
+                    color = MiuixTheme.colorScheme.onBackground,
+                )
+                ChartTypeChip(
+                    type = song.songData.type,
+                    modifier = Modifier.align(Alignment.CenterVertically),
+                )
+            }
+            // 副标题：曲师 · 分类（样式对齐 miuix BasicComponent 默认 summary）
+            Text(
+                text = buildString {
+                    // 曲师 = 歌曲艺术家（artist），不是谱师（charter）；直接展示名字不加前缀
+                    val artist = song.songData.artist.takeIf { it.isNotBlank() && it != "-" }
+                    if (artist != null) {
+                        append(artist)
+                        append(" · ")
+                    }
+                    append(song.songData.genre)
+                },
+                fontSize = MiuixTheme.textStyles.body2.fontSize,
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            )
+        }
     }
 }
