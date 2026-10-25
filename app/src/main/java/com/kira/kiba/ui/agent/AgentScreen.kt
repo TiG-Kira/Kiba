@@ -35,6 +35,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.kira.kiba.core.agent.AgentSession
@@ -299,13 +301,29 @@ fun AgentScreen(
  * 技能卡区（顶部横滑）：点击直接执行技能。
  * 末尾附「清除对话」卡片（不是技能，仅清空会话记录）。
  */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SkillStrip(
     skills: List<KibaAgent.AgentSkill>,
     onSkillClick: (KibaAgent.AgentSkill) -> Unit,
     onClear: () -> Unit,
 ) {
+    // 统一卡宽：按「所有卡片（含清除卡）中，说明完整显示（单行不截断）所需的
+    // 最大文本宽度」设定每张卡的宽度，保证任何一张卡里说明都完整可见。
+    val textMeasurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val titleStyle = MiuixTheme.textStyles.subtitle
+    val summaryStyle = MiuixTheme.textStyles.footnote2
+    val uniformCardWidth = remember(skills, titleStyle, summaryStyle) {
+        val titlePx = (skills.map { it.title } + "清除对话").maxOf {
+            textMeasurer.measure(it, titleStyle).size.width
+        }
+        val summaryPx = (skills.map { it.summary } + "清空聊天记录").maxOf {
+            textMeasurer.measure(it, summaryStyle).size.width
+        }
+        with(density) {
+            maxOf(titlePx, summaryPx).toDp() + 24.dp /* 左右 padding */ + 1.dp /* 取整余量 */
+        }
+    }
     LazyRow(
         modifier = Modifier
             .fillMaxWidth()
@@ -315,7 +333,7 @@ private fun SkillStrip(
         items(skills.size) { index ->
             val skill = skills[index]
             Card(
-                modifier = Modifier.width(132.dp),
+                modifier = Modifier.width(uniformCardWidth),
                 onClick = { onSkillClick(skill) },
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
@@ -323,13 +341,14 @@ private fun SkillStrip(
                         text = skill.title,
                         style = MiuixTheme.textStyles.subtitle,
                         color = MiuixTheme.colorScheme.onSurface,
+                        softWrap = false,
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
                         text = skill.summary,
                         style = MiuixTheme.textStyles.footnote2,
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                        maxLines = 2,
+                        softWrap = false,
                     )
                 }
             }
@@ -337,7 +356,7 @@ private fun SkillStrip(
         // ── 清除对话（非技能）──
         item {
             Card(
-                modifier = Modifier.width(96.dp),
+                modifier = Modifier.width(uniformCardWidth),
                 onClick = onClear,
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
@@ -345,13 +364,14 @@ private fun SkillStrip(
                         text = "清除对话",
                         style = MiuixTheme.textStyles.subtitle,
                         color = MiuixTheme.colorScheme.primary,
+                        softWrap = false,
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
                         text = "清空聊天记录",
                         style = MiuixTheme.textStyles.footnote2,
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                        maxLines = 2,
+                        softWrap = false,
                     )
                 }
             }
