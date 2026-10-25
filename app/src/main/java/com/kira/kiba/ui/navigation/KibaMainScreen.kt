@@ -253,8 +253,10 @@ fun KibaMainScreen() {
         navForward = true
         saveTopBar(subStack.lastOrNull() ?: selectedTab)
         // 进新子页 = 新导航：清掉该页残留的旧状态（比如之前访问过同一首歌）
-        pageStateHolder.removeState(page)
-        topBarMemory.remove(page)
+        // 注意 holder/topBarMemory 实际都以 pageKey() 字符串为 key，必须传转换后的 key，
+        // 否则 enum/data class 匹配不上，旧滚动位置清不掉（表现为顶栏展开但页面没回顶）。
+        pageStateHolder.removeState(pageKey(page))
+        topBarMemory.remove(pageKey(page))
         subStack = subStack + page
         resetTopBar()
     }
@@ -338,8 +340,9 @@ fun KibaMainScreen() {
                         val target = tabs.getOrElse(index) { selectedTab }
                         if (target != selectedTab) {
                             // 切 Tab = 进新页面：目标页残留状态清掉，列表回顶 + 顶栏展开
-                            pageStateHolder.removeState(target)
-                            topBarMemory.remove(target)
+                            // （同样必须用 pageKey() 字符串，否则匹配不到已保存的状态）
+                            pageStateHolder.removeState(pageKey(target))
+                            topBarMemory.remove(pageKey(target))
                             selectedTab = target
                             resetTopBar()
                         }

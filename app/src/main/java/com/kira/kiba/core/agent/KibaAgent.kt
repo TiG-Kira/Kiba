@@ -147,6 +147,7 @@ class KibaAgent(private val context: Context) {
             rollDice(nums.firstOrNull { it <= 10 } ?: 1, sides)
         }
         "today_kink" -> todayKink()
+        "eat_what" -> eatWhat()
         "low_high_eq" -> {
             // 文本写法：低情商X高情商Y
             val m = Regex("低情商(.+)高情商(.+)").find(arg)
@@ -225,6 +226,10 @@ class KibaAgent(private val context: Context) {
                 args["silver"] ?: args["b"] ?: args["right"] ?: "",
             )
             "today_kink" -> todayKink()
+            "eat_what" -> eatWhat()
+            "web_search" -> webSearch(
+                args["query"] ?: args["q"] ?: args["keyword"] ?: fallbackText
+            )
             "random_filtered" -> randomFiltered(
                 args["condition"] ?: args["filter"] ?: fallbackText
             )
@@ -250,7 +255,8 @@ class KibaAgent(private val context: Context) {
         messages += AgentSession.llmHistory(maxTurns = 8)
         messages += KibaLlm.Message.user(input)
 
-        val tools = SKILLS.map { KibaLlm.ToolDef(it.id, it.summary, it.params) }
+        // LLM 专用工具（如联网搜索）也一并暴露给模型，但不进技能卡
+        val tools = (SKILLS + LLM_ONLY_TOOLS).map { KibaLlm.ToolDef(it.id, it.summary, it.params) }
         var collected = AgentReply("")
         // 思考型模型可能把 token 全烧在 reasoning 上，正文一个字都没吐出来。
         // 这种情况下加额重试一次，而不是把思考当答案。
@@ -403,7 +409,8 @@ class KibaAgent(private val context: Context) {
         text = text + other.text,
         songs = songs + other.songs,
         records = records + other.records,
-        skills = skills + other.skills,
+        // 多次技能调用会把 skills=SKILLS 反复带回来，按 id 去重避免卡片重复
+        skills = (skills + other.skills).distinctBy { it.id },
         b50 = b50 ?: other.b50,
         imageUri = imageUri.ifBlank { other.imageUri },
     )
@@ -411,7 +418,7 @@ class KibaAgent(private val context: Context) {
     /** 给 LLM 的技能说明（含每个技能的入参与调用示例）。 */
     private fun skillHint(): String = buildString {
         append("【可用技能】（需要真实数据时调用工具，不要凭空编造）\n")
-        SKILLS.forEach { skill ->
+        (SKILLS + LLM_ONLY_TOOLS).forEach { skill ->
             append("- ${skill.id}：${skill.summary}")
             if (skill.params.isEmpty()) {
                 append("（无参数）\n")
@@ -432,7 +439,10 @@ class KibaAgent(private val context: Context) {
                 "（例：{\"name\":\"best50\",\"arguments\":{}}），Kiba 会识别并执行。\n" +
                 "用户没给足参数时，要么用自然语言追问，要么用最宽松的默认值调用，不要瞎填数字。\n" +
                 "【重要】调用完工具后必须基于返回的真实数据给出最终中文答复，" +
-                "不要只描述「我打算调用什么」，也不要复述工具调用的过程。"
+                "不要只描述「我打算调用什么」，也不要复述工具调用的过程。\n" +
+                "【游戏知识】关于 maimai 的游戏机制问题（新版本 / 新模式玩法、功能道具获取、" +
+                "解谜任务、活动情报等），必须先调用 web_search 查资料再总结回答；" +
+                "除非搜索后确实一无所获，否则不允许直接说不知道，更不能编造。"
         )
     }
 
@@ -1040,6 +1050,148 @@ class KibaAgent(private val context: Context) {
     }
 
     /**
+     * 今天吃什么（Bot 传统技能）：纯随机抽一个，
+     * 25% 概率随到舞萌恶趣味选项（吃绝赞 / 吃星星 / 吃黄金迪拉熊）。
+     */
+    private fun eatWhat(): AgentReply {
+        val maimai = Random.nextInt(100) < 25
+        return if (maimai) {
+            val (item, note) = EAT_MAIMAI_LIST[Random.nextInt(EAT_MAIMAI_LIST.size)]
+            AgentReply("▾ 今天吃什么\n今天吃「${item}」！\n$note")
+        } else {
+            val food = EAT_LIST[Random.nextInt(EAT_LIST.size)]
+            AgentReply("▾ 今天吃什么\n今天吃「${food}」，干饭去吧！\n不满意的话再随一个吧。")
+        }
+    }
+
+    // ---------- 联网搜索（LLM 专用 web_search） ----------
+
+    private val SEARCH_UA =
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+
+    /** 一条搜索结果：标题 / 链接 / 摘要。 */
+    private data class WebResult(val title: String, val url: String, val snippet: String)
+
+    /**
+     * 联网搜索：Bing 为主（国内直连可用），DuckDuckGo 兜底（有代理时更准）；
+     * 再抓前 2 条结果页正文，一并回灌给模型总结。
+     */
+    private suspend fun webSearch(query: String): AgentReply {
+        val q = query.trim()
+        if (q.isEmpty()) return AgentReply("web_search 需要一个 query 参数。")
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val results = searchBing(q).ifEmpty { searchDuckDuckGo(q) }
+                if (results.isEmpty()) {
+                    return@runCatching AgentReply(
+                        "没搜到「$q」的相关资料，可能关键词太偏或网络受限。",
+                        skills = SKILLS,
+                    )
+                }
+                val sb = StringBuilder("【web_search 搜索结果】关键词：$q\n")
+                results.take(5).forEachIndexed { i, r ->
+                    sb.append("${i + 1}. ${r.title}\n   链接：${r.url}\n   摘要：${r.snippet}\n")
+                }
+                // 正文抓取（最多 2 条，各限 3500 字，超时/反爬就跳过）
+                for (r in results.take(2)) {
+                    val page = fetchPageText(r.url) ?: continue
+                    if (page.isBlank()) continue
+                    sb.append("\n【网页正文】${r.title}（${r.url}）\n$page\n")
+                }
+                AgentReply(sb.toString(), skills = SKILLS)
+            }.getOrElse {
+                AgentReply(
+                    "搜索失败：${it.message}（设备网络可能受限，请基于已有知识谨慎回答，不知道就说不知道）",
+                    skills = SKILLS,
+                )
+            }
+        }
+    }
+
+    /** DuckDuckGo HTML 端点搜索。 */
+    private fun searchDuckDuckGo(query: String): List<WebResult> {
+        val html = httpGet("https://html.duckduckgo.com/html/?q=" + URLEncoder.encode(query, "UTF-8"))
+            ?: return emptyList()
+        if (html.contains("anomaly") || html.contains("challenge")) return emptyList()
+        val linkRe = Regex("<a[^>]*class=\"result__a\"[^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>", RegexOption.DOT_MATCHES_ALL)
+        val snipRe = Regex("<a[^>]*class=\"result__snippet\"[^>]*>(.*?)</a>", RegexOption.DOT_MATCHES_ALL)
+        val snippets = snipRe.findAll(html).map { htmlToText(it.groupValues[1]) }.toList()
+        return linkRe.findAll(html).mapIndexedNotNull { i, m ->
+            val rawUrl = m.groupValues[1]
+            val url = unwrapDdgUrl(rawUrl) ?: return@mapIndexedNotNull null
+            val title = htmlToText(m.groupValues[2])
+            if (title.isBlank() || url.isBlank()) return@mapIndexedNotNull null
+            WebResult(title, url, snippets.getOrNull(i).orEmpty())
+        }.toList()
+    }
+
+    /** Bing 搜索（DDG 不可用时的兜底）。 */
+    private fun searchBing(query: String): List<WebResult> {
+        val html = httpGet("https://www.bing.com/search?q=" + URLEncoder.encode(query, "UTF-8") + "&setlang=zh-hans")
+            ?: return emptyList()
+        val blockRe = Regex("<li class=\"b_algo\"[^>]*>(.*?)</li>", RegexOption.DOT_MATCHES_ALL)
+        val linkRe = Regex("<h2[^>]*><a[^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a></h2>", RegexOption.DOT_MATCHES_ALL)
+        return blockRe.findAll(html).mapNotNull { block ->
+            val m = linkRe.find(block.groupValues[1]) ?: return@mapNotNull null
+            val title = htmlToText(m.groupValues[2])
+            val url = m.groupValues[1]
+            if (title.isBlank() || !url.startsWith("http")) return@mapNotNull null
+            val snip = Regex("<p[^>]*>(.*?)</p>", RegexOption.DOT_MATCHES_ALL)
+                .find(block.groupValues[1])?.groupValues?.get(1).orEmpty()
+            WebResult(title, url, htmlToText(snip))
+        }.toList()
+    }
+
+    /** DDG 结果里的跳转链接还原成真实地址。 */
+    private fun unwrapDdgUrl(raw: String): String? {
+        if (!raw.contains("uddg=")) {
+            return if (raw.startsWith("http")) raw else (if (raw.startsWith("//")) "https:$raw" else null)
+        }
+        val idx = raw.indexOf("uddg=") + 5
+        val end = raw.indexOf('&', idx).let { if (it == -1) raw.length else it }
+        return runCatching { java.net.URLDecoder.decode(raw.substring(idx, end), "UTF-8") }.getOrNull()
+    }
+
+    /** 抓网页并提取纯文本（限长，失败返回 null）。 */
+    private fun fetchPageText(url: String): String? {
+        val html = httpGet(url) ?: return null
+        val text = htmlToText(html)
+        return if (text.length > 3500) text.take(3500) + "…（正文过长已截断）" else text
+    }
+
+    private fun httpGet(url: String): String? = runCatching {
+        val req = Request.Builder()
+            .url(url)
+            .header("User-Agent", SEARCH_UA)
+            .header("Accept-Language", "zh-CN,zh;q=0.9")
+            .build()
+        client.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) return@runCatching null
+            resp.body?.string().orEmpty()
+        }
+    }.getOrNull()
+
+    /** 粗暴的 HTML → 纯文本：去 script/style/标签 + 常见实体解码。 */
+    private fun htmlToText(html: String): String {
+        val noScript = html
+            .replace(Regex("(?is)<(script|style)[^>]*>.*?</\\1>"), " ")
+            .replace(Regex("(?s)<[^>]+>"), " ")
+        return noScript
+            .replace("&nbsp;", " ")
+            .replace("&amp;", "&")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&#39;", "'")
+            .replace("&#x27;", "'")
+            .replace(Regex("&#(\\d+);")) { m ->
+                m.groupValues[1].toIntOrNull()?.takeIf { it in 32..0xFFFF }?.toChar()?.toString().orEmpty()
+            }
+            .replace(Regex("\\s+"), " ")
+            .trim()
+    }
+
+    /**
      * 随机条件曲（源自 KibaBot「随个[dx/标准][绿黄红紫白]<难度>」）：
      * 按版本（SD/DX）+ 难度关键词随机取 N 首。
      */
@@ -1377,6 +1529,10 @@ class KibaAgent(private val context: Context) {
                 "随一个今日性癖 + 人品值（Bot 的 jrxp / 今日性癖）",
             ),
             AgentSkill(
+                "eat_what", "今天吃什么",
+                "随机决定今天吃什么（有一定概率随到舞萌恶趣味选项：吃绝赞 / 吃星星 / 吃黄金迪拉熊）",
+            ),
+            AgentSkill(
                 "low_high_eq", "低情商高情商",
                 "生成一张「低情商 / 高情商」对比梗图并存入相册",
                 params = listOf(
@@ -1396,12 +1552,53 @@ class KibaAgent(private val context: Context) {
             ),
         )
 
+        /**
+         * LLM 专用工具：不进技能卡（不展示在对话顶部），只作为 tool 定义暴露给模型。
+         * 用于让模型对 maimai 游戏机制 / 新版本内容等「本地没有的数据」能联网查证，
+         * 查到的结果回灌后由模型总结给用户——不允许 agent 对 maimai 的事完全不知道。
+         */
+        private val LLM_ONLY_TOOLS = listOf(
+            AgentSkill(
+                "web_search", "网络搜索",
+                "联网搜索并抓取网页正文（maimai 新模式玩法 / 道具获取 / 解谜线索 / 活动情报等游戏机制类问题必查）",
+                params = listOf(
+                    KibaLlm.ToolParam(
+                        "query", "string",
+                        "搜索关键词，例：maimai DX kaleidoscope 黄门钥匙 获取方法",
+                        required = true,
+                    ),
+                ),
+            ),
+        )
+
         /** 今日性癖候选（源自 KibaBot plugins/maimaidx.py 的 xp_list，33 项）。 */
         private val KINK_LIST = listOf(
             "滴蜡熊", "幸隐", "14+", "白潘", "紫潘", "PANDORA BOXXX", "排队区", "旧框", "干饭",
             "超常maimai", "收歌", "福瑞", "削除", "HAPPY", "谱面-100号", "lbw", "茄子卡狗",
             "打五把CSGO", "一姬", "打麻将", "光吉猛修", "怒锤", "暴漫", "鼓动", "鼓动(红)",
             "大司马", "电棍", "海子姐", "东雪莲", "GIAO", "去沈阳大街", "一眼丁真", "陈睿",
+        )
+
+        /** 今天吃什么：普通菜单（大众家常 / 外卖常客）。 */
+        private val EAT_LIST = listOf(
+            "红烧肉", "宫保鸡丁", "鱼香肉丝", "麻婆豆腐", "回锅肉", "可乐鸡翅",
+            "兰州拉面", "牛肉面", "刀削面", "炸酱面", "重庆小面",
+            "黄焖鸡米饭", "沙县小吃", "麻辣烫", "冒菜", "螺蛳粉", "过桥米线",
+            "猪脚饭", "盖浇饭", "蛋炒饭", "煲仔饭", "寿喜锅", "小火锅",
+            "烤肉拌饭", "韩式炸鸡", "披萨", "汉堡", "寿司", "饺子", "生煎",
+            "肠粉", "烧鹅饭", "羊肉泡馍", "大盘鸡拌面", "锅包肉", "糖醋里脊",
+        )
+
+        /**
+         * 今天吃什么：舞萌恶趣味选项（Bot 传统艺能，低概率随到）。
+         * - 吃绝赞：机况不好把你的 BREAK 判定吃掉了（失分）
+         * - 吃星星：机况不好把你的 SLIDE 判定吃掉了（失分）
+         * - 吃黄金迪拉熊：Valsqotch 封面金熊的戏称
+         */
+        private val EAT_MAIMAI_LIST = listOf(
+            "绝赞" to "机况不好，BREAK 判定被吃了，建议找机修讨个说法。",
+            "星星" to "机况不好，SLIDE 判定被吃了，这锅不背在你身上。",
+            "黄金迪拉熊" to "Valsqotch 封面那只金熊，能吃得上它说明你是天选之人。",
         )
 
     }
