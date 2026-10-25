@@ -522,13 +522,16 @@ class KibaAgent(private val context: Context) {
         // 成绩里混入的宴会场谱面（等级带「?」）不参与 Rating 计算，一并排除
         val played = records.filter { !it.level.contains("?") && it.songId !in utageIds }
 
-        // ── Best 50 地板：优先查分器数据，退回本地记录（SD→B35，DX→B15，均按 ra 降序取尾）──
+        // ── Best 50 地板：优先查分器数据，退回本地记录。分池标准是「登场版本」：
+        //    当前版本曲（isNew）→ B15，旧版本曲（含旧版 DX 谱）→ B35；
+        //    谱面类型 SD/DX 只决定档位乘数表，不决定分池。──
+        val isNewById = songs.associate { it.id to it.isNew }
         val b50 = DivingFishAccount.best50()
         val b35 = b50.old.ifEmpty {
-            played.filter { it.type == Constants.CHART_TYPE_SD }.sortedByDescending { it.ra }.take(35)
+            played.filter { isNewById[it.songId] == false }.sortedByDescending { it.ra }.take(35)
         }
         val b15 = b50.new.ifEmpty {
-            played.filter { it.type == Constants.CHART_TYPE_DX }.sortedByDescending { it.ra }.take(15)
+            played.filter { isNewById[it.songId] == true }.sortedByDescending { it.ra }.take(15)
         }
         val b35Floor = b35.lastOrNull()?.ra
         val b15Floor = b15.lastOrNull()?.ra
@@ -547,16 +550,17 @@ class KibaAgent(private val context: Context) {
 
         // ── 候选：按官方 Rating 档位表全面计算（floor 口径，DX/SD 两套乘数，与上游一致）。
         //    对每个谱面找「最低的、ra 能超过对应地板的档位」作为目标：
-        //    新曲（DX）对标 B15 地板，旧曲（SD）对标 B35 地板；
+        //    当前版本曲（isNew）对标 B15 地板，旧版本曲对标 B35 地板；
+        //    档位乘数表仍按谱面类型 SD/DX 选（与分池无关）；
         //    且要求本曲还没打到该档位（打到了就没有提升空间）。
         val candidates = charts
             .filter { !isUtageChart(it, utageIds) }
             .mapNotNull { c ->
                 val songType = typeById[c.songId] ?: return@mapNotNull null
-                val isDx = songType == Constants.CHART_TYPE_DX
-                val floor = (if (isDx) b15Floor else b35Floor) ?: return@mapNotNull null
+                val isNew = isNewById[c.songId] ?: return@mapNotNull null
+                val floor = (if (isNew) b15Floor else b35Floor) ?: return@mapNotNull null
                 val current = recordByKey[c.songId to c.difficultyType.ordinal]
-                val target = (if (isDx) RA_TIERS_DX else RA_TIERS_SD)
+                val target = (if (songType == Constants.CHART_TYPE_DX) RA_TIERS_DX else RA_TIERS_SD)
                     .firstOrNull { (boundary, mult) ->
                         tierRa(c.ds, boundary, mult) > floor &&
                             (current == null || current.achievements < boundary - 1e-9)
@@ -568,7 +572,7 @@ class KibaAgent(private val context: Context) {
                     levelIndex = c.difficultyType.ordinal,
                     level = c.level,
                     ds = c.ds,
-                    isDx = isDx,
+                    isNew = isNew,
                     tierAch = target.first,
                     potential = potential,
                     floor = floor,
@@ -593,7 +597,7 @@ class KibaAgent(private val context: Context) {
                 )
                 val cur = c.current
                 val rank = rankName(c.tierAch)
-                val listName = if (c.isDx) "B15" else "B35"
+                val listName = if (c.isNew) "B15" else "B35"
                 if (cur == null) {
                     // 未游玩：打上目标档位即进入 Best 50，顶替地板
                     sb.append(
@@ -626,7 +630,8 @@ class KibaAgent(private val context: Context) {
         val levelIndex: Int,
         val level: String,
         val ds: Double,
-        val isDx: Boolean,
+        /** 当前版本曲（B15 池）；旧版本曲（B35 池）为 false。 */
+        val isNew: Boolean,
         /** 目标档位的达成率下限（如 100.5）。 */
         val tierAch: Double,
         /** 该档位下的单曲 ra。 */
