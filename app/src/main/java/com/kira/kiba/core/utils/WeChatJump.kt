@@ -1,8 +1,8 @@
 package com.kira.kiba.core.utils
 
 import android.app.Activity
-import android.content.ActivityNotFoundException
 import android.content.ClipData
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -14,16 +14,20 @@ import android.widget.Toast
  * 目前用于「我 → 登录机台」：国行舞萌 DX 的玩家二维码由微信公众号
  * **「舞萌 | 中二」**（华立官方账号）发放，机台扫码即登录。
  *
- * 技术方案（微信不提供直接打开指定公众号对话页的公开 API，profile_ext
- * 是社区公认的公众号主页跳转链接，微信客户端会识别并渲染为公众号
- * 资料页，用户再点「发消息」即进入对话）：
- * - `__biz` 是公众号的唯一标识（Base64），取自该号已发布文章的
- *   `mp.weixin.qq.com/s?__biz=...` 链接（已验证发布账号名为「舞萌丨中二」）；
- * - `scene=110` 为关注场景值，`#wechat_redirect` 是微信识别该链接的关键标记；
- * - 拉起时显式 `setPackage("com.tencent.mm")`，避免弹系统应用选择器。
+ * 技术现状（2026 实测/考证）：
+ * - 微信 8.x **没有注册** `mp.weixin.qq.com` 的 http/https intent-filter，
+ *   外部 `ACTION_VIEW` + `setPackage(com.tencent.mm)` 会抛 ActivityNotFoundException，
+ *   这正是「拉不起微信」的根因；
+ * - `weixin://` scheme 白名单（WXCustomSchemeEntryActivity）没有直达特定公众号的入口，
+ *   且白名单外路径会被静默丢弃，不可依赖；
+ * - 公众号 profile_ext 链接（`__biz` + `scene=110` + `#wechat_redirect`）只在
+ *   **微信内**打开才渲染为公众号资料页；部分微信版本/ROM 会声明该域名的深链，
+ *   用 `resolveActivity` 探测后拉起即直达资料页（最理想路径）；
+ * - 显式 `ComponentName("com.tencent.mm", ".ui.LauncherUI")` 拉微信主界面是唯一
+ *   版本无关的可靠路径（上游 MaimaiData 同款姿势），配合复制公众号名引导搜索。
  *
- * 兜底链：微信直接拉起 → 系统选择器（浏览器打开会引导去微信）→
- * 复制公众号名 + Toast 提示手动搜索。
+ * 兜底链：微信深链（探测通过才走）→ LauncherUI 主界面 + 复制公众号名 →
+ * 系统启动意图 + 复制公众号名 → 复制公众号名 + 提示手动搜索。
  */
 object WeChatJump {
 
@@ -33,7 +37,10 @@ object WeChatJump {
     /** 公众号展示名（复制到剪贴板 / Toast 用）。 */
     const val OFFICIAL_ACCOUNT_NAME = "舞萌 | 中二"
 
-    private val WECHAT_PACKAGE = "com.tencent.mm"
+    private const val WECHAT_PACKAGE = "com.tencent.mm"
+
+    /** 微信主界面（Launcher 入口，任何版本都存在）。 */
+    private val WECHAT_LAUNCHER = ComponentName(WECHAT_PACKAGE, "com.tencent.mm.ui.LauncherUI")
 
     /** 公众号主页链接：微信内打开会渲染为该公众号的资料页。 */
     private val officialAccountUrl: String
@@ -46,30 +53,59 @@ object WeChatJump {
      * @param context Activity Context（自动补 FLAG_ACTIVITY_NEW_TASK 以防传入 Application Context）。
      */
     fun openOfficialAccount(context: Context) {
-        val uri = Uri.parse(officialAccountUrl)
+        val pm = context.packageManager
 
-        // 1) 显式指定微信：无选择器，一步到公众号资料页
-        runCatching {
-            val intent = Intent(Intent.ACTION_VIEW, uri).apply {
-                setPackage(WECHAT_PACKAGE)
-                if (context !is Activity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        // 1) 微信深链：只有微信确实声明了 mp.weixin.qq.com 的 filter 才走（探测，不盲试）
+        val deepLink = Intent(Intent.ACTION_VIEW, Uri.parse(officialAccountUrl)).apply {
+            setPackage(WECHAT_PACKAGE)
+            if (context !is Activity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        if (deepLink.resolveActivity(pm) != null) {
+            runCatching { context.startActivity(deepLink) }.onSuccess { return }
+        }
+
+        // 2) 显式拉起微信主界面 + 复制公众号名引导搜索（版本无关，必成功路径）
+        val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+            component = WECHAT_LAUNCHER
+            addCategory(Intent.CATEGORY_LAUNCHER)
+            if (context !is Activity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        if (homeIntent.resolveActivity(pm) != null) {
+            runCatching { context.startActivity(homeIntent) }.onSuccess {
+                copyAccountName(context)
+                Toast.makeText(
+                    context,
+                    "已打开微信并复制公众号名「$OFFICIAL_ACCOUNT_NAME」，" +
+                        "请在微信顶部搜索并进入该公众号，点「发消息」获取登录二维码",
+                    Toast.LENGTH_LONG,
+                ).show()
+                return
             }
-            context.startActivity(intent)
-        }.onSuccess { return }
+        }
 
-        // 2) 微信未安装或该版本不认此链接：交系统选择器（浏览器会引导去微信打开）
-        runCatching {
-            val intent = Intent(Intent.ACTION_VIEW, uri).apply {
-                if (context !is Activity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        // 3) LauncherUI 组件名变化等极端情况：退到系统启动意图
+        val launchIntent = pm.getLaunchIntentForPackage(WECHAT_PACKAGE)
+        if (launchIntent != null) {
+            runCatching {
+                if (context !is Activity) launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(launchIntent)
+            }.onSuccess {
+                copyAccountName(context)
+                Toast.makeText(
+                    context,
+                    "已打开微信并复制公众号名「$OFFICIAL_ACCOUNT_NAME」，" +
+                        "请在微信顶部搜索并进入该公众号，点「发消息」获取登录二维码",
+                    Toast.LENGTH_LONG,
+                ).show()
+                return
             }
-            context.startActivity(intent)
-        }.onSuccess { return }
+        }
 
-        // 3) 兜底：复制公众号名，提示用户手动在微信搜索关注
+        // 4) 微信未安装：复制公众号名，提示手动处理
         copyAccountName(context)
         Toast.makeText(
             context,
-            "未找到可打开微信的应用，已复制公众号名「$OFFICIAL_ACCOUNT_NAME」，请在微信搜索关注",
+            "未检测到微信，已复制公众号名「$OFFICIAL_ACCOUNT_NAME」，安装微信后搜索关注获取二维码",
             Toast.LENGTH_LONG,
         ).show()
     }
