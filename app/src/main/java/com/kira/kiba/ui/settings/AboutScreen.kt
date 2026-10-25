@@ -190,14 +190,10 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     // App Logo：用 launcher 前景图（ic_launcher_foreground），
-                    // 白色像素透明（透出渐变），其余染成文字色（Termux Ultra 同款处理）
+                    // 按主题整体重着色：亮色→黑、暗色→白（保留原 alpha 形状）
                     val appIcon = remember(darkTheme) {
-                        val fgInt = android.graphics.Color.argb(
-                            (headerFg.alpha * 255).toInt(),
-                            (headerFg.red * 255).toInt(),
-                            (headerFg.green * 255).toInt(),
-                            (headerFg.blue * 255).toInt(),
-                        )
+                        val tintColor =
+                            if (darkTheme) android.graphics.Color.WHITE else android.graphics.Color.BLACK
                         runCatching {
                             ContextCompat.getDrawable(context, R.drawable.ic_launcher_foreground)
                                 ?.toBitmap()
@@ -206,18 +202,10 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
                             val pixels = IntArray(copy.width * copy.height)
                             copy.getPixels(pixels, 0, copy.width, 0, 0, copy.width, copy.height)
                             for (i in pixels.indices) {
-                                val c = pixels[i]
-                                val r = (c shr 16) and 0xFF
-                                val g = (c shr 8) and 0xFF
-                                val b = c and 0xFF
-                                val a = (c shr 24) and 0xFF
-                                val brightness = (r + g + b) / 3f
-                                if (a > 128 && brightness > 180f) {
-                                    // 白色像素 → 透明，让 shader 渐变透出
-                                    pixels[i] = 0x00000000
-                                } else if (a > 128) {
-                                    // 其他非透明像素 → 染成和文字同色
-                                    pixels[i] = fgInt
+                                val a = (pixels[i] shr 24) and 0xFF
+                                if (a > 128) {
+                                    // 非透明像素 → 统一染成目标色，alpha 保持原值（软边）
+                                    pixels[i] = (a shl 24) or (tintColor and 0x00FFFFFF)
                                 }
                             }
                             copy.setPixels(pixels, 0, copy.width, 0, 0, copy.width, copy.height)
@@ -228,7 +216,7 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
                         Image(
                             painter = appIcon,
                             contentDescription = "Logo",
-                            modifier = Modifier.size(100.dp),
+                            modifier = Modifier.size(160.dp),
                         )
                     }
                     Spacer(modifier = Modifier.height(16.dp))
