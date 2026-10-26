@@ -355,18 +355,24 @@ object Best50ImageBuilder {
             }
         }
 
-        // 连击 / 同步
+        // 连击 / 同步（MaimaiData 高清源 kiba_combo_* 144×144，主圆内容 136px；
+        // 旧 39×39×0.6 = 23.4px → 按 23.4f/136f 内容直径换算，画布中心对准原内容中心；
+        // 无状态时画灰色占位圆 kiba_ui_mss_mbase_icon_blank，与页面显示一致）
         val comboIdx = FC_KEYS.indexOf(r.fc.lowercase()).coerceAtLeast(0)
         val comboAsset = if (comboIdx == 0) "kiba_ui_mss_mbase_icon_blank" else {
-            "kiba_ui_mss_mbase_icon_${COMBO_PIC[comboIdx].lowercase()}_s"
+            "kiba_combo_${COMBO_PIC[comboIdx].lowercase()}"
         }
-        decode(context, comboAsset)?.let { c.drawBitmap(scale(it, 0.6f), 172f, 81f, null) }
+        val comboScale = if (comboIdx == 0) 0.6f else 23.4f / 136f
+        val comboX = if (comboIdx == 0) 172f else 171.2f
+        decode(context, comboAsset)?.let { c.drawBitmap(scale(it, comboScale), comboX, 81f, null) }
 
         val syncIdx = FS_KEYS.indexOf(r.fs.lowercase()).coerceAtLeast(0)
         val syncAsset = if (syncIdx == 0) "kiba_ui_mss_mbase_icon_blank" else {
-            "kiba_ui_mss_mbase_icon_${SYNC_PIC[syncIdx].lowercase()}_s"
+            "kiba_combo_${SYNC_PIC[syncIdx].lowercase()}"
         }
-        decode(context, syncAsset)?.let { c.drawBitmap(scale(it, 0.6f), 201f, 81f, null) }
+        val syncScale = if (syncIdx == 0) 0.6f else 23.4f / 136f
+        val syncX = if (syncIdx == 0) 201f else 200.2f
+        decode(context, syncAsset)?.let { c.drawBitmap(scale(it, syncScale), syncX, 81f, null) }
 
         // DX 分 / 定数 / 百分比 / ra / 序号
         drawText(c, "${r.dxScore} / $fullScore", 82f, 76f, 11f, Color.BLACK, font(context, "HOS.ttf"))

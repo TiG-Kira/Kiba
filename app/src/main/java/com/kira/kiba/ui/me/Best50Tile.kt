@@ -146,17 +146,24 @@ private fun TileContent(
         }
         val comboIdx = FC_KEYS.indexOf(record.fc.lowercase()).coerceAtLeast(0)
         if (comboIdx > 0) {
+            // MaimaiData 高清源（144×144）：主圆内容 136px，旧 39px×0.6 = 23.4u
+            // → 0.172f 按内容直径换算（画布 24.8u），画布中心对准原内容中心
             ScaledAsset(
-                "kiba_ui_mss_mbase_icon_${COMBO_PIC[comboIdx].lowercase()}_s",
-                0.6f, u, Modifier.offset(u * 172f, u * 81f),
+                "kiba_combo_${COMBO_PIC[comboIdx].lowercase()}",
+                0.172f, u, Modifier.offset(u * 171.2f, u * 81f),
             )
+        } else {
+            // 无 FC 状态：灰色占位圆（与分享图逻辑一致）
+            ScaledAsset("kiba_ui_mss_mbase_icon_blank", 0.6f, u, Modifier.offset(u * 172f, u * 81f))
         }
         val syncIdx = FS_KEYS.indexOf(record.fs.lowercase()).coerceAtLeast(0)
         if (syncIdx > 0) {
             ScaledAsset(
-                "kiba_ui_mss_mbase_icon_${SYNC_PIC[syncIdx].lowercase()}_s",
-                0.6f, u, Modifier.offset(u * 201f, u * 81f),
+                "kiba_combo_${SYNC_PIC[syncIdx].lowercase()}",
+                0.172f, u, Modifier.offset(u * 200.2f, u * 81f),
             )
+        } else {
+            ScaledAsset("kiba_ui_mss_mbase_icon_blank", 0.6f, u, Modifier.offset(u * 201f, u * 81f))
         }
 
         // ── 文本（黑字区，画在难度框的 DX 分数条上）──
