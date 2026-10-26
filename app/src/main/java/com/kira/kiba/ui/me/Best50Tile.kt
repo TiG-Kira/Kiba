@@ -137,9 +137,11 @@ private fun TileContent(
         // ── 评级 / 连击 / 同步图标 ──
         val rankIdx = RATE_KEYS.indexOf(record.rate.lowercase())
         if (rankIdx >= 0) {
+            // MaimaiData 高清源（600×267）。ScaledAsset 的 intrinsicSize 返回的是像素，
+            // 旧素材 108px(mdpi)×0.8 = 86.4u；新素材 600px×0.144 = 86.4u，位置尺寸不变仅更清晰
             ScaledAsset(
-                "kiba_ui_gam_rank_${RANK_PIC[rankIdx].lowercase()}",
-                0.8f, u, Modifier.offset(u * 156f, u * 40f),
+                "kiba_rank_${RANK_PIC[rankIdx].lowercase()}",
+                0.144f, u, Modifier.offset(u * 156f, u * 40f),
             )
         }
         val comboIdx = FC_KEYS.indexOf(record.fc.lowercase()).coerceAtLeast(0)

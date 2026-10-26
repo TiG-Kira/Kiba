@@ -346,11 +346,12 @@ object Best50ImageBuilder {
         // 达成率
         drawText(c, "%.4f%%".format(r.achievements), 30f, 42f, 26f, Color.WHITE, font(context, "Andrea.otf"))
 
-        // 评级
+        // 评级（MaimaiData 高清源 kiba_rank_* 600×267；旧 kiba_ui_gam_rank 108×48×0.8 = 86×38，
+        // 按 86f/600f 等比换算 → 绘制尺寸与位置和原来完全一致，仅清晰度提升）
         val rankIdx = RATE_KEYS.indexOf(r.rate.lowercase())
         if (rankIdx >= 0) {
-            decode(context, "kiba_ui_gam_rank_${RANK_PIC[rankIdx].lowercase()}")?.let { img ->
-                c.drawBitmap(scale(img, 0.8f), 156f, 40f, null)
+            decode(context, "kiba_rank_${RANK_PIC[rankIdx].lowercase()}")?.let { img ->
+                c.drawBitmap(scale(img, 86f / 600f), 156f, 40f, null)
             }
         }
 
