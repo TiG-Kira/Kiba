@@ -47,6 +47,8 @@ import top.yukonga.miuix.kmp.utils.MiuixPopupUtils
  * @param onDismissRequest 点击 Scrim / 返回键时回调
  * @param onDismissFinished 退场动画结束后回调
  * @param maxWidth 内容宽度上限，防止在平板/桌面窗口被拉成长条
+ * @param forceDefault 豁免开关：true 时无论材质开关如何，一律回落默认 [OverlayDialog]
+ * （如关于页的软件更新窗口——该页本身即豁免页，弹层保持默认观感）
  * @param content 弹层主体内容
  */
 @Composable
@@ -57,9 +59,10 @@ fun KibaGlassDialog(
     onDismissRequest: (() -> Unit)? = null,
     onDismissFinished: (() -> Unit)? = null,
     maxWidth: Dp = DialogDefaults.MaxWidth,
+    forceDefault: Boolean = false,
     content: @Composable () -> Unit,
 ) {
-    val enabled = LocalAdvancedMaterialEnabled.current
+    val enabled = LocalAdvancedMaterialEnabled.current && !forceDefault
     val backdrop = LocalGlassDialogBackdrop.current
     if (!enabled || backdrop == null) {
         OverlayDialog(

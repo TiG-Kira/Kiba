@@ -446,6 +446,8 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
         val result = updateResult!!
         KibaGlassDialog(
             show = showUpdateDialog,
+            // 豁免：软件更新窗口无论材质开关如何，一律使用默认弹层
+            forceDefault = true,
             title = when (result) {
                 is UpdateResult.UpdateAvailable ->
                     if (result.isBeta) "发现测试版更新" else "发现新版本"
@@ -623,6 +625,8 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
     // ── 测试版开启警告 ──
     KibaGlassDialog(
         show = showBetaWarningDialog,
+        // 豁免：与软件更新窗口保持一致，使用默认弹层
+        forceDefault = true,
         title = "开启测试版更新？",
         summary = "测试版本（Pre-release）可能不稳定，存在崩溃或数据异常的风险。" +
             "仅建议愿意帮忙尝鲜并反馈问题的用户开启。",
