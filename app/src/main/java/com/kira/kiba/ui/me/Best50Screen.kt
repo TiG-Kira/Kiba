@@ -40,7 +40,6 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -48,6 +47,7 @@ import com.kira.kiba.core.account.DivingFishAccount
 import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.db.entity.ChartEntity
 import com.kira.kiba.core.db.entity.RecordEntity
+import com.kira.kiba.core.db.entity.SongDataEntity
 import com.kira.kiba.core.model.DifficultyType
 import kotlinx.coroutines.launch
 import com.kira.kiba.ui.common.EmptyStateCard
@@ -111,14 +111,15 @@ fun Best50Screen(
         charts.associate { (it.songId to it.difficultyType.ordinal) to it.notesTotal * 3 }
     }
 
-    // ── 按屏幕宽度决定一行几列（贴图等比缩放，放大不糊）──
-    val screenWidthDp = LocalConfiguration.current.screenWidthDp
-    val columns = when {
-        screenWidthDp >= 1000 -> 4
-        screenWidthDp >= 640 -> 3
-        screenWidthDp >= 300 -> 2
-        else -> 1
+    // 曲库（版本 tag 用：拉伸空白区显示歌曲所属版本）
+    val songsById by produceState<Map<Int, SongDataEntity>>(emptyMap()) {
+        value = runCatching {
+            AppDataBase.getInstance().songDao().getAllSongsList().associateBy { it.id }
+        }.getOrDefault(emptyMap())
     }
+
+    // ── 一行一首：固定单列，贴图九宫格拉长到整行宽（详见 Best50Tile）──
+    val columns = 1
 
     // ── 保存图片到相册 ──
     val context = LocalContext.current
@@ -244,6 +245,8 @@ fun Best50Screen(
                             listSize = new.size,
                             record = r,
                             fullScore = fullScoreByKey[r.songId to r.levelIndex] ?: 0,
+                            version = songsById[r.songId]?.from ?: "",
+                            genre = songsById[r.songId]?.genre ?: "",
                             onClick = { onOpenSong(r.songId) },
                         )
                     }
@@ -266,6 +269,8 @@ fun Best50Screen(
                             listSize = old.size,
                             record = r,
                             fullScore = fullScoreByKey[r.songId to r.levelIndex] ?: 0,
+                            version = songsById[r.songId]?.from ?: "",
+                            genre = songsById[r.songId]?.genre ?: "",
                             onClick = { onOpenSong(r.songId) },
                         )
                     }
@@ -316,7 +321,7 @@ private fun LoadingCard(text: String) {
 
 /**
  * Best 50 贴图卡：单曲贴图（[Best50Tile]）包在可点击卡片里。
- * 点击进入歌曲详情页（与旧版行卡行为一致）；贴图随卡片宽度等比缩放。
+ * 点击进入歌曲详情页（与旧版行卡行为一致）；一行一首，贴图九宫格拉长到整行宽。
  */
 @Composable
 private fun Best50TileCard(
@@ -324,6 +329,8 @@ private fun Best50TileCard(
     listSize: Int,
     record: RecordEntity,
     fullScore: Int,
+    version: String,
+    genre: String,
     onClick: () -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth(), onClick = onClick) {
@@ -333,6 +340,8 @@ private fun Best50TileCard(
                 fullScore = fullScore,
                 rankNum = rank,
                 listSize = listSize,
+                version = version,
+                genre = genre,
             )
         }
     }

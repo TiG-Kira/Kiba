@@ -44,6 +44,7 @@ import com.kira.kiba.core.account.DivingFishAccount
 import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.db.entity.RecordEntity
 import com.kira.kiba.core.db.entity.SongDataEntity
+import com.kira.kiba.core.db.entity.SongWithChartsEntity
 import com.kira.kiba.core.model.DifficultyType
 import com.kira.kiba.ui.common.ComboBadge
 import com.kira.kiba.ui.common.CoverFrame
@@ -56,6 +57,7 @@ import com.kira.kiba.ui.common.SyncBadge
 import com.kira.kiba.ui.common.difficultyColor
 import com.kira.kiba.ui.common.difficultyLabel
 import com.kira.kiba.ui.common.pageContentPadding
+import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.DropdownItem
 import top.yukonga.miuix.kmp.basic.Scaffold
@@ -100,6 +102,7 @@ object ScoreQueryStateCache {
     var viewMode = "list"
     var gridColumns = 3
     var iconDisplay = "rate"
+    var filtersExpanded = false
     var scrollIndex = 0
     var scrollOffset = 0
 }
@@ -126,12 +129,58 @@ fun ScoreQueryScreen(
             AppDataBase.getInstance().songDao().getAllSongsList().associateBy { it.id }
         }.getOrDefault(emptyMap())
     }
+    // 全谱面（不含宴曲目）：未游玩的谱面也要出现在查询列表里
+    val allCharts by produceState<List<SongWithChartsEntity>>(emptyList()) {
+        value = runCatching {
+            AppDataBase.getInstance().songWithChartDao().getAllSongsWithChartsOnce()
+        }.getOrDefault(emptyList())
+    }
+    // ── 合并未游玩谱面：无成绩的谱面视为 D（0.0000%，无 FC/FS、ra=0），
+    //    合成 RecordEntity 后筛选 / 排序 / 渲染全链路复用，排序时自然沉底；
+    //    unplayedKeys 记录合成记录的键，渲染时显示「未游玩」，与真 D 0.0000% 区分 ──
+    val (fullRecords, unplayedKeys) = remember(records, allCharts) {
+        if (allCharts.isEmpty()) {
+            records to emptySet<Pair<Int, Int>>()
+        } else {
+            val played = records.asSequence().map { it.songId to it.levelIndex }.toHashSet()
+            val unplayed = mutableSetOf<Pair<Int, Int>>()
+            val merged = buildList {
+                addAll(records)
+                allCharts.forEach { song ->
+                    song.charts.forEach { chart ->
+                        val key = song.songData.id to chart.difficultyType.ordinal
+                        if (key !in played) {
+                            unplayed.add(key)
+                            add(
+                                RecordEntity(
+                                    achievements = 0.0,
+                                    ds = chart.ds,
+                                    dxScore = 0,
+                                    fc = "",
+                                    fs = "",
+                                    level = chart.level,
+                                    levelIndex = chart.difficultyType.ordinal,
+                                    levelLabel = "",
+                                    ra = 0,
+                                    rate = "d",
+                                    songId = song.songData.id,
+                                    title = song.songData.title,
+                                    type = chart.type,
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+            merged to unplayed
+        }
+    }
     val versions by produceState<List<String>>(emptyList(), songsById) {
         value = songsById.values.map { it.from }.filter { it.isNotBlank() }.distinct().sorted()
     }
-    val levels by produceState<List<String>>(emptyList(), records) {
-        value = records.map { it.level }.filter { it.isNotBlank() }.distinct()
-            .sortedWith(compareBy({ it.replace("+", "").toIntOrNull() ?: 0 }, { it }))
+    val levels by produceState<List<String>>(emptyList(), fullRecords) {
+        value = fullRecords.map { it.level }.filter { it.isNotBlank() }.distinct()
+            .sortedWith(compareBy({ it.replace("?", "").replace("+", "").toIntOrNull() ?: 0 }, { it }))
     }
 
     // ── 筛选 / 视图状态（初始值来自进程级快照，返回时完整还原）──
@@ -147,6 +196,8 @@ fun ScoreQueryScreen(
     var viewMode by remember { mutableStateOf(cache.viewMode) }
     var gridColumns by remember { mutableStateOf(cache.gridColumns) }
     var iconDisplay by remember { mutableStateOf(cache.iconDisplay) }
+    // 筛选 / 显示两组设置默认折叠，点「展开筛选器」展开
+    var filtersExpanded by remember { mutableStateOf(cache.filtersExpanded) }
 
     var showDsDialog by remember { mutableStateOf(false) }
     var showAchDialog by remember { mutableStateOf(false) }
@@ -168,15 +219,16 @@ fun ScoreQueryScreen(
             cache.viewMode = viewMode
             cache.gridColumns = gridColumns
             cache.iconDisplay = iconDisplay
+            cache.filtersExpanded = filtersExpanded
             cache.scrollIndex = gridState.firstVisibleItemIndex
             cache.scrollOffset = gridState.firstVisibleItemScrollOffset
         }
     }
 
     // ── 过滤 + 排序（playerRecordService.filterRecordsByMultipleConditions 口径）──
-    val filtered = remember(records, songsById, sortBy, filterVersion, filterLevel,
+    val filtered = remember(fullRecords, songsById, sortBy, filterVersion, filterLevel,
         filterDifficulty, dsRange, achRange, filterFc, filterFs) {
-        records.asSequence()
+        fullRecords.asSequence()
             .filter { r ->
                 val song = songsById[r.songId]
                 (filterVersion == null || song?.from == filterVersion) &&
@@ -184,8 +236,10 @@ fun ScoreQueryScreen(
                     (filterDifficulty == null || r.levelIndex == filterDifficulty) &&
                     r.ds >= dsRange.first && r.ds <= dsRange.second &&
                     r.achievements >= achRange.first && r.achievements <= achRange.second &&
-                    (filterFc == null || r.fc == filterFc) &&
-                    (filterFs == null || r.fs == filterFs)
+                    // 「未FC/未FS」(sentinel "none") 要同时命中空串与 "none"：
+                    // 水鱼 API 无 FC/FS 时 fc/fs 字段缺省为空串，精确 == "none" 会筛出 0 条
+                    (filterFc == null || (if (filterFc == "none") r.fc.isBlank() || r.fc == "none" else r.fc == filterFc)) &&
+                    (filterFs == null || (if (filterFs == "none") r.fs.isBlank() || r.fs == "none" else r.fs == filterFs))
             }
             .sortedWith(
                 when (sortBy) {
@@ -258,7 +312,18 @@ fun ScoreQueryScreen(
                 }
             }
 
+            // ── 折叠开关：筛选 + 显示两组默认折叠，点按钮展开 / 收起 ──
+            item(key = "filter_toggle", span = { GridItemSpan(maxLineSpan) }) {
+                Button(
+                    onClick = { filtersExpanded = !filtersExpanded },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(text = if (filtersExpanded) "收起筛选器" else "展开筛选器")
+                }
+            }
+
             // ── 筛选（设置页同款 miuix preference 控件：OverlaySpinner / ArrowPreference）──
+            if (filtersExpanded) {
             item(key = "filters_title", span = { GridItemSpan(maxLineSpan) }) { SectionTitle("筛选") }
             item(key = "filters", span = { GridItemSpan(maxLineSpan) }) {
                 Card(modifier = Modifier.fillMaxWidth()) {
@@ -390,6 +455,7 @@ fun ScoreQueryScreen(
                     )
                 }
             }
+            } // filtersExpanded
 
             // ── 结果区 ──
             if (filtered.isEmpty()) {
@@ -418,17 +484,20 @@ fun ScoreQueryScreen(
                 ) { index ->
                     val r = filtered[index]
                     val song = songsById[r.songId]
+                    val unplayed = (r.songId to r.levelIndex) in unplayedKeys
                     if (viewMode == "grid") {
                         GridCoverCell(
                             record = r,
                             song = song,
                             iconDisplay = iconDisplay,
+                            unplayed = unplayed,
                             onClick = { onOpenSong(r.songId) },
                         )
                     } else {
                         RecordListCard(
                             record = r,
                             songTitle = song?.title,
+                            unplayed = unplayed,
                             onClick = { onOpenSong(r.songId) },
                         )
                     }
@@ -463,12 +532,13 @@ fun ScoreQueryScreen(
             allowDecimal = true,
             quickRanges = listOf(
                 "SSS+ 100.5~101" to (100.5 to 101.0),
-                "SSS 100~100.49" to (100.0 to 100.49),
-                "SS+ 99.5~99.99" to (99.5 to 99.99),
-                "SS 99~99.49" to (99.0 to 99.49),
-                "S+ 98~98.99" to (98.0 to 98.99),
-                "S 97~97.99" to (97.0 to 97.99),
-                "未SSS 0~99.99" to (0.0 to 99.99),
+                // 达成率四位小数：SSS 上边界是 100.4999 而不是 100.49，其余档位同理
+                "SSS 100~100.4999" to (100.0 to 100.4999),
+                "SS+ 99.5~99.9999" to (99.5 to 99.9999),
+                "SS 99~99.4999" to (99.0 to 99.4999),
+                "S+ 98~98.9999" to (98.0 to 98.9999),
+                "S 97~97.9999" to (97.0 to 97.9999),
+                "未SSS 0~99.9999" to (0.0 to 99.9999),
             ),
             onDismiss = { showAchDialog = false },
             onApply = { min, max ->
@@ -572,6 +642,7 @@ private fun FilterChip(text: String, active: Boolean = false, onClick: () -> Uni
 private fun RecordListCard(
     record: RecordEntity,
     songTitle: String?,
+    unplayed: Boolean = false,
     onClick: () -> Unit,
 ) {
     Card(
@@ -640,8 +711,12 @@ private fun RecordListCard(
                 }
             }
             Spacer(Modifier.width(8.dp))
-            // 官方评级徽章（与 B50 贴图同一套贴图资源）
-            RankBadge(rate = record.rate, height = 30.dp)
+            // 右侧评级：未游玩显示「未游玩」标记（与真 D 0.0000% 的 D 贴图区分）
+            if (unplayed) {
+                UnplayedBadge()
+            } else {
+                RankBadge(rate = record.rate, height = 30.dp)
+            }
         }
     }
 }
@@ -653,6 +728,7 @@ private fun GridCoverCell(
     record: RecordEntity,
     song: SongDataEntity?,
     iconDisplay: String,
+    unplayed: Boolean = false,
     onClick: () -> Unit,
 ) {
     androidx.compose.foundation.layout.BoxWithConstraints(
@@ -688,10 +764,12 @@ private fun GridCoverCell(
                 .align(Alignment.BottomEnd)
                 .padding(4.dp),
         ) {
-            when (iconDisplay) {
-                "fc" -> ComboBadge(fc = record.fc, height = 20.dp)
-                "fs" -> SyncBadge(fs = record.fs, height = 20.dp)
-                "ra" -> Text(
+            when {
+                // 未游玩：无论角标显示模式都显示「未游玩」标记
+                unplayed -> UnplayedBadge()
+                iconDisplay == "fc" -> ComboBadge(fc = record.fc, height = 20.dp)
+                iconDisplay == "fs" -> SyncBadge(fs = record.fs, height = 20.dp)
+                iconDisplay == "ra" -> Text(
                     text = if (record.ra > 0) "${record.ra}" else "-",
                     style = MiuixTheme.textStyles.footnote1,
                     color = Color.White,
@@ -699,6 +777,23 @@ private fun GridCoverCell(
                 else -> RankBadge(rate = record.rate, height = 22.dp)
             }
         }
+    }
+}
+
+/** 「未游玩」标记：无成绩谱面按 D（0.0000%）参与筛选排序，但显示上与真 D 区分。 */
+@Composable
+private fun UnplayedBadge() {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(MiuixTheme.colorScheme.onSurface.copy(alpha = 0.14f))
+            .padding(horizontal = 7.dp, vertical = 3.dp),
+    ) {
+        Text(
+            text = "未游玩",
+            style = MiuixTheme.textStyles.footnote2,
+            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+        )
     }
 }
 

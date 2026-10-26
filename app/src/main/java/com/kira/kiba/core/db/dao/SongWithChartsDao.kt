@@ -68,6 +68,16 @@ interface SongWithChartsDao : ChartDao, SongDao, AliasDao {
         ascending: Boolean = false
     ): LiveData<List<SongWithChartsEntity>>
 
+    /** 全量歌曲+谱面（不含宴曲目，id 升序），一次性挂起查询（成绩查询合并未游玩谱面用）。 */
+    @Query(
+        """
+        SELECT * FROM song_data
+        WHERE genre != '${Constants.GENRE_UTAGE}'
+        ORDER BY id ASC
+        """
+    )
+    suspend fun getAllSongsWithChartsOnce(): List<SongWithChartsEntity>
+
     /** 歌曲计数（判断曲库是否为空）。 */
     @Query("SELECT COUNT(*) FROM song_data")
     suspend fun getAllSongsWithChartsCount(): Int
