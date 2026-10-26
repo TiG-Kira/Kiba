@@ -53,8 +53,7 @@ private fun PrefIcon(icon: androidx.compose.ui.graphics.vector.ImageVector) {
  *   点击进 Best 50；未登录展示引导，点击进登录页（账号密码 / OAuth 双通道）；
  * - 查分器入口：成绩查询（EasyMai 式筛选 / 排序 / 网格视图，Best 50 由顶部卡片承载）；
  * - 我的收藏：收藏的歌曲列表；
- * - 工具箱（移植自 EasyMai）：实用网站 + 数据工具；
- * - 工具：登录机台 / DX 分数转换 / 退出登录。
+ * - 工具箱（移植自 EasyMai 并合并原「工具」组）：实用网站 + 数据工具 + 登录机台等。
  */
 @Composable
 fun MeScreen(
@@ -175,14 +174,6 @@ fun MeScreen(
                         startAction = { PrefIcon(MiuixGlassIcons.Regular.MapAlbum) },
                         onClick = { BrowserJump.openUrl(context, "https://map.bemanicn.com/") },
                     )
-                    ArrowPreference(
-                        title = "FindMaiMai",
-                        summary = "机厅位置可视化工具（浏览器定位后查看附近机台）",
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Location) },
-                        onClick = {
-                            BrowserJump.openUrl(context, "https://www.godserver.cn/earth")
-                        },
-                    )
                 }
             }
 
@@ -206,12 +197,6 @@ fun MeScreen(
                         startAction = { PrefIcon(MiuixGlassIcons.Regular.Album) },
                         onClick = onOpenVersionMap,
                     )
-                }
-            }
-
-            item(key = "tools_title") { SectionTitle("工具") }
-            item(key = "tools_card") {
-                Card(modifier = Modifier.fillMaxWidth()) {
                     ArrowPreference(
                         title = "登录机台",
                         summary = "打开微信「舞萌 | 中二」公众号，点底部「玩家二维码」菜单即可扫码上机",
