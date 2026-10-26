@@ -118,7 +118,7 @@ fun SongDetailScreen(
         ) {
             // ── 信息列表：类型（SD/DX 贴图）/ ID / BPM / 流派 / 版本 ──
             item(key = "tags") {
-                Card(modifier = Modifier.fillMaxWidth()) {
+                Card(modifier = (Modifier.fillMaxWidth())) {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         Row(
                             modifier = Modifier
@@ -146,7 +146,7 @@ fun SongDetailScreen(
             if (aliases.isNotEmpty()) {
                 item(key = "alias_title") { SectionTitle("别名") }
                 item(key = "alias") {
-                    Card(modifier = Modifier.fillMaxWidth()) {
+                    Card(modifier = (Modifier.fillMaxWidth())) {
                         FlowRow(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -205,7 +205,7 @@ private fun ChartCard(
             chart.notesSlide * 3 + chart.notesBreak * 5
 
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = (Modifier.fillMaxWidth()),
         onClick = onClick,
         pressFeedbackType = PressFeedbackType.Sink,
     ) {

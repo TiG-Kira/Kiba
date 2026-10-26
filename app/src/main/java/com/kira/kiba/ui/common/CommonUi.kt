@@ -373,7 +373,7 @@ fun EmptyStateCard(
     modifier: Modifier = Modifier,
     action: (@Composable () -> Unit)? = null,
 ) {
-    Card(modifier = modifier.fillMaxWidth()) {
+    Card(modifier = (modifier.fillMaxWidth())) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()

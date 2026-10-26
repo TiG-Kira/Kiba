@@ -355,6 +355,38 @@ object SpUtil {
         userInfoPrefs.edit { putString(KEY_COVER_SOURCE, prefix.trim()) }
     }
 
+    // ================= 真·高级材质 =================
+
+    private const val KEY_ADVANCED_MATERIAL = "advanced_material_enabled"
+    private const val KEY_MATERIAL_FAMILY = "advanced_material_family"
+    private const val KEY_DEVICE_SCORE = "advanced_material_device_score"
+
+    /** 真·高级材质开关（只有在设备评分达标时才允许用户打开）。 */
+    fun isAdvancedMaterialEnabled(): Boolean =
+        userInfoPrefs.getBoolean(KEY_ADVANCED_MATERIAL, false)
+
+    fun setAdvancedMaterialEnabled(enabled: Boolean) {
+        userInfoPrefs.edit { putBoolean(KEY_ADVANCED_MATERIAL, enabled) }
+    }
+
+    /**
+     * 材质风格名（[MaterialFamily] 的枚举名）。
+     * 存名字而非序号，枚举顺序变化时不会串味。
+     */
+    fun getMaterialFamily(): String =
+        userInfoPrefs.getString(KEY_MATERIAL_FAMILY, "LIQUID") ?: "LIQUID"
+
+    fun setMaterialFamily(family: String) {
+        userInfoPrefs.edit { putString(KEY_MATERIAL_FAMILY, family) }
+    }
+
+    /** 最近一次设备评分结果（用于设置页展示；-1 表示从未评过）。 */
+    fun getDeviceScore(): Int = userInfoPrefs.getInt(KEY_DEVICE_SCORE, -1)
+
+    fun setDeviceScore(score: Int) {
+        userInfoPrefs.edit { putInt(KEY_DEVICE_SCORE, score) }
+    }
+
     // ================= 曲目列表归类 =================
 
     private const val KEY_SONG_GROUP_MODE = "song_group_mode"

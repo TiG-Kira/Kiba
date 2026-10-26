@@ -33,7 +33,7 @@ import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.glass.GlassIconButton
 import top.yukonga.miuix.kmp.icon.glass.*
-import top.yukonga.miuix.kmp.overlay.OverlayDialog
+import com.kira.kiba.ui.material.KibaGlassDialog
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
@@ -105,7 +105,7 @@ fun ShareImageAction(
 
     // ── 生成中：进度弹层（可取消）──
     if (building) {
-        OverlayDialog(
+        KibaGlassDialog(
             show = true,
             title = "分享图片",
             summary = "正在准备图片用于分享…",
@@ -160,7 +160,7 @@ private fun ShareImageDialog(
     onShare: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    OverlayDialog(
+    KibaGlassDialog(
         show = true,
         title = "分享图片",
         summary = "保存到相册，或发送给 QQ / 微信好友",

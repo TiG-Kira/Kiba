@@ -65,7 +65,7 @@ import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
-import top.yukonga.miuix.kmp.overlay.OverlayDialog
+import com.kira.kiba.ui.material.KibaGlassDialog
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.OverlaySpinnerPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -284,7 +284,7 @@ fun ScoreQueryScreen(
         ) {
             // ── 统计头 ──
             item(key = "header", span = { GridItemSpan(maxLineSpan) }) {
-                Card(modifier = Modifier.fillMaxWidth()) {
+                Card(modifier = (Modifier.fillMaxWidth())) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text(
                             text = if (account.bound) {
@@ -326,7 +326,7 @@ fun ScoreQueryScreen(
             if (filtersExpanded) {
             item(key = "filters_title", span = { GridItemSpan(maxLineSpan) }) { SectionTitle("筛选") }
             item(key = "filters", span = { GridItemSpan(maxLineSpan) }) {
-                Card(modifier = Modifier.fillMaxWidth()) {
+                Card(modifier = (Modifier.fillMaxWidth())) {
                     OverlaySpinnerPreference(
                         items = listOf(
                             DropdownItem(text = "Rating"),
@@ -409,7 +409,7 @@ fun ScoreQueryScreen(
             // ── 显示方式（列表 / 封面网格 + 网格角标）──
             item(key = "display_title", span = { GridItemSpan(maxLineSpan) }) { SectionTitle("显示") }
             item(key = "display", span = { GridItemSpan(maxLineSpan) }) {
-                Card(modifier = Modifier.fillMaxWidth()) {
+                Card(modifier = (Modifier.fillMaxWidth())) {
                     OverlaySpinnerPreference(
                         items = listOf(
                             DropdownItem(text = "列表"),
@@ -646,7 +646,7 @@ private fun RecordListCard(
     onClick: () -> Unit,
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = (Modifier.fillMaxWidth()),
         onClick = onClick,
     ) {
         Row(
@@ -813,7 +813,7 @@ private fun RangeFilterDialog(
     var minText by remember { mutableStateOf(formatRange(initialMin)) }
     var maxText by remember { mutableStateOf(formatRange(initialMax)) }
 
-    OverlayDialog(
+    KibaGlassDialog(
         show = true,
         title = title,
         summary = "留空表示不限制",

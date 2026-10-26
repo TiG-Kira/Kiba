@@ -17,6 +17,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
@@ -26,8 +30,10 @@ import com.kira.kiba.core.account.DivingFishAccount
 import com.kira.kiba.core.data.SongDataSync
 import com.kira.kiba.core.state.KibaState
 import com.kira.kiba.core.utils.SpUtil
+import com.kira.kiba.core.utils.DeviceGrade
 import com.kira.kiba.ui.common.SectionTitle
 import com.kira.kiba.ui.common.pageContentPadding
+import com.kira.kiba.ui.material.restartMainActivity
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.DropdownItem
@@ -39,7 +45,7 @@ import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
 import top.yukonga.miuix.kmp.icon.glass.*
-import top.yukonga.miuix.kmp.overlay.OverlayDialog
+import com.kira.kiba.ui.material.KibaGlassDialog
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.OverlaySpinnerPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
@@ -57,6 +63,13 @@ private fun PrefIcon(icon: androidx.compose.ui.graphics.vector.ImageVector) {
         tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
         modifier = Modifier.size(26.dp),
     )
+}
+
+/** 评分到档位文案。 */
+private fun tierLabel(score: Int): String = when {
+    score >= 75 -> "高"
+    score >= DeviceGrade.PASS_SCORE -> "中"
+    else -> "低"
 }
 
 /**
@@ -77,6 +90,13 @@ fun SettingsScreen(
     var llmOn by remember { mutableStateOf(SpUtil.isLlmEnabled()) }
     var coverSource by remember { mutableStateOf(SpUtil.getCoverSource()) }
     var showCoverSource by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    // ── 真·高级材质 ──
+    // 评分在启动时评测并落盘，这里只做展示与手动重评
+    var advancedOn by remember { mutableStateOf(SpUtil.isAdvancedMaterialEnabled()) }
+    var score by remember { mutableStateOf(SpUtil.getDeviceScore()) }
+    var passes by remember { mutableStateOf(SpUtil.getDeviceScore() >= DeviceGrade.PASS_SCORE) }
+    var scoring by remember { mutableStateOf(false) }
 
     Scaffold(
         modifier = Modifier
@@ -94,7 +114,7 @@ fun SettingsScreen(
             // ── 外观 ──
             item(key = "appearance_title") { SectionTitle("外观") }
             item(key = "appearance_card") {
-                Card(modifier = Modifier.fillMaxWidth()) {
+                Card(modifier = (Modifier.fillMaxWidth())) {
                     OverlaySpinnerPreference(
                         items = listOf(
                             DropdownItem(text = "跟随系统"),
@@ -124,10 +144,66 @@ fun SettingsScreen(
                 }
             }
 
+            // ── 真·高级材质 ──
+            item(key = "material_title") { SectionTitle("真·高级材质") }
+            item(key = "material_card") {
+                Card(modifier = (Modifier.fillMaxWidth())) {
+                    ArrowPreference(
+                        title = "设备性能评分",
+                        summary = if (scoring) {
+                            "正在重新评测…"
+                        } else if (score < 0) {
+                            "尚未评测 · 点击开始"
+                        } else {
+                            val breakdown = DeviceGrade.cachedOrEvaluate(context).details
+                                .joinToString(" · ") { "${it.first} ${it.second}" }
+                            "$score / 100 · ${"档位 " + tierLabel(score)}" +
+                                if (score >= DeviceGrade.PASS_SCORE) {
+                                    "\n$breakdown\n点击重新评分"
+                                } else {
+                                    "\n低于 ${DeviceGrade.PASS_SCORE} 分，材质不可用 · 点击重新评分"
+                                }
+                        },
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.MemoryFunction) },
+                        onClick = {
+                            scoring = true
+                            scope.launch(Dispatchers.IO) {
+                                val grade = DeviceGrade.evaluate(context)
+                                SpUtil.setDeviceScore(grade.total)
+                                withContext(Dispatchers.Main) {
+                                    score = grade.total
+                                    passes = grade.total >= DeviceGrade.PASS_SCORE
+                                    scoring = false
+                                    if (!passes) SpUtil.setAdvancedMaterialEnabled(false)
+                                }
+                            }
+                        },
+                        enabled = !scoring,
+                    )
+                    SwitchPreference(
+                        checked = advancedOn,
+                        onCheckedChange = {
+                            advancedOn = it
+                            SpUtil.setAdvancedMaterialEnabled(it)
+                            // 全局 CompositionLocal 变了重启最干净（切换后会回到主屏）
+                            context.restartMainActivity()
+                        },
+                        title = "启用真·高级材质",
+                        summary = when {
+                            !passes -> "设备评分不足 ${DeviceGrade.PASS_SCORE} 分，暂不可用"
+                            advancedOn -> "已开启 · 超级柔光（弹层为玻璃材质）"
+                            else -> "已关闭 · 沿用标准 miuix 质感"
+                        },
+                        enabled = passes,
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Layers) },
+                    )
+                }
+            }
+
             // ── Agent ──
             item(key = "agent_title") { SectionTitle("Agent") }
             item(key = "agent_card") {
-                Card(modifier = Modifier.fillMaxWidth()) {
+                Card(modifier = (Modifier.fillMaxWidth())) {
                     SwitchPreference(
                         checked = llmOn,
                         onCheckedChange = {
@@ -158,7 +234,7 @@ fun SettingsScreen(
             // ── 查分器工具 ──
             item(key = "tool_title") { SectionTitle("查分器工具") }
             item(key = "tool_card") {
-                Card(modifier = Modifier.fillMaxWidth()) {
+                Card(modifier = (Modifier.fillMaxWidth())) {
                     ArrowPreference(
                         title = "机台成绩更新",
                         summary = "VPN 抓包方案：在机台 WiFi 下把成绩同步到水鱼",
@@ -171,7 +247,7 @@ fun SettingsScreen(
             // ── 数据 ──
             item(key = "data_title") { SectionTitle("数据") }
             item(key = "data_card") {
-                Card(modifier = Modifier.fillMaxWidth()) {
+                Card(modifier = (Modifier.fillMaxWidth())) {
                 ArrowPreference(
                     title = "自定义封面源",
                     summary = coverSource.ifBlank { "使用内置候选链（水鱼 CDN + 官网镜像）" }
@@ -206,10 +282,10 @@ fun SettingsScreen(
             // ── 关于 ──
             item(key = "about_title") { SectionTitle("关于") }
             item(key = "about_card") {
-                Card(modifier = Modifier.fillMaxWidth()) {
+                Card(modifier = (Modifier.fillMaxWidth())) {
                     ArrowPreference(
                         title = "关于 Kiba",
-                        summary = "版本 ${BuildConfig.VERSION_NAME} · 基于 MaimaiData 二次开发",
+                        summary = "版本 ${BuildConfig.VERSION_NAME}",
                         startAction = { PrefIcon(MiuixGlassIcons.Regular.Info) },
                         onClick = onOpenAbout,
                     )
@@ -239,7 +315,7 @@ private fun CoverSourceDialog(
     onConfirm: (String) -> Unit,
 ) {
     var value by remember { mutableStateOf(current) }
-    OverlayDialog(
+    KibaGlassDialog(
         show = true,
         title = "自定义封面源",
         summary = "指定一个自建的封面图床前缀来替换默认图源。" +

@@ -160,7 +160,7 @@ fun ChartDetailScreen(
 @Composable
 private fun ChartHeaderCard(chart: ChartEntity, song: SongDataEntity?, fitDiff: Double? = null) {
     val diffColor = difficultyColor(chart.difficultyType)
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(modifier = (Modifier.fillMaxWidth())) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 DifficultyChip(
@@ -224,7 +224,7 @@ private fun NotesCard(chart: ChartEntity) {
         if (chart.notesTouch > 0) add(listOf("TOUCH", "${chart.notesTouch}"))
         add(listOf("BREAK", "${chart.notesBreak}"))
     }
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(modifier = (Modifier.fillMaxWidth())) {
         Column(modifier = Modifier.padding(16.dp)) {
             SimpleTable(
                 headers = listOf("Note 类型", "数量"),
@@ -253,7 +253,7 @@ private fun LossTableCard(chart: ChartEntity) {
         LossRow("SLIDE", chart.notesSlide, 3.0, ts),
         LossRow("TOUCH", chart.notesTouch, 1.0, ts),
     )
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(modifier = (Modifier.fillMaxWidth())) {
         Column(modifier = Modifier.padding(16.dp)) {
             LossTableHeader()
             rows.forEach { row ->
@@ -288,7 +288,7 @@ private fun BreakLossCard(chart: ChartEntity) {
     val ts = totalScoreOf(chart).toDouble()
     val nb = chart.notesBreak.toDouble()
     val fix = 0.01 / nb
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(modifier = (Modifier.fillMaxWidth())) {
         Column(modifier = Modifier.padding(16.dp)) {
             LossRowLine(
                 label = "50 落",
@@ -339,7 +339,7 @@ private fun RatingTableCard(chart: ChartEntity) {
     val rows = tiers.map { (rank, achievement) ->
         listOf(rank, "${"%.1f".format(achievement)}%", "${SongRating.songRating(ds, achievement)}")
     }
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(modifier = (Modifier.fillMaxWidth())) {
         Column(modifier = Modifier.padding(16.dp)) {
             SimpleTable(
                 headers = listOf("档位", "达成率", "单曲 Rating"),
@@ -359,7 +359,7 @@ private fun RatingTableCard(chart: ChartEntity) {
 @Composable
 private fun RecordCard(chart: ChartEntity, record: RecordEntity) {
     val diffColor = difficultyColor(chart.difficultyType)
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(modifier = (Modifier.fillMaxWidth())) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(

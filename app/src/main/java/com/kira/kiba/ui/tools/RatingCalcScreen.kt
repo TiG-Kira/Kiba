@@ -77,7 +77,7 @@ fun RatingCalcScreen(scrollBehavior: ScrollBehavior) {
         ) {
             item(key = "input") {
                 Card(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = (Modifier.fillMaxWidth()),
                     cornerRadius = CardDefaults.CornerRadius,
                     insideMargin = CardDefaults.InsideMargin,
                 ) {
@@ -110,7 +110,7 @@ fun RatingCalcScreen(scrollBehavior: ScrollBehavior) {
             item(key = "result_title") { SectionTitle("计算结果") }
             item(key = "result") {
                 Card(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = (Modifier.fillMaxWidth()),
                     cornerRadius = CardDefaults.CornerRadius,
                     insideMargin = CardDefaults.InsideMargin,
                 ) {
@@ -148,7 +148,7 @@ fun RatingCalcScreen(scrollBehavior: ScrollBehavior) {
             item(key = "table_title") { SectionTitle("RANK 系数表") }
             item(key = "table") {
                 Card(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = (Modifier.fillMaxWidth()),
                     cornerRadius = CardDefaults.CornerRadius,
                     insideMargin = CardDefaults.InsideMargin,
                 ) {

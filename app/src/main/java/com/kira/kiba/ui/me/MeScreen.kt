@@ -86,7 +86,7 @@ fun MeScreen(
         ) {
             // ── 置顶：DX Rating 徽章入口（ArrowPreference + 官方段位色 tag）──
             item(key = "rating") {
-                Card(modifier = Modifier.fillMaxWidth()) {
+                Card(modifier = (Modifier.fillMaxWidth())) {
                     ArrowPreference(
                         title = if (account.bound) {
                             account.nickname.ifBlank { "查分器用户" }
@@ -113,7 +113,7 @@ fun MeScreen(
             item(key = "checker_title") { SectionTitle("查分器") }
 
             item(key = "checker_card") {
-                Card(modifier = Modifier.fillMaxWidth()) {
+                Card(modifier = (Modifier.fillMaxWidth())) {
                     ArrowPreference(
                         title = if (account.bound) "重新登录 / 切换账户" else "登录查分器账户",
                         summary = if (account.bound) {
@@ -136,7 +136,7 @@ fun MeScreen(
             item(key = "fav_title") { SectionTitle("我的曲库") }
 
             item(key = "fav_card") {
-                Card(modifier = Modifier.fillMaxWidth()) {
+                Card(modifier = (Modifier.fillMaxWidth())) {
                     ArrowPreference(
                         title = "我的收藏",
                         summary = "在歌曲详情页标记过收藏的歌曲列表",
@@ -150,7 +150,7 @@ fun MeScreen(
             item(key = "toolbox_title") { SectionTitle("工具箱") }
 
             item(key = "toolbox_sites") {
-                Card(modifier = Modifier.fillMaxWidth()) {
+                Card(modifier = (Modifier.fillMaxWidth())) {
                     ArrowPreference(
                         title = "水鱼查分器",
                         summary = "本应用接口的本家，成绩上传与查询官网",
@@ -178,7 +178,7 @@ fun MeScreen(
             }
 
             item(key = "toolbox_tools") {
-                Card(modifier = Modifier.fillMaxWidth()) {
+                Card(modifier = (Modifier.fillMaxWidth())) {
                     ArrowPreference(
                         title = "单曲 Rating 计算",
                         summary = "根据定数及达成率算出 Rating（附 RANK 系数表）",

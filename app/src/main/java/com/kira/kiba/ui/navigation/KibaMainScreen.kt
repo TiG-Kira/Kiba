@@ -57,6 +57,7 @@ import com.kira.kiba.ui.songdetail.SongDetailScreen
 import com.kira.kiba.ui.songdetail.SongDetailTopBarSlot
 import com.kira.kiba.ui.songs.SongGroupScreen
 import com.kira.kiba.ui.songs.SongsRefreshCard
+import com.kira.kiba.ui.material.LocalAdvancedMaterialEnabled
 import com.kira.kiba.ui.songs.SongsScreen
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
@@ -68,6 +69,7 @@ import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
 import top.yukonga.miuix.kmp.glass.GlassNavigationBar
 import top.yukonga.miuix.kmp.glass.GlassNavigationItem
+import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
 import top.yukonga.miuix.kmp.icon.glass.*
 
@@ -91,6 +93,14 @@ import top.yukonga.miuix.kmp.icon.glass.*
 
 /** 顶栏玻璃材质共享 MainScreen 的取景层，各页无需各自持有。 */
 val LocalGlassTopAppBarBackdrop = staticCompositionLocalOf<Backdrop?> { null }
+
+/**
+ * 弹层（Dialog）玻璃材质用的取景层，与顶栏/底栏共用同一层。
+ *
+ * 弹层渲染在根 Scaffold 的 overlay 容器里，位于内容 Box（注册该层）**之外**，
+ * 所以采样它不会成环；背后能透出的正是页面内容本身。
+ */
+val LocalGlassDialogBackdrop = staticCompositionLocalOf<Backdrop?> { null }
 
 /**
  * 顶栏占位高度：页面把首个 item 压到此值之下，避免顶栏遮挡。
@@ -308,241 +318,254 @@ fun KibaMainScreen() {
         popPage()
     }
 
-    Scaffold(
-        modifier = Modifier.fillMaxSize(),
-        // 关键：禁用默认 contentWindowInsets，让内容满高铺开
-        contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        topBar = {
-            CompositionLocalProvider(LocalGlassTopAppBarBackdrop provides glassNavBackdrop) {
-                val sub = subStack.lastOrNull()
-                if (sub == null) {
-                    KibaTopBar(
-                        title = selectedTab.title,
-                        scrollBehavior = scrollBehavior,
-                        actions = {
-                            when (selectedTab) {
-                                KibaTab.Songs -> {
-                                    // 曲库检查更新 / 立即更新（原曲目页「曲库数据」卡迁入顶栏）
-                                    KibaRefreshAction {
-                                        if (songSyncing) return@KibaRefreshAction
-                                        // 仅曲目页刷新点亮置顶进度卡（设置页刷新不触发）
-                                        SongsRefreshCard.visible.value = true
-                                        if (songUpdateAvailable != null) {
-                                            KibaState.refreshSongData(context)
-                                        } else {
-                                            KibaState.checkSongUpdate()
-                                        }
-                                    }
-                                    // 归类方式（原曲目页「归类方式」卡迁入顶栏）
-                                    KibaSortAction { songsShowGroupPicker = true }
-                                    KibaSearchAction { songsSearchTrigger++ }
-                                }
-                                KibaTab.Me -> KibaRefreshAction { KibaState.refreshRecords() }
-                                else -> Unit
-                            }
-                        },
-                    )
-                } else if (sub is KibaSubPage.SongDetail) {
-                    // 歌曲详情页魔改顶栏：封面背景 + 歌名/艺术家 + 收藏 star（详见 SongDetailTopBar）
-                    SongDetailTopBarSlot(
-                        songId = sub.songId,
-                        scrollBehavior = scrollBehavior,
-                        onBack = { popPage() },
-                    )
-                } else {
-                    KibaTopBar(
-                        title = sub.title,
-                        scrollBehavior = scrollBehavior,
-                        navigationIcon = { KibaBackAction { popPage() } },
-                        actions = {
-                            if (sub is KibaSubPage.ScoreQuery) {
-                                KibaRefreshAction { KibaState.refreshRecords() }
-                            }
-                            if (sub is KibaSubPage.ChartDetail) {
-                                // 分享谱面详情图（保存相册 / 分享给好友）
-                                ShareImageAction(
-                                    fileName = ShareService.defaultName(
-                                        "chart_${sub.songId}_${sub.difficultyOrdinal}"
-                                    ),
-                                    build = {
-                                        ShareService.buildChartPng(
-                                            context,
-                                            sub.songId,
-                                            sub.difficultyOrdinal,
-                                        )
-                                    },
-                                )
-                            }
-                        },
-                    )
-                }
-            }
-        },
-        bottomBar = {
-            if (subStack.isEmpty()) {
-                // Termux Ultra 默认悬浮底栏：GlassNavigationBar
-                // 左右各 24dp 内缩成浮动胶囊，底部贴系统导航栏上边缘
-                GlassNavigationBar(
-                    items = tabs.map { GlassNavigationItem(icon = tabIcon(it), label = it.title) },
-                    selectedIndex = selectedTab.ordinal,
-                    onSelect = { index ->
-                        val target = tabs.getOrElse(index) { selectedTab }
-                        if (target != selectedTab) {
-                            // 切 Tab = 进新页面：目标页残留状态清掉，列表回顶 + 顶栏展开
-                            // （同样必须用 pageKey() 字符串，否则匹配不到已保存的状态）
-                            pageStateHolder.removeState(pageKey(target))
-                            topBarMemory.remove(pageKey(target))
-                            selectedTab = target
-                            resetTopBar()
-                        }
-                    },
-                    backdrop = glassNavBackdrop,
-                    modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = systemNavBarsHeight),
-                )
-            }
-        }
-    ) { padding ->
-        // 顶栏遮挡量从 Scaffold 自身 padding 现取：顶栏塌缩时测量高度同步收缩，
-        // 常量会留下一条不透带（Termux Ultra GlassPageHost 同款做法）。
-        val topBarClearance = padding.calculateTopPadding()
-        CompositionLocalProvider(
-            LocalTopBarClearance provides topBarClearance,
-            LocalNavBarBottomPadding provides navBarBottomPadding,
-            LocalSystemNavBarBottom provides systemNavBarsHeight,
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    // 内容注册到取景层：顶栏/底栏透过它折射页面内容
-                    .layerBackdrop(glassNavBackdrop)
-            ) {
-                val sub = subStack.lastOrNull()
-                // 页面切换动画：Tab 间淡入淡出 + 轻微横向位移；二级页面从右滑入、返回时滑出
-                AnimatedContent(
-                    targetState = subStack.lastOrNull() ?: selectedTab,
-                    transitionSpec = {
-                        val isSub = targetState is KibaSubPage
-                        val forward = navForward
-                        if (isSub) {
-                            if (forward) {
-                                (slideInHorizontally(tween(260)) { it / 4 } + fadeIn(tween(200)))
-                                    .togetherWith(fadeOut(tween(160)))
-                            } else {
-                                (fadeIn(tween(200)))
-                                    .togetherWith(slideOutHorizontally(tween(240)) { it / 4 } + fadeOut(tween(200)))
-                            }
-                        } else {
-                            (fadeIn(tween(200)) + slideInHorizontally(tween(240)) { it / 8 })
-                                .togetherWith(fadeOut(tween(160)))
-                        }
-                    },
-                    label = "kiba-page",
-                ) { target ->
-                    // 按页面隔离保存状态：push 子页时当前页 state 存入 holder，
-                    // 返回时恢复（滚动位置/输入内容不丢）；切 Tab 时已在 onSelect 清空目标页。
-                    pageStateHolder.SaveableStateProvider(pageKey(target)) {
-                        when (target) {
-                            is KibaSubPage -> when (target) {
-                            is KibaSubPage.SongDetail -> SongDetailScreen(
-                                songId = target.songId,
-                                scrollBehavior = scrollBehavior,
-                                onOpenChart = { songId, difficultyOrdinal ->
-                                    pushPage(KibaSubPage.ChartDetail(songId, difficultyOrdinal))
-                                },
-                            )
-                            is KibaSubPage.ChartDetail -> ChartDetailScreen(
-                                songId = target.songId,
-                                difficultyOrdinal = target.difficultyOrdinal,
-                                scrollBehavior = scrollBehavior,
-                            )
-                            is KibaSubPage.Best50 -> Best50Screen(
-                                scrollBehavior = scrollBehavior,
-                                onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
-                                onSaveImage = {
-                                    val b50 = DivingFishAccount.best50()
-                                    val account = DivingFishAccount.state.value
-                                    Best50ImageService.generateAndSave(
-                                        context = context,
-                                        old = b50.old,
-                                        new = b50.new,
-                                        nickname = account.nickname.ifBlank { "Kiba" },
-                                        rating = b50.rating,
-                                    )
-                                },
-                            )
-                            is KibaSubPage.ScoreQuery -> ScoreQueryScreen(
-                                scrollBehavior = scrollBehavior,
-                                onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
-                            )
-                            is KibaSubPage.RatingCalc -> RatingCalcScreen(scrollBehavior = scrollBehavior)
-                            is KibaSubPage.VersionMap -> VersionMapScreen(scrollBehavior = scrollBehavior)
-                            is KibaSubPage.HotCharts -> HotChartsScreen(
-                                scrollBehavior = scrollBehavior,
-                                onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
-                            )
-                            is KibaSubPage.LlmConfig -> LlmConfigScreen(scrollBehavior = scrollBehavior)
-                            is KibaSubPage.Login -> LoginScreen(
-                                scrollBehavior = scrollBehavior,
-                                onLoginSuccess = { popPage() },
-                            )
-                            is KibaSubPage.SongGroup -> SongGroupScreen(
-                                mode = target.mode,
-                                groupKey = target.key,
-                                scrollBehavior = scrollBehavior,
-                                onSongClick = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
-                            )
-                            is KibaSubPage.DxConverter -> DxConverterScreen(scrollBehavior = scrollBehavior)
-                            is KibaSubPage.MachineUpdate -> MachineUpdateScreen(scrollBehavior = scrollBehavior)
-                            is KibaSubPage.Favorites -> FavoritesScreen(
-                                scrollBehavior = scrollBehavior,
-                                onOpenSong = { song -> pushPage(KibaSubPage.SongDetail(song.songData.id)) },
-                            )
-                            is KibaSubPage.About -> AboutScreen(scrollBehavior = scrollBehavior)
-                        }
+    CompositionLocalProvider(LocalGlassDialogBackdrop provides glassNavBackdrop) {
+      Scaffold(
+          modifier = Modifier.fillMaxSize(),
+          // 关键：禁用默认 contentWindowInsets，让内容满高铺开
+          contentWindowInsets = WindowInsets(0, 0, 0, 0),
+          topBar = {
+              // 顶栏玻璃模糊仅在「真·高级材质」开启时生效；关闭时提供 null，
+              // GlassTopAppBar 自动回落为传统纯色默认样式（无模糊、无玻璃描边）。
+              // 关于页为豁免页：无论开关如何，一律普通顶栏（不用任何高级材质）。
+              val sub = subStack.lastOrNull()
+              val aboutExempt = sub is KibaSubPage.About
+              CompositionLocalProvider(
+                  LocalGlassTopAppBarBackdrop provides
+                      if (aboutExempt) null
+                      else if (LocalAdvancedMaterialEnabled.current) glassNavBackdrop else null,
+              ) {
+                  if (sub == null) {
+                      KibaTopBar(
+                          title = selectedTab.title,
+                          scrollBehavior = scrollBehavior,
+                          actions = {
+                              when (selectedTab) {
+                                  KibaTab.Songs -> {
+                                      // 曲库检查更新 / 立即更新（原曲目页「曲库数据」卡迁入顶栏）
+                                      KibaRefreshAction {
+                                          if (songSyncing) return@KibaRefreshAction
+                                          // 仅曲目页刷新点亮置顶进度卡（设置页刷新不触发）
+                                          SongsRefreshCard.visible.value = true
+                                          if (songUpdateAvailable != null) {
+                                              KibaState.refreshSongData(context)
+                                          } else {
+                                              KibaState.checkSongUpdate()
+                                          }
+                                      }
+                                      // 归类方式（原曲目页「归类方式」卡迁入顶栏）
+                                      KibaSortAction { songsShowGroupPicker = true }
+                                      KibaSearchAction { songsSearchTrigger++ }
+                                  }
+                                  KibaTab.Me -> KibaRefreshAction { KibaState.refreshRecords() }
+                                  else -> Unit
+                              }
+                          },
+                      )
+                  } else if (sub is KibaSubPage.SongDetail) {
+                      // 歌曲详情页魔改顶栏：封面背景 + 歌名/艺术家 + 收藏 star（详见 SongDetailTopBar）
+                      SongDetailTopBarSlot(
+                          songId = sub.songId,
+                          scrollBehavior = scrollBehavior,
+                          onBack = { popPage() },
+                      )
+                  } else {
+                      KibaTopBar(
+                          title = sub.title,
+                          scrollBehavior = scrollBehavior,
+                          navigationIcon = { KibaBackAction { popPage() } },
+                          actions = {
+                              if (sub is KibaSubPage.ScoreQuery) {
+                                  KibaRefreshAction { KibaState.refreshRecords() }
+                              }
+                              if (sub is KibaSubPage.ChartDetail) {
+                                  // 分享谱面详情图（保存相册 / 分享给好友）
+                                  ShareImageAction(
+                                      fileName = ShareService.defaultName(
+                                          "chart_${sub.songId}_${sub.difficultyOrdinal}"
+                                      ),
+                                      build = {
+                                          ShareService.buildChartPng(
+                                              context,
+                                              sub.songId,
+                                              sub.difficultyOrdinal,
+                                          )
+                                      },
+                                  )
+                              }
+                          },
+                      )
+                  }
+              }
+          },
+          bottomBar = {
+              if (subStack.isEmpty()) {
+                  // Termux Ultra 默认悬浮底栏：GlassNavigationBar
+                  // 左右各 24dp 内缩成浮动胶囊，底部贴系统导航栏上边缘
+                  // 真·高级材质开启时垫一层实色背景板，显著提高底栏实感
+                  val advanced = LocalAdvancedMaterialEnabled.current
+                  GlassNavigationBar(
+                      items = tabs.map { GlassNavigationItem(icon = tabIcon(it), label = it.title) },
+                      selectedIndex = selectedTab.ordinal,
+                      onSelect = { index ->
+                          val target = tabs.getOrElse(index) { selectedTab }
+                          if (target != selectedTab) {
+                              // 切 Tab = 进新页面：目标页残留状态清掉，列表回顶 + 顶栏展开
+                              // （同样必须用 pageKey() 字符串，否则匹配不到已保存的状态）
+                              pageStateHolder.removeState(pageKey(target))
+                              topBarMemory.remove(pageKey(target))
+                              selectedTab = target
+                              resetTopBar()
+                          }
+                      },
+                      backdrop = glassNavBackdrop,
+                      backgroundBoard = if (advanced) MiuixTheme.colorScheme.surface.copy(alpha = 0.55f) else null,
+                      modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = systemNavBarsHeight),
+                  )
+              }
+          }
+      ) { padding ->
+          // 顶栏遮挡量从 Scaffold 自身 padding 现取：顶栏塌缩时测量高度同步收缩，
+          // 常量会留下一条不透带（Termux Ultra GlassPageHost 同款做法）。
+          val topBarClearance = padding.calculateTopPadding()
+          CompositionLocalProvider(
+              LocalTopBarClearance provides topBarClearance,
+              LocalNavBarBottomPadding provides navBarBottomPadding,
+              LocalSystemNavBarBottom provides systemNavBarsHeight,
+          ) {
+              Box(
+                  modifier = Modifier
+                      .fillMaxSize()
+                      // 内容注册到取景层：顶栏/底栏透过它折射页面内容
+                      .layerBackdrop(glassNavBackdrop)
+              ) {
+                  val sub = subStack.lastOrNull()
+                  // 页面切换动画：Tab 间淡入淡出 + 轻微横向位移；二级页面从右滑入、返回时滑出
+                  AnimatedContent(
+                      targetState = subStack.lastOrNull() ?: selectedTab,
+                      transitionSpec = {
+                          val isSub = targetState is KibaSubPage
+                          val forward = navForward
+                          if (isSub) {
+                              if (forward) {
+                                  (slideInHorizontally(tween(260)) { it / 4 } + fadeIn(tween(200)))
+                                      .togetherWith(fadeOut(tween(160)))
+                              } else {
+                                  (fadeIn(tween(200)))
+                                      .togetherWith(slideOutHorizontally(tween(240)) { it / 4 } + fadeOut(tween(200)))
+                              }
+                          } else {
+                              (fadeIn(tween(200)) + slideInHorizontally(tween(240)) { it / 8 })
+                                  .togetherWith(fadeOut(tween(160)))
+                          }
+                      },
+                      label = "kiba-page",
+                  ) { target ->
+                      // 按页面隔离保存状态：push 子页时当前页 state 存入 holder，
+                      // 返回时恢复（滚动位置/输入内容不丢）；切 Tab 时已在 onSelect 清空目标页。
+                      pageStateHolder.SaveableStateProvider(pageKey(target)) {
+                          when (target) {
+                              is KibaSubPage -> when (target) {
+                              is KibaSubPage.SongDetail -> SongDetailScreen(
+                                  songId = target.songId,
+                                  scrollBehavior = scrollBehavior,
+                                  onOpenChart = { songId, difficultyOrdinal ->
+                                      pushPage(KibaSubPage.ChartDetail(songId, difficultyOrdinal))
+                                  },
+                              )
+                              is KibaSubPage.ChartDetail -> ChartDetailScreen(
+                                  songId = target.songId,
+                                  difficultyOrdinal = target.difficultyOrdinal,
+                                  scrollBehavior = scrollBehavior,
+                              )
+                              is KibaSubPage.Best50 -> Best50Screen(
+                                  scrollBehavior = scrollBehavior,
+                                  onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
+                                  onSaveImage = {
+                                      val b50 = DivingFishAccount.best50()
+                                      val account = DivingFishAccount.state.value
+                                      Best50ImageService.generateAndSave(
+                                          context = context,
+                                          old = b50.old,
+                                          new = b50.new,
+                                          nickname = account.nickname.ifBlank { "Kiba" },
+                                          rating = b50.rating,
+                                      )
+                                  },
+                              )
+                              is KibaSubPage.ScoreQuery -> ScoreQueryScreen(
+                                  scrollBehavior = scrollBehavior,
+                                  onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
+                              )
+                              is KibaSubPage.RatingCalc -> RatingCalcScreen(scrollBehavior = scrollBehavior)
+                              is KibaSubPage.VersionMap -> VersionMapScreen(scrollBehavior = scrollBehavior)
+                              is KibaSubPage.HotCharts -> HotChartsScreen(
+                                  scrollBehavior = scrollBehavior,
+                                  onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
+                              )
+                              is KibaSubPage.LlmConfig -> LlmConfigScreen(scrollBehavior = scrollBehavior)
+                              is KibaSubPage.Login -> LoginScreen(
+                                  scrollBehavior = scrollBehavior,
+                                  onLoginSuccess = { popPage() },
+                              )
+                              is KibaSubPage.SongGroup -> SongGroupScreen(
+                                  mode = target.mode,
+                                  groupKey = target.key,
+                                  scrollBehavior = scrollBehavior,
+                                  onSongClick = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
+                              )
+                              is KibaSubPage.DxConverter -> DxConverterScreen(scrollBehavior = scrollBehavior)
+                              is KibaSubPage.MachineUpdate -> MachineUpdateScreen(scrollBehavior = scrollBehavior)
+                              is KibaSubPage.Favorites -> FavoritesScreen(
+                                  scrollBehavior = scrollBehavior,
+                                  onOpenSong = { song -> pushPage(KibaSubPage.SongDetail(song.songData.id)) },
+                              )
+                              is KibaSubPage.About -> AboutScreen(scrollBehavior = scrollBehavior)
+                          }
 
-                        else -> when (target) {
-                            KibaTab.Songs -> SongsScreen(
-                                scrollBehavior = scrollBehavior,
-                                searchTrigger = songsSearchTrigger,
-                                showGroupPicker = songsShowGroupPicker,
-                                onDismissGroupPicker = { songsShowGroupPicker = false },
-                                onSongClick = { song ->
-                                    pushPage(KibaSubPage.SongDetail(song.songData.id))
-                                },
-                                onOpenGroup = { mode, key ->
-                                    pushPage(KibaSubPage.SongGroup(mode, key))
-                                },
-                            )
-                            KibaTab.Agent -> AgentScreen(
-                                scrollBehavior = scrollBehavior,
-                                onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
-                            )
-                            KibaTab.Me -> MeScreen(
-                                scrollBehavior = scrollBehavior,
-                                onOpenLogin = { pushPage(KibaSubPage.Login) },
-                                onOpenBest50 = { pushPage(KibaSubPage.Best50) },
-                                onOpenScoreQuery = { pushPage(KibaSubPage.ScoreQuery) },
-                                onOpenDxConverter = { pushPage(KibaSubPage.DxConverter) },
-                                onOpenFavorites = { pushPage(KibaSubPage.Favorites) },
-                                // 登录机台：拉起微信「舞萌 | 中二」公众号拿玩家二维码
-                                onOpenMachineLogin = {
-                                    WeChatJump.openOfficialAccount(context)
-                                },
-                                onOpenRatingCalc = { pushPage(KibaSubPage.RatingCalc) },
-                                onOpenVersionMap = { pushPage(KibaSubPage.VersionMap) },
-                                onOpenHotCharts = { pushPage(KibaSubPage.HotCharts) },
-                            )
-                            KibaTab.Settings -> SettingsScreen(
-                                scrollBehavior = scrollBehavior,
-                                onOpenLlmConfig = { pushPage(KibaSubPage.LlmConfig) },
-                                onOpenMachineUpdate = { pushPage(KibaSubPage.MachineUpdate) },
-                                onOpenAbout = { pushPage(KibaSubPage.About) },
-                            )
-                        }
-                    }
-                    }
-                }
-            }
-        }
+                          else -> when (target) {
+                              KibaTab.Songs -> SongsScreen(
+                                  scrollBehavior = scrollBehavior,
+                                  searchTrigger = songsSearchTrigger,
+                                  showGroupPicker = songsShowGroupPicker,
+                                  onDismissGroupPicker = { songsShowGroupPicker = false },
+                                  onSongClick = { song ->
+                                      pushPage(KibaSubPage.SongDetail(song.songData.id))
+                                  },
+                                  onOpenGroup = { mode, key ->
+                                      pushPage(KibaSubPage.SongGroup(mode, key))
+                                  },
+                              )
+                              KibaTab.Agent -> AgentScreen(
+                                  scrollBehavior = scrollBehavior,
+                                  onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
+                              )
+                              KibaTab.Me -> MeScreen(
+                                  scrollBehavior = scrollBehavior,
+                                  onOpenLogin = { pushPage(KibaSubPage.Login) },
+                                  onOpenBest50 = { pushPage(KibaSubPage.Best50) },
+                                  onOpenScoreQuery = { pushPage(KibaSubPage.ScoreQuery) },
+                                  onOpenDxConverter = { pushPage(KibaSubPage.DxConverter) },
+                                  onOpenFavorites = { pushPage(KibaSubPage.Favorites) },
+                                  // 登录机台：拉起微信「舞萌 | 中二」公众号拿玩家二维码
+                                  onOpenMachineLogin = {
+                                      WeChatJump.openOfficialAccount(context)
+                                  },
+                                  onOpenRatingCalc = { pushPage(KibaSubPage.RatingCalc) },
+                                  onOpenVersionMap = { pushPage(KibaSubPage.VersionMap) },
+                                  onOpenHotCharts = { pushPage(KibaSubPage.HotCharts) },
+                              )
+                              KibaTab.Settings -> SettingsScreen(
+                                  scrollBehavior = scrollBehavior,
+                                  onOpenLlmConfig = { pushPage(KibaSubPage.LlmConfig) },
+                                  onOpenMachineUpdate = { pushPage(KibaSubPage.MachineUpdate) },
+                                  onOpenAbout = { pushPage(KibaSubPage.About) },
+                              )
+                          }
+                      }
+                      }
+                  }
+              }
+          }
+      }
     }
 }

@@ -29,8 +29,8 @@ android {
         // miuix 0.9.4 各模块（blur/ui/icons/preference）要求 minSdk >= 33
         minSdk = 33
         targetSdk = 37
-        versionCode = 33
-        versionName = "1.3.4"
+        versionCode = 34
+        versionName = "1.4.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
@@ -62,7 +62,14 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8 代码收缩（含优化）。本仓库 release 不混淆（保留类名/方法名，降低击破反射与
+            // 运行时取景层的风险），但仍做收缩以显著减小体积。
+            isMinifyEnabled = true
+            // 资源收缩暂关闭：本工程多处用 resources.getIdentifier(name, "drawable", …) 按拼接名
+            // 动态取 drawable（Best50 瓦片、DX 评级板、表情包等），AAPT 资源收缩看不到这些引用，
+            // 会误删资源导致运行时 Resources.NotFoundException。需要资源收缩时须补 res/raw/keep.xml
+            // 用 tools:keep 的 glob 显式保留这些 drawable。
+            isShrinkResources = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

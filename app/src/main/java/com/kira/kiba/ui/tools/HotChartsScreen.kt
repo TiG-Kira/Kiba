@@ -88,7 +88,7 @@ fun HotChartsScreen(
         ) {
             item(key = "intro") {
                 Card(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = (Modifier.fillMaxWidth()),
                     cornerRadius = CardDefaults.CornerRadius,
                     insideMargin = CardDefaults.InsideMargin,
                 ) {
@@ -118,7 +118,7 @@ fun HotChartsScreen(
                 val ds = dsByChart[key]
                 val level = levelByChart[key]
                 Card(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = (Modifier.fillMaxWidth()),
                     onClick = { onOpenSong(c.songId) },
                 ) {
                     BasicComponent(

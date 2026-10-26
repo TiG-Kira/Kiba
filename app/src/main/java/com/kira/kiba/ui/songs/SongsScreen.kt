@@ -84,7 +84,7 @@ import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.icon.glass.*
-import top.yukonga.miuix.kmp.overlay.OverlayDialog
+import com.kira.kiba.ui.material.KibaGlassDialog
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.utils.PressFeedbackType
 
@@ -322,7 +322,7 @@ fun SongsScreen(
             if (grouping) {
                 items(items = groups, key = { it.key }) { group ->
                     Card(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = (Modifier.fillMaxWidth()),
                         onClick = { onOpenGroup(groupMode, group.key) },
                         pressFeedbackType = PressFeedbackType.Sink,
                     ) {
@@ -349,7 +349,7 @@ fun SongsScreen(
 
     // 归类方式选择弹层（单选圆点指示；由顶栏归类按钮唤起）
     if (showGroupPicker) {
-        OverlayDialog(
+        KibaGlassDialog(
             show = true,
             title = "归类方式",
             summary = "选择曲目列表的归类维度，子页面展示对应谱面",
@@ -407,7 +407,7 @@ private fun SongDataUpdateDialog(
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
-    OverlayDialog(
+    KibaGlassDialog(
         show = true,
         title = "曲库数据更新",
         summary = "本地版本 $localVersion → 最新版本 $remoteVersion",
@@ -438,7 +438,7 @@ private fun SongDataUpdateDialog(
  */
 @Composable
 private fun SongsSyncProgressCard(state: SongDataSync.SyncState) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(modifier = (Modifier.fillMaxWidth())) {
         Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 when (state) {
@@ -565,7 +565,7 @@ fun SongCard(
     modifier: Modifier = Modifier,
 ) {
     Card(
-        modifier = modifier.fillMaxWidth(),
+        modifier = (modifier.fillMaxWidth()),
         onClick = onClick,
         // HyperOS 风格按压缩放反馈（miuix Card 默认无反馈）
         pressFeedbackType = PressFeedbackType.Sink,

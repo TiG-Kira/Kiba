@@ -407,9 +407,9 @@ private fun SkillStrip(
         items(skills.size) { index ->
             val skill = skills[index]
             Card(
-                modifier = Modifier
+                modifier = (Modifier
                     .width(uniformCardWidth)
-                    .height(uniformCardHeight),
+                    .height(uniformCardHeight)),
                 onClick = { onSkillClick(skill) },
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
@@ -431,9 +431,9 @@ private fun SkillStrip(
         // ── 清除对话（非技能）──
         item {
             Card(
-                modifier = Modifier
+                modifier = (Modifier
                     .width(uniformCardWidth)
-                    .height(uniformCardHeight),
+                    .height(uniformCardHeight)),
                 onClick = onClear,
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
@@ -553,12 +553,12 @@ private fun ChatBubble(msg: AgentSession.Turn, onOpenSong: (Int) -> Unit) {
 @Composable
 private fun ReasoningCard(text: String, streaming: Boolean) {
     Card(
-        modifier = Modifier
+        modifier = (Modifier
             .fillMaxWidth()
             .background(
                 MiuixTheme.colorScheme.surfaceVariant,
                 RoundedCornerShape(12.dp),
-            ),
+            )),
     ) {
         Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
             Text(
@@ -587,7 +587,7 @@ private fun ReasoningCard(text: String, streaming: Boolean) {
 @Composable
 private fun SongAgentCard(song: KibaAgent.AgentSong, onClick: () -> Unit) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = (Modifier.fillMaxWidth()),
         onClick = onClick,
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
@@ -653,7 +653,7 @@ private fun SongAgentCard(song: KibaAgent.AgentSong, onClick: () -> Unit) {
 /** 技能卡（回复内）：展示技能说明。 */
 @Composable
 private fun SkillAgentCard(skill: KibaAgent.AgentSkill) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(modifier = (Modifier.fillMaxWidth())) {
         Column(modifier = Modifier.padding(12.dp)) {
             Text(
                 text = "技能：${skill.title}",
@@ -673,7 +673,7 @@ private fun SkillAgentCard(skill: KibaAgent.AgentSkill) {
 /** B50 卡：总分 + 旧曲 35 / 新曲 15 分数。 */
 @Composable
 private fun Best50AgentCard(info: KibaAgent.Best50Info) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(modifier = (Modifier.fillMaxWidth())) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
                 text = "DX Rating ${info.total}",

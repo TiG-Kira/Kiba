@@ -9,6 +9,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -17,10 +19,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -66,6 +72,7 @@ fun GlassDialog(
     onDismissRequest: () -> Unit,
     backdrop: Backdrop,
     modifier: Modifier = Modifier,
+    alignment: Alignment = Alignment.BottomCenter,
     scrimColor: Color = Color.Black,
     scrimAlpha: Float = GlassOverlayDefaults.ScrimAlphaLight,
     style: GlassStyle = GlassDefaults.Style,
@@ -75,9 +82,13 @@ fun GlassDialog(
     shadow: GlassShadow? = GlassShadows.ExtraHigh,
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    // 延迟一帧的可见态：保证 AnimatedVisibility 始终经历 false→true 过渡，进入动画才会播放。
+    // 若直接以 visible 驱动，弹层首次组合时 visible 已为 true，AnimatedVisibility 判定为「首帧即可见」、不播 enter。
+    val animVisible = remember { mutableStateOf(false) }
+    LaunchedEffect(visible) { animVisible.value = visible }
     val scrim = animateFloatAsState(
-        targetValue = if (visible) scrimAlpha else 0f,
-        animationSpec = if (visible) GlassMotion.dialogEnter() else GlassMotion.dialogExit(),
+        targetValue = if (animVisible.value) scrimAlpha else 0f,
+        animationSpec = if (animVisible.value) GlassMotion.dialogEnter() else GlassMotion.dialogExit(),
         label = "glassDialogScrim",
     )
     val active by remember(visible, scrim) {
@@ -91,7 +102,6 @@ fun GlassDialog(
         resetSpec = GlassMotion.dialogExit(),
         onDismissRequest = onDismissRequest,
     )
-    if (!active) return
 
     val interactionSource = remember { MutableInteractionSource() }
     Box(modifier = modifier.fillMaxSize()) {
@@ -105,13 +115,43 @@ fun GlassDialog(
                     onClick = onDismissRequest,
                 ),
         )
+        // 与 miuix 原生 OverlayDialog 对齐：手机（非大屏）走底部滑入，大屏传 Center 时退化为中心缩放。
+        val isBottomAttached = alignment == Alignment.BottomCenter
         AnimatedVisibility(
-            visible = visible,
-            modifier = Modifier.align(Alignment.Center).padding(horizontal = 24.dp),
-            enter = scaleIn(animationSpec = GlassMotion.dialogEnter(), initialScale = 0.86f) +
-                fadeIn(animationSpec = GlassMotion.fadeIn()),
-            exit = scaleOut(animationSpec = GlassMotion.dialogExit(), targetScale = 0.9f) +
-                fadeOut(animationSpec = GlassMotion.fadeOut()),
+            visible = animVisible.value,
+            modifier = Modifier
+                .align(alignment)
+                .padding(
+                    start = 12.dp,
+                    end = 12.dp,
+                    bottom = if (isBottomAttached) 12.dp else 0.dp,
+                )
+                .let { m ->
+                    val withIme = m.imePadding()
+                    if (isBottomAttached) withIme.navigationBarsPadding() else withIme
+                },
+            enter = if (isBottomAttached) {
+                slideInVertically(
+                    animationSpec = GlassMotion.dialogEnter(),
+                    initialOffsetY = { it },
+                ) + fadeIn(animationSpec = GlassMotion.fadeIn())
+            } else {
+                scaleIn(
+                    animationSpec = GlassMotion.dialogEnter(),
+                    initialScale = 0.86f,
+                ) + fadeIn(animationSpec = GlassMotion.fadeIn())
+            },
+            exit = if (isBottomAttached) {
+                slideOutVertically(
+                    animationSpec = GlassMotion.dialogExit(),
+                    targetOffsetY = { it },
+                ) + fadeOut(animationSpec = GlassMotion.fadeOut())
+            } else {
+                scaleOut(
+                    animationSpec = GlassMotion.dialogExit(),
+                    targetScale = 0.9f,
+                ) + fadeOut(animationSpec = GlassMotion.fadeOut())
+            },
         ) {
             Column(
                 modifier = Modifier
@@ -126,7 +166,7 @@ fun GlassDialog(
                     .pointerInput(Unit) {
                         detectTapGestures { /* Consume taps inside the dialog. */ }
                     }
-                    .padding(horizontal = 22.dp, vertical = 20.dp),
+                    .padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 content = content,
             )

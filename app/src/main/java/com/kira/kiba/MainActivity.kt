@@ -4,10 +4,18 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
 import androidx.navigationevent.NavigationEventDispatcher
 import androidx.navigationevent.NavigationEventDispatcherOwner
 import androidx.navigationevent.OnBackInvokedDefaultInput
 import androidx.navigationevent.setViewTreeNavigationEventDispatcherOwner
+import com.kira.kiba.core.utils.DeviceGrade
+import com.kira.kiba.core.utils.SpUtil
+import com.kira.kiba.ui.material.LocalAdvancedMaterialEnabled
+import com.kira.kiba.ui.material.LocalDeviceTier
+import com.kira.kiba.ui.material.LocalMaterialFamily
+import com.kira.kiba.ui.material.MaterialFamily
 import com.kira.kiba.ui.navigation.KibaMainScreen
 import com.kira.kiba.ui.theme.KibaTheme
 
@@ -38,8 +46,21 @@ class MainActivity : ComponentActivity(), NavigationEventDispatcherOwner {
         window.decorView.setViewTreeNavigationEventDispatcherOwner(this)
         navEventDispatcher.addInput(OnBackInvokedDefaultInput(onBackInvokedDispatcher))
         setContent {
-            KibaTheme {
-                KibaMainScreen()
+            // 真·高级材质：开关状态来自偏好 + 设备评分门槛；风格由用户自选。
+            // 这两项在设置页改动后走 Activity 重启落地，所以这里每次 onCreate 都是新值。
+            val grade = remember { DeviceGrade.cachedOrEvaluate(this@MainActivity) }
+            val family = remember { MaterialFamily.of(SpUtil.getMaterialFamily()) }
+            val materialEnabled = remember(grade) {
+                SpUtil.isAdvancedMaterialEnabled() && grade.total >= DeviceGrade.PASS_SCORE
+            }
+            CompositionLocalProvider(
+                LocalAdvancedMaterialEnabled provides materialEnabled,
+                LocalMaterialFamily provides family,
+                LocalDeviceTier provides grade.tier,
+            ) {
+                KibaTheme {
+                    KibaMainScreen()
+                }
             }
         }
     }

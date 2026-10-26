@@ -192,6 +192,8 @@ fun GlassNavigationBar(
     shadow: GlassShadow? = GlassShadows.Float,
     height: Dp = GlassNavigationBarDefaults.Height,
     material: GlassMaterial? = GlassNavigationBarDefaults.material(),
+    /** 背景板填充：画在玻璃之下，显著提高底栏实感。超级柔光（真·高级材质）开启时由调用方传入。 */
+    backgroundBoard: Color? = null,
     indicatorColor: Color = GlassNavigationBarDefaults.indicatorColor(),
     indicatorPressedColor: Color = GlassNavigationBarDefaults.indicatorPressedColor(),
     selectedColor: Color = MiuixTheme.colorScheme.onBackground,
@@ -288,6 +290,13 @@ fun GlassNavigationBar(
                         .coerceIn(0f, 1f) * GlassMotion.NAV_HIDE_BLUR_DP
                     ).dp,
                 edgeTreatment = BlurredEdgeTreatment.Unbounded,
+            )
+            .then(
+                if (backgroundBoard != null) {
+                    Modifier.background(backgroundBoard, RoundedCornerShape(percent = 50))
+                } else {
+                    Modifier
+                },
             )
             .glassPanel(
                 backdrop = backdrop,

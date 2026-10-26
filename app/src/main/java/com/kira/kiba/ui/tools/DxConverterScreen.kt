@@ -89,7 +89,7 @@ fun DxConverterScreen(scrollBehavior: ScrollBehavior) {
         ) {
             item(key = "intro") {
                 Card(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = (Modifier.fillMaxWidth()),
                 cornerRadius = CardDefaults.CornerRadius,
                     insideMargin = CardDefaults.InsideMargin,
                 ) {
@@ -140,7 +140,7 @@ fun DxConverterScreen(scrollBehavior: ScrollBehavior) {
             item(key = "extra_title") { SectionTitle("精确换算 / Rating") }
             item(key = "extra") {
                 Card(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = (Modifier.fillMaxWidth()),
                 cornerRadius = CardDefaults.CornerRadius,
                     insideMargin = CardDefaults.InsideMargin,
                 ) {
@@ -209,7 +209,7 @@ fun DxConverterScreen(scrollBehavior: ScrollBehavior) {
                 item(key = "result_title") { SectionTitle("换算结果") }
                 item(key = "result") {
                     Card(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = (Modifier.fillMaxWidth()),
                     cornerRadius = CardDefaults.CornerRadius,
                         insideMargin = CardDefaults.InsideMargin,
                     ) {
@@ -278,7 +278,7 @@ private fun CountRow(
     onMiss: (String) -> Unit,
 ) {
     Card(
-    modifier = Modifier.fillMaxWidth(),
+    modifier = (Modifier.fillMaxWidth()),
     cornerRadius = CardDefaults.CornerRadius,
         insideMargin = CardDefaults.InsideMargin,
     ) {

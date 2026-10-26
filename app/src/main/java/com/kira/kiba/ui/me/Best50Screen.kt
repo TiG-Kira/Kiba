@@ -157,7 +157,7 @@ fun Best50Screen(
                 }
                 else -> {
                 item(key = "save", span = { GridItemSpan(maxLineSpan) }) {
-                    Card(modifier = Modifier.fillMaxWidth()) {
+                    Card(modifier = (Modifier.fillMaxWidth())) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -197,7 +197,7 @@ fun Best50Screen(
                     }
                 }
                 item(key = "summary", span = { GridItemSpan(maxLineSpan) }) {
-                    Card(modifier = Modifier.fillMaxWidth()) {
+                    Card(modifier = (Modifier.fillMaxWidth())) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -283,7 +283,7 @@ fun Best50Screen(
 
 /** 加载态卡片：小旋转环 + 提示文字（Best 50 数据异步加载期间显示）。 */@Composable
 private fun LoadingCard(text: String) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(modifier = (Modifier.fillMaxWidth())) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -333,7 +333,7 @@ private fun Best50TileCard(
     genre: String,
     onClick: () -> Unit,
 ) {
-    Card(modifier = Modifier.fillMaxWidth(), onClick = onClick) {
+    Card(modifier = (Modifier.fillMaxWidth()), onClick = onClick) {
         Box(modifier = Modifier.padding(4.dp)) {
             Best50Tile(
                 record = record,

@@ -37,7 +37,7 @@ import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
-import top.yukonga.miuix.kmp.overlay.OverlayDialog
+import com.kira.kiba.ui.material.KibaGlassDialog
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.SliderPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
@@ -79,7 +79,7 @@ fun LlmConfigScreen(scrollBehavior: ScrollBehavior) {
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             item(key = "enable_card") {
-                Card(modifier = Modifier.fillMaxWidth()) {
+                Card(modifier = (Modifier.fillMaxWidth())) {
                     SwitchPreference(
                         checked = enabled,
                         onCheckedChange = {
@@ -99,7 +99,7 @@ fun LlmConfigScreen(scrollBehavior: ScrollBehavior) {
             item(key = "conn_title") { SectionTitle("连接") }
 
             item(key = "conn_card") {
-                Card(modifier = Modifier.fillMaxWidth()) {
+                Card(modifier = (Modifier.fillMaxWidth())) {
                     ArrowPreference(
                         title = "API 地址",
                         summary = baseUrl.ifBlank { "未设置" },
@@ -135,7 +135,7 @@ fun LlmConfigScreen(scrollBehavior: ScrollBehavior) {
             item(key = "gen_title") { SectionTitle("生成参数") }
 
             item(key = "gen_card") {
-                Card(modifier = Modifier.fillMaxWidth()) {
+                Card(modifier = (Modifier.fillMaxWidth())) {
                     SliderPreference(
                         value = temperature,
                         onValueChange = {
@@ -282,7 +282,7 @@ internal fun TextEditDialog(
     password: Boolean = false,
 ) {
     var value by remember { mutableStateOf(initial) }
-    OverlayDialog(
+    KibaGlassDialog(
         show = true,
         title = title,
         summary = summary,

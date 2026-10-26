@@ -132,13 +132,15 @@ private fun TileContent(
 ) {
     // 右段元素（评级 / 模式图标 / 连击同步 / 序号）随九宫格拉伸整体右移的设计 px 数
     val r = extraDp.value
-    // tag 水平位置与最大宽（随屏幕拉伸量 r 智能适配，永不压 rank 贴图）：
-    // 右界 = rank 左缘 (156+r) - 10；优先放 x200（腾中段给歌名），空间不足时
-    // 左移起点（最小 148，达成率右缘）换取最小可读宽 36，仍不足则收窄（≥24）
+    // tag 水平位置与尺寸（随屏幕拉伸量 r 智能适配，相对观感一致）：
+    // tag 右缘恒距 rank 贴图 (156+r) 左侧 10；需要宽 66 可完整显示最长版本 tag；
+    // 空间不足时整体左移（左界 161：达成率字形右缘 ~155 + 6 缓冲），并按可用宽
+    // 等比缩放 tag（字号/内边距同步缩，内容不截断）；< 24 时隐藏 —— 永不压 rank、不撞达成率
     val tagRight = 156f + r - 10f
-    val tagX = minOf(200f, (tagRight - 36f).coerceAtLeast(148f))
-    val tagMaxW = (tagRight - tagX).coerceAtLeast(24f)
-    // 歌名可延伸到 tag 左缘 - 6（半角 8px/列）
+    val tagX = maxOf(161f, tagRight - 66f)
+    val tagMaxW = tagRight - tagX
+    val tagScale = if (tagMaxW < 24f) 0f else minOf(1f, tagMaxW / 66f)
+    // 歌名可延伸到 tag 左缘 - 6（半角 8px/列），随 tag 位置自动伸缩
     val titleMaxCols = ((tagX - 38f) / 8f).toInt().coerceIn(12, 24)
 
         // ── 背景封面：压暗层（不做模糊，降低滚动开销）──
@@ -158,18 +160,20 @@ private fun TileContent(
         // ── 难度角标整框（含左彩条与底部 DX 分数条底；同样九宫格拉伸）──
         NineSliceAsset(diffFrameAsset(record.levelIndex) + "_ui", Modifier.fillMaxSize())
 
-        // ── 拉伸空白区（达成率右侧偏右）的流派 / 版本 tag：上下两个、小字号，
-        //    底部与达成率字形底（baseline ≈ y63）对齐，DX 分数条在 y73 起、不会压到；
-        //    宽度与起点随屏幕拉伸量智能适配（见上方 tagX/tagMaxW），永不重叠 rank ──
-        Column(
-            modifier = Modifier.offset(x = u * tagX, y = u * 35f),
-            verticalArrangement = Arrangement.spacedBy(u * 2f),
-        ) {
-            if (genre.isNotBlank()) {
-                TileTag(text = genre, u = u, modifier = Modifier.widthIn(max = u * tagMaxW))
-            }
-            if (version.isNotBlank()) {
-                TileTag(text = version, u = u, modifier = Modifier.widthIn(max = u * tagMaxW))
+        // ── 拉伸空白区（达成率右侧）的流派 / 版本 tag：上下两个，
+        //    底部与达成率字形底（baseline ≈ y63）对齐（缩放时补偿 y 保持贴底）；
+        //    位置/宽度/字号随屏幕拉伸量智能适配（见上方 tagX/tagScale），过窄时隐藏 ──
+        if (tagScale > 0f) {
+            Column(
+                modifier = Modifier.offset(x = u * tagX, y = u * (63f - 28f * tagScale)),
+                verticalArrangement = Arrangement.spacedBy(u * 2f * tagScale),
+            ) {
+                if (genre.isNotBlank()) {
+                    TileTag(text = genre, u = u, scale = tagScale, modifier = Modifier.widthIn(max = u * tagMaxW))
+                }
+                if (version.isNotBlank()) {
+                    TileTag(text = version, u = u, scale = tagScale, modifier = Modifier.widthIn(max = u * tagMaxW))
+                }
             }
         }
 
@@ -245,21 +249,21 @@ private fun TileContent(
         )
 }
 
-/** 拉伸空白区的 tag pill：半透明黑底白字，小号（总高 ≈13u，两个塞进 y29..57 空隙）。 */
+/** 拉伸空白区的 tag pill：半透明黑底白字，[scale] 等比缩放（小屏整体缩小、内容不截断）。 */
 @Composable
-private fun TileTag(text: String, u: Dp, modifier: Modifier = Modifier) {
+private fun TileTag(text: String, u: Dp, scale: Float = 1f, modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape((6f * u.value).dp))
+            .clip(RoundedCornerShape((6f * u.value * scale).dp))
             // 半透明黑底：亮/暗封面上白字都可读（白底在亮封面上对比不足）
             .background(Color.Black.copy(alpha = 0.38f))
-            .padding(horizontal = u * 6f, vertical = u * 1.5f),
+            .padding(horizontal = u * 4f * scale, vertical = u * 1.5f * scale),
     ) {
         BasicText(
             text = text,
             style = TextStyle(
-                fontSize = (9f * u.value).sp,
-                lineHeight = (10f * u.value).sp,
+                fontSize = (9f * u.value * scale).sp,
+                lineHeight = (10f * u.value * scale).sp,
                 fontFamily = FontFamily.SansSerif,
                 color = Color.White,
             ),
@@ -337,24 +341,31 @@ private fun NineSliceBmp(
         val extra = (size.width / scale - srcW).coerceAtLeast(0f) // 拉伸的设计 px
         val a = SLICE_START
         val b = SLICE_END
-        val leftDst = a * scale
-        val midDst = (b - a + extra) * scale
-        val rightDst = leftDst + midDst
-        fun drawSeg(sx: Float, sw: Float, dx: Float, dw: Float) {
-            if (sw < 1f || dw < 1f) return
+        val srcWInt = srcW.roundToInt()
+        // 整数累积边界：相邻段严格共享同一个整数边界。
+        // 若各段分别对 dx/dw 做 roundToInt，round(left)+round(mid) 未必等于
+        // round(left+mid)，会留下 1px 未绘制的缝隙 —— 该列漏画 mb 遮罩层，
+        // 露出底下未压暗的封面，视觉上就是一条贯穿卡片的亮线。
+        val dstW = size.width.roundToInt()
+        val dstH = size.height.roundToInt()
+        val x1 = (a * scale).roundToInt()
+        val x2 = x1 + ((b - a + extra) * scale).roundToInt()
+        val srcB = b.roundToInt()
+        fun drawSeg(sx: Int, sw: Int, dx: Int, dw: Int) {
+            if (sw < 1 || dw < 1) return
             drawImage(
                 image,
-                srcOffset = IntOffset(sx.roundToInt(), 0),
-                srcSize = IntSize(sw.roundToInt(), srcH),
-                dstOffset = IntOffset(dx.roundToInt(), 0),
-                dstSize = IntSize(dw.roundToInt(), size.height.roundToInt()),
+                srcOffset = IntOffset(sx, 0),
+                srcSize = IntSize(sw, srcH),
+                dstOffset = IntOffset(dx, 0),
+                dstSize = IntSize(dw, dstH),
                 blendMode = blendMode,
                 filterQuality = FilterQuality.High,
             )
         }
-        drawSeg(0f, a, 0f, leftDst)
-        drawSeg(a, b - a, leftDst, midDst)
-        drawSeg(b, srcW - b, rightDst, size.width - rightDst)
+        drawSeg(0, a.roundToInt(), 0, x1)
+        drawSeg(a.roundToInt(), srcB - a.roundToInt(), x1, x2 - x1)
+        drawSeg(srcB, srcWInt - srcB, x2, dstW - x2)
     }
 }
 

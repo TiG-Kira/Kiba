@@ -74,7 +74,7 @@ fun VersionMapScreen(scrollBehavior: ScrollBehavior) {
         ) {
             item(key = "intro") {
                 Card(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = (Modifier.fillMaxWidth()),
                     cornerRadius = CardDefaults.CornerRadius,
                     insideMargin = CardDefaults.InsideMargin,
                 ) {
@@ -92,7 +92,7 @@ fun VersionMapScreen(scrollBehavior: ScrollBehavior) {
             item(key = "list_title") { SectionTitle("版本对照") }
             item(key = "list") {
                 Card(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = (Modifier.fillMaxWidth()),
                     cornerRadius = CardDefaults.CornerRadius,
                     insideMargin = CardDefaults.InsideMargin,
                 ) {

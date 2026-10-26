@@ -76,7 +76,7 @@ import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
-import top.yukonga.miuix.kmp.overlay.OverlayDialog
+import com.kira.kiba.ui.material.KibaGlassDialog
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -253,7 +253,7 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
             item(key = "device_title") { SectionTitle("设备") }
             item(key = "device_card") {
                 Card(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = (Modifier.fillMaxWidth()),
                     cornerRadius = CardDefaults.CornerRadius,
                     insideMargin = CardDefaults.InsideMargin,
                 ) {
@@ -271,7 +271,7 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
             // ── 开发者 ──
             item(key = "dev_title") { SectionTitle("开发者") }
             item(key = "dev_card") {
-                Card(modifier = Modifier.fillMaxWidth()) {
+                Card(modifier = (Modifier.fillMaxWidth())) {
                     AvatarArrowRow(
                         title = "极犽",
                         summary = "@TiG-Kira",
@@ -285,7 +285,7 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
             item(key = "data_title") { SectionTitle("数据来源") }
             item(key = "data_card") {
                 Card(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = (Modifier.fillMaxWidth()),
                     cornerRadius = CardDefaults.CornerRadius,
                     insideMargin = CardDefaults.InsideMargin,
                 ) {
@@ -314,7 +314,7 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
                     updateResult is UpdateResult.UpToDate -> "已是最新版本"
                     else -> "检查 GitHub 上的最新版本"
                 }
-                Card(modifier = Modifier.fillMaxWidth()) {
+                Card(modifier = (Modifier.fillMaxWidth())) {
                     ArrowPreference(
                         title = "检查更新",
                         summary = updateSummary,
@@ -349,7 +349,7 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
             // ── 版本信息 ──
             item(key = "version_card") {
                 Card(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = (Modifier.fillMaxWidth()),
                     cornerRadius = CardDefaults.CornerRadius,
                     insideMargin = CardDefaults.InsideMargin,
                 ) {
@@ -392,7 +392,7 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
             item(key = "thanks_title") { SectionTitle("致谢") }
             item(key = "thanks_card") {
                 Card(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = (Modifier.fillMaxWidth()),
                     cornerRadius = CardDefaults.CornerRadius,
                     insideMargin = CardDefaults.InsideMargin,
                 ) {
@@ -411,7 +411,7 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
             // ── 开源（保留原有文案）──
             item(key = "oss_title") { SectionTitle("开源") }
             item(key = "oss_card") {
-                Card(modifier = Modifier.fillMaxWidth()) {
+                Card(modifier = (Modifier.fillMaxWidth())) {
                     ArrowPreference(
                         title = "github.com/TiG-Kira/Kiba",
                         summary = "问题反馈与功能建议欢迎提 issue",
@@ -444,7 +444,7 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
         }
 
         val result = updateResult!!
-        OverlayDialog(
+        KibaGlassDialog(
             show = showUpdateDialog,
             title = when (result) {
                 is UpdateResult.UpdateAvailable ->
@@ -621,7 +621,7 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
     }
 
     // ── 测试版开启警告 ──
-    OverlayDialog(
+    KibaGlassDialog(
         show = showBetaWarningDialog,
         title = "开启测试版更新？",
         summary = "测试版本（Pre-release）可能不稳定，存在崩溃或数据异常的风险。" +

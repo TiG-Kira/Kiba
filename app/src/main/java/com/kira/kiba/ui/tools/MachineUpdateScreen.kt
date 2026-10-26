@@ -166,7 +166,7 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
         ) {
             item(key = "intro") {
                 Card(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = (Modifier.fillMaxWidth()),
                 cornerRadius = CardDefaults.CornerRadius,
                     insideMargin = CardDefaults.InsideMargin,
                 ) {
@@ -213,7 +213,7 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
             item(key = "diff_title") { SectionTitle("更新难度") }
             item(key = "diff_card") {
                 Card(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = (Modifier.fillMaxWidth()),
                 cornerRadius = CardDefaults.CornerRadius,
                     insideMargin = CardDefaults.InsideMargin,
                 ) {
@@ -243,7 +243,7 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
             item(key = "action_title") { SectionTitle("操作") }
             item(key = "action_card") {
                 Card(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = (Modifier.fillMaxWidth()),
                 cornerRadius = CardDefaults.CornerRadius,
                     insideMargin = CardDefaults.InsideMargin,
                 ) {
@@ -278,7 +278,7 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
                 item(key = "log_title") { SectionTitle("运行日志") }
                 item(key = "log") {
                     Card(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = (Modifier.fillMaxWidth()),
                     cornerRadius = CardDefaults.CornerRadius,
                         insideMargin = CardDefaults.InsideMargin,
                     ) {

@@ -7,6 +7,7 @@ import coil.disk.DiskCache
 import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.network.MaimaiDataClient
 import com.kira.kiba.core.state.KibaState
+import com.kira.kiba.core.utils.DeviceGrade
 import com.kira.kiba.core.utils.SpUtil
 
 class KibaApplication : Application(), ImageLoaderFactory {
@@ -15,6 +16,12 @@ class KibaApplication : Application(), ImageLoaderFactory {
         SpUtil.init(this)
         AppDataBase.init(this)
         MaimaiDataClient.instance.init()
+        // 设备性能评分：只读一次硬件信息并进程内缓存，结果同时落盘，
+        // 设置页首帧就能展示上次分数（真·高级材质的启用门槛看这个分）
+        runCatching {
+            val grade = DeviceGrade.evaluate(this)
+            SpUtil.setDeviceScore(grade.total)
+        }
         // 启动引导：恢复查分器登录态 + 静默同步曲库（内部全部降级，不阻塞启动）
         KibaState.bootstrap(this)
     }
