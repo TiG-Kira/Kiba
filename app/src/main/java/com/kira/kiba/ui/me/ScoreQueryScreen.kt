@@ -19,9 +19,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -49,17 +51,21 @@ import com.kira.kiba.ui.common.DifficultyChip
 import com.kira.kiba.ui.common.EmptyStateCard
 import com.kira.kiba.ui.common.InfoPill
 import com.kira.kiba.ui.common.RankBadge
+import com.kira.kiba.ui.common.SectionTitle
 import com.kira.kiba.ui.common.SyncBadge
 import com.kira.kiba.ui.common.difficultyColor
 import com.kira.kiba.ui.common.difficultyLabel
 import com.kira.kiba.ui.common.pageContentPadding
 import top.yukonga.miuix.kmp.basic.Card
+import top.yukonga.miuix.kmp.basic.DropdownItem
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
+import top.yukonga.miuix.kmp.preference.ArrowPreference
+import top.yukonga.miuix.kmp.preference.OverlaySpinnerPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
@@ -74,6 +80,30 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  *
  * 排版与筛选逻辑对齐 EasyMai，控件与页面骨架全部使用本项目 miuix 规范。
  */
+/**
+ * 成绩查询页状态快照（进程级）：从歌曲详情返回时完整还原筛选 / 视图 / 滚动位置。
+ *
+ * 筛选状态影响列表内容与排序，丢失会导致返回后列表错位/回顶；
+ * 与 SongsListCache 同思路，与 KibaMainScreen 的 SaveableStateProvider 解耦，双保险。
+ */
+object ScoreQueryStateCache {
+    var sortByOrdinal = 0
+    var filterVersion: String? = null
+    var filterLevel: String? = null
+    var filterDifficulty: Int? = null
+    var dsMin = 0.0
+    var dsMax = 15.1
+    var achMin = 0.0
+    var achMax = 101.0
+    var filterFc: String? = null
+    var filterFs: String? = null
+    var viewMode = "list"
+    var gridColumns = 3
+    var iconDisplay = "rate"
+    var scrollIndex = 0
+    var scrollOffset = 0
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ScoreQueryScreen(
@@ -81,6 +111,7 @@ fun ScoreQueryScreen(
     onOpenSong: (songId: Int) -> Unit = {},
 ) {
     val account by DivingFishAccount.state.collectAsState()
+    val cache = ScoreQueryStateCache
 
     // ── 数据：成绩 + 曲库（版本 from / 封面 / 流派）──
     val records by produceState(initialValue = RecordsListCache.current, account.recordCount) {
@@ -103,27 +134,44 @@ fun ScoreQueryScreen(
             .sortedWith(compareBy({ it.replace("+", "").toIntOrNull() ?: 0 }, { it }))
     }
 
-    // ── 筛选 / 视图状态 ──
-    var sortBy by remember { mutableStateOf(SortBy.RA) }
-    var filterVersion by remember { mutableStateOf<String?>(null) }
-    var filterLevel by remember { mutableStateOf<String?>(null) }
-    var filterDifficulty by remember { mutableStateOf<Int?>(null) }
-    var dsRange by remember { mutableStateOf(0.0 to 15.1) }
-    var achRange by remember { mutableStateOf(0.0 to 101.0) }
-    var filterFc by remember { mutableStateOf<String?>(null) }
-    var filterFs by remember { mutableStateOf<String?>(null) }
+    // ── 筛选 / 视图状态（初始值来自进程级快照，返回时完整还原）──
+    var sortBy by remember { mutableStateOf(SortBy.entries.getOrElse(cache.sortByOrdinal) { SortBy.RA }) }
+    var filterVersion by remember { mutableStateOf(cache.filterVersion) }
+    var filterLevel by remember { mutableStateOf(cache.filterLevel) }
+    var filterDifficulty by remember { mutableStateOf(cache.filterDifficulty) }
+    var dsRange by remember { mutableStateOf(cache.dsMin to cache.dsMax) }
+    var achRange by remember { mutableStateOf(cache.achMin to cache.achMax) }
+    var filterFc by remember { mutableStateOf(cache.filterFc) }
+    var filterFs by remember { mutableStateOf(cache.filterFs) }
 
-    var viewMode by remember { mutableStateOf("list") }
-    var gridColumns by remember { mutableStateOf(3) }
-    var iconDisplay by remember { mutableStateOf("rate") }
+    var viewMode by remember { mutableStateOf(cache.viewMode) }
+    var gridColumns by remember { mutableStateOf(cache.gridColumns) }
+    var iconDisplay by remember { mutableStateOf(cache.iconDisplay) }
 
-    var showSortDialog by remember { mutableStateOf(false) }
-    var showVersionDialog by remember { mutableStateOf(false) }
-    var showLevelDialog by remember { mutableStateOf(false) }
-    var showDifficultyDialog by remember { mutableStateOf(false) }
     var showDsDialog by remember { mutableStateOf(false) }
     var showAchDialog by remember { mutableStateOf(false) }
-    var showFcFsDialog by remember { mutableStateOf(false) }
+
+    // 滚动位置：初始值来自快照；离开页面时把全部状态写回快照（push 详情即触发）
+    val gridState = rememberLazyGridState(cache.scrollIndex, cache.scrollOffset)
+    DisposableEffect(Unit) {
+        onDispose {
+            cache.sortByOrdinal = sortBy.ordinal
+            cache.filterVersion = filterVersion
+            cache.filterLevel = filterLevel
+            cache.filterDifficulty = filterDifficulty
+            cache.dsMin = dsRange.first
+            cache.dsMax = dsRange.second
+            cache.achMin = achRange.first
+            cache.achMax = achRange.second
+            cache.filterFc = filterFc
+            cache.filterFs = filterFs
+            cache.viewMode = viewMode
+            cache.gridColumns = gridColumns
+            cache.iconDisplay = iconDisplay
+            cache.scrollIndex = gridState.firstVisibleItemIndex
+            cache.scrollOffset = gridState.firstVisibleItemScrollOffset
+        }
+    }
 
     // ── 过滤 + 排序（playerRecordService.filterRecordsByMultipleConditions 口径）──
     val filtered = remember(records, songsById, sortBy, filterVersion, filterLevel,
@@ -210,89 +258,136 @@ fun ScoreQueryScreen(
                 }
             }
 
-            // ── 筛选按钮（EasyMai 两行筛选按钮 → FlowRow 自适应换行）──
+            // ── 筛选（设置页同款 miuix preference 控件：OverlaySpinner / ArrowPreference）──
+            item(key = "filters_title", span = { GridItemSpan(maxLineSpan) }) { SectionTitle("筛选") }
             item(key = "filters", span = { GridItemSpan(maxLineSpan) }) {
                 Card(modifier = Modifier.fillMaxWidth()) {
-                    FlowRow(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        FilterChip(
-                            "排序：" + when (sortBy) {
-                                SortBy.RA -> "Rating"
-                                SortBy.ACHIEVEMENTS -> "达成率"
-                                SortBy.DS -> "难度"
-                            },
-                            onClick = { showSortDialog = true },
-                        )
-                        FilterChip(
-                            if (filterVersion == null) "版本筛选" else filterVersion!!,
-                            active = filterVersion != null,
-                            onClick = { showVersionDialog = true },
-                        )
-                        FilterChip(
-                            if (filterLevel == null) "等级筛选" else "等级 ${filterLevel!!}",
-                            active = filterLevel != null,
-                            onClick = { showLevelDialog = true },
-                        )
-                        FilterChip(
-                            if (filterDifficulty == null) "难度筛选"
-                            else difficultyLabel(filterDifficulty!!),
-                            active = filterDifficulty != null,
-                            onClick = { showDifficultyDialog = true },
-                        )
-                        FilterChip(
-                            if (dsRange == (0.0 to 15.1)) "定数筛选"
-                            else "定数 ${dsRange.first}~${dsRange.second}",
-                            active = dsRange != (0.0 to 15.1),
-                            onClick = { showDsDialog = true },
-                        )
-                        FilterChip(
-                            if (achRange == (0.0 to 101.0)) "达成率筛选"
-                            else "达成率 ${achRange.first}~${achRange.second}",
-                            active = achRange != (0.0 to 101.0),
-                            onClick = { showAchDialog = true },
-                        )
-                        FilterChip(
-                            when {
-                                filterFc == null && filterFs == null -> "FC/FS筛选"
-                                filterFs == null -> fcLabel(filterFc!!)
-                                filterFc == null -> "FS ${fsLabel(filterFs!!)}"
-                                else -> "${fcLabel(filterFc!!)}/${fsLabel(filterFs!!)}"
-                            },
-                            active = filterFc != null || filterFs != null,
-                            onClick = { showFcFsDialog = true },
-                        )
-                        FilterChip(
-                            if (viewMode == "grid") "网格 ${gridColumns}列" else "列表",
-                            onClick = {
-                                if (viewMode == "grid") {
-                                    gridColumns = if (gridColumns >= 5) 3 else gridColumns + 1
-                                } else {
-                                    viewMode = "grid"
-                                }
-                            },
-                        )
-                        FilterChip(
-                            when (iconDisplay) {
-                                "rate" -> "角标：评级"
-                                "fc" -> "角标：FC"
-                                "fs" -> "角标：FS"
-                                else -> "角标：RA"
-                            },
-                            onClick = {
-                                iconDisplay = when (iconDisplay) {
-                                    "rate" -> "fc"
-                                    "fc" -> "fs"
-                                    "fs" -> "ra"
-                                    else -> "rate"
-                                }
-                            },
-                        )
-                    }
+                    OverlaySpinnerPreference(
+                        items = listOf(
+                            DropdownItem(text = "Rating"),
+                            DropdownItem(text = "达成率"),
+                            DropdownItem(text = "难度"),
+                        ),
+                        selectedIndex = sortBy.ordinal,
+                        title = "排序方式",
+                        summary = when (sortBy) {
+                            SortBy.RA -> "Rating"
+                            SortBy.ACHIEVEMENTS -> "达成率"
+                            SortBy.DS -> "难度"
+                        },
+                        onSelectedIndexChange = { sortBy = SortBy.entries[it] },
+                    )
+                    OverlaySpinnerPreference(
+                        items = remember(versions) {
+                            (listOf("全部版本") + versions).map { DropdownItem(text = it) }
+                        },
+                        selectedIndex = if (filterVersion == null) 0 else versions.indexOf(filterVersion) + 1,
+                        title = "版本筛选",
+                        summary = filterVersion ?: "全部版本",
+                        onSelectedIndexChange = { index ->
+                            filterVersion = if (index == 0) null else versions.getOrNull(index - 1)
+                        },
+                    )
+                    OverlaySpinnerPreference(
+                        items = remember(levels) {
+                            (listOf("全部等级") + levels).map { DropdownItem(text = it) }
+                        },
+                        selectedIndex = if (filterLevel == null) 0 else levels.indexOf(filterLevel) + 1,
+                        title = "等级筛选",
+                        summary = if (filterLevel == null) "全部等级" else "等级 ${filterLevel}",
+                        onSelectedIndexChange = { index ->
+                            filterLevel = if (index == 0) null else levels.getOrNull(index - 1)
+                        },
+                    )
+                    OverlaySpinnerPreference(
+                        items = (listOf("全部难度") + (0..4).map { difficultyLabel(it) })
+                            .map { DropdownItem(text = it) },
+                        selectedIndex = (filterDifficulty ?: -1) + 1,
+                        title = "难度筛选",
+                        summary = if (filterDifficulty == null) "全部难度"
+                        else difficultyLabel(filterDifficulty!!),
+                        onSelectedIndexChange = { index ->
+                            filterDifficulty = if (index == 0) null else index - 1
+                        },
+                    )
+                    ArrowPreference(
+                        title = "定数筛选",
+                        summary = if (dsRange == (0.0 to 15.1)) "不限制"
+                        else "${dsRange.first} ~ ${dsRange.second}",
+                        onClick = { showDsDialog = true },
+                    )
+                    ArrowPreference(
+                        title = "达成率筛选",
+                        summary = if (achRange == (0.0 to 101.0)) "不限制"
+                        else "${achRange.first}% ~ ${achRange.second}%",
+                        onClick = { showAchDialog = true },
+                    )
+                    OverlaySpinnerPreference(
+                        items = listOf("不限", "未FC", "FC/FC+", "仅FC+", "AP/AP+", "仅AP+")
+                            .map { DropdownItem(text = it) },
+                        selectedIndex = FC_OPTIONS.indexOfFirst { it.second == filterFc }.coerceAtLeast(0),
+                        title = "FC 筛选",
+                        summary = filterFc?.let { fcLabel(it) } ?: "不限",
+                        onSelectedIndexChange = { index -> filterFc = FC_OPTIONS[index].second },
+                    )
+                    OverlaySpinnerPreference(
+                        items = listOf("不限", "未FS", "FS/FS+", "仅FS+", "FSD/FSD+", "仅FSD+")
+                            .map { DropdownItem(text = it) },
+                        selectedIndex = FS_OPTIONS.indexOfFirst { it.second == filterFs }.coerceAtLeast(0),
+                        title = "FS 筛选",
+                        summary = filterFs?.let { fsLabel(it) } ?: "不限",
+                        onSelectedIndexChange = { index -> filterFs = FS_OPTIONS[index].second },
+                    )
+                }
+            }
+
+            // ── 显示方式（列表 / 封面网格 + 网格角标）──
+            item(key = "display_title", span = { GridItemSpan(maxLineSpan) }) { SectionTitle("显示") }
+            item(key = "display", span = { GridItemSpan(maxLineSpan) }) {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    OverlaySpinnerPreference(
+                        items = listOf(
+                            DropdownItem(text = "列表"),
+                            DropdownItem(text = "网格 · 3 列"),
+                            DropdownItem(text = "网格 · 4 列"),
+                            DropdownItem(text = "网格 · 5 列"),
+                        ),
+                        selectedIndex = if (viewMode == "list") 0 else gridColumns - 2,
+                        title = "显示方式",
+                        summary = if (viewMode == "list") "列表" else "网格 · $gridColumns 列",
+                        onSelectedIndexChange = { index ->
+                            if (index == 0) {
+                                viewMode = "list"
+                            } else {
+                                viewMode = "grid"
+                                gridColumns = index + 2
+                            }
+                        },
+                    )
+                    OverlaySpinnerPreference(
+                        items = listOf("评级", "FC", "FS", "RA").map { DropdownItem(text = it) },
+                        selectedIndex = when (iconDisplay) {
+                            "fc" -> 1
+                            "fs" -> 2
+                            "ra" -> 3
+                            else -> 0
+                        },
+                        title = "网格角标",
+                        summary = when (iconDisplay) {
+                            "rate" -> "评级"
+                            "fc" -> "FC"
+                            "fs" -> "FS"
+                            else -> "RA"
+                        },
+                        onSelectedIndexChange = { index ->
+                            iconDisplay = when (index) {
+                                1 -> "fc"
+                                2 -> "fs"
+                                3 -> "ra"
+                                else -> "rate"
+                            }
+                        },
+                    )
                 }
             }
 
@@ -342,63 +437,7 @@ fun ScoreQueryScreen(
         }
     }
 
-    // ── 筛选弹层 ──
-    if (showSortDialog) {
-        SingleOptionDialog(
-            title = "排序方式",
-            options = listOf("Rating", "达成率", "难度"),
-            selectedIndex = when (sortBy) {
-                SortBy.RA -> 0
-                SortBy.ACHIEVEMENTS -> 1
-                SortBy.DS -> 2
-            },
-            onDismiss = { showSortDialog = false },
-            onSelect = { index ->
-                sortBy = when (index) {
-                    1 -> SortBy.ACHIEVEMENTS
-                    2 -> SortBy.DS
-                    else -> SortBy.RA
-                }
-                showSortDialog = false
-            },
-        )
-    }
-    if (showVersionDialog) {
-        SingleOptionDialog(
-            title = "版本筛选",
-            options = listOf("全部版本") + versions,
-            selectedIndex = if (filterVersion == null) 0 else versions.indexOf(filterVersion) + 1,
-            onDismiss = { showVersionDialog = false },
-            onSelect = { index ->
-                filterVersion = if (index == 0) null else versions[index - 1]
-                showVersionDialog = false
-            },
-        )
-    }
-    if (showLevelDialog) {
-        SingleOptionDialog(
-            title = "等级筛选",
-            options = listOf("全部等级") + levels,
-            selectedIndex = if (filterLevel == null) 0 else levels.indexOf(filterLevel) + 1,
-            onDismiss = { showLevelDialog = false },
-            onSelect = { index ->
-                filterLevel = if (index == 0) null else levels[index - 1]
-                showLevelDialog = false
-            },
-        )
-    }
-    if (showDifficultyDialog) {
-        SingleOptionDialog(
-            title = "难度筛选",
-            options = listOf("全部难度") + (0..4).map { difficultyLabel(it) },
-            selectedIndex = if (filterDifficulty == null) 0 else filterDifficulty!! + 1,
-            onDismiss = { showDifficultyDialog = false },
-            onSelect = { index ->
-                filterDifficulty = if (index == 0) null else index - 1
-                showDifficultyDialog = false
-            },
-        )
-    }
+    // ── 范围筛选弹层（定数 / 达成率；其余筛选已改为 miuix OverlaySpinner）──
     if (showDsDialog) {
         RangeFilterDialog(
             title = "定数筛选",
@@ -438,24 +477,32 @@ fun ScoreQueryScreen(
             },
         )
     }
-    if (showFcFsDialog) {
-        FcFsDialog(
-            selectedFc = filterFc,
-            selectedFs = filterFs,
-            onDismiss = { showFcFsDialog = false },
-            onApply = { fc, fs ->
-                filterFc = fc
-                filterFs = fs
-                showFcFsDialog = false
-            },
-        )
-    }
 }
 
 // ── 数据模型 ──
 
 /** 排序方式（EasyMai：ra / achievements / ds）。 */
 private enum class SortBy { RA, ACHIEVEMENTS, DS }
+
+/** FC 筛选选项（label, 水鱼 fc 值；null = 不限）。 */
+private val FC_OPTIONS = listOf(
+    "不限" to null,
+    "未FC" to "none",
+    "FC/FC+" to "fc",
+    "仅FC+" to "fcp",
+    "AP/AP+" to "ap",
+    "仅AP+" to "app",
+)
+
+/** FS 筛选选项（label, 水鱼 fs 值；null = 不限）。 */
+private val FS_OPTIONS = listOf(
+    "不限" to null,
+    "未FS" to "none",
+    "FS/FS+" to "fs",
+    "仅FS+" to "fsp",
+    "FSD/FSD+" to "fsd",
+    "仅FSD+" to "fsdp",
+)
 
 /** 统计头数据（EasyMai getVersionPlayStats 口径）。 */
 private data class ScoreStats(
@@ -579,11 +626,16 @@ private fun RecordListCard(
                     // 水鱼对未定数新曲（level 带「?」）返回 ra = 0，显示为「-」更优雅
                     InfoPill(if (record.ra > 0) "RA ${record.ra}" else "RA -")
                     InfoPill(difficultyLabel(difficultyOf(record.levelIndex)) + " ${record.level}")
+                    // FC/FS 状态贴图（与 B50 / 网格角标同一套官方贴图资源）
                     if (record.fc.isNotBlank() && record.fc != "none") {
-                        InfoPill(fcLabel(record.fc))
+                        Box(modifier = Modifier.height(18.dp), contentAlignment = Alignment.Center) {
+                            ComboBadge(fc = record.fc, height = 18.dp)
+                        }
                     }
                     if (record.fs.isNotBlank() && record.fs != "none") {
-                        InfoPill("FS ${fsLabel(record.fs)}")
+                        Box(modifier = Modifier.height(18.dp), contentAlignment = Alignment.Center) {
+                            SyncBadge(fs = record.fs, height = 18.dp)
+                        }
                     }
                 }
             }
@@ -645,61 +697,6 @@ private fun GridCoverCell(
                     color = Color.White,
                 )
                 else -> RankBadge(rate = record.rate, height = 22.dp)
-            }
-        }
-    }
-}
-
-// ── 筛选弹层 ──
-
-/** 单选弹层（与曲目页归类弹层同一套 miuix OverlayDialog + 圆点样式）。 */
-@Composable
-private fun SingleOptionDialog(
-    title: String,
-    summary: String = "点击选项立即生效",
-    options: List<String>,
-    selectedIndex: Int,
-    onDismiss: () -> Unit,
-    onSelect: (Int) -> Unit,
-) {
-    OverlayDialog(
-        show = true,
-        title = title,
-        summary = summary,
-        onDismissRequest = onDismiss,
-    ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
-            options.forEachIndexed { index, option ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable { onSelect(index) }
-                        .padding(horizontal = 8.dp, vertical = 11.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .width(20.dp)
-                            .height(20.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(
-                                if (index == selectedIndex) {
-                                    MiuixTheme.colorScheme.primary
-                                } else {
-                                    MiuixTheme.colorScheme.primary.copy(alpha = 0.15f)
-                                }
-                            ),
-                    )
-                    Spacer(Modifier.width(12.dp))
-                    Text(
-                        text = option,
-                        style = MiuixTheme.textStyles.body1,
-                        color = MiuixTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
             }
         }
     }
@@ -789,102 +786,6 @@ private fun RangeFilterDialog(
                 )
             }
         }
-    }
-}
-
-/** FC/FS 筛选弹层（EasyMai：选 FS 会清掉 FC，反之亦然）。 */
-@Composable
-private fun FcFsDialog(
-    selectedFc: String?,
-    selectedFs: String?,
-    onDismiss: () -> Unit,
-    onApply: (String?, String?) -> Unit,
-) {
-    var tempFc by remember { mutableStateOf(selectedFc) }
-    var tempFs by remember { mutableStateOf(selectedFs) }
-
-    OverlayDialog(
-        show = true,
-        title = "FC/FS 筛选",
-        summary = "FC 与 FS 二选一生效",
-        onDismissRequest = onDismiss,
-    ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
-            Text(
-                text = "FC",
-                style = MiuixTheme.textStyles.body2,
-                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-            )
-            listOf(
-                "不限" to null,
-                "未 FC" to "none",
-                "FC/FC+" to "fc",
-                "仅 FC+" to "fcp",
-                "AP/AP+" to "ap",
-                "仅 AP+" to "app",
-            ).forEach { (label, value) ->
-                DialogOptionRow(
-                    label = label,
-                    selected = tempFc == value,
-                    onClick = { tempFc = value; tempFs = null },
-                )
-            }
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = "FS",
-                style = MiuixTheme.textStyles.body2,
-                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-            )
-            listOf(
-                "不限" to null,
-                "未 FS" to "none",
-                "FS/FS+" to "fs",
-                "仅 FS+" to "fsp",
-                "FSD/FSD+" to "fsd",
-                "仅 FSD+" to "fsdp",
-            ).forEach { (label, value) ->
-                DialogOptionRow(
-                    label = label,
-                    selected = tempFs == value,
-                    onClick = { tempFs = value; tempFc = null },
-                )
-            }
-            Spacer(Modifier.height(12.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                TextButton(text = "取消", onClick = onDismiss)
-                Spacer(Modifier.width(8.dp))
-                TextButton(text = "应用", onClick = { onApply(tempFc, tempFs) })
-            }
-        }
-    }
-}
-
-@Composable
-private fun DialogOptionRow(label: String, selected: Boolean, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            modifier = Modifier
-                .width(16.dp)
-                .height(16.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(
-                    if (selected) MiuixTheme.colorScheme.primary
-                    else MiuixTheme.colorScheme.primary.copy(alpha = 0.15f)
-                ),
-        )
-        Spacer(Modifier.width(10.dp))
-        Text(
-            text = label,
-            style = MiuixTheme.textStyles.footnote1,
-            color = MiuixTheme.colorScheme.onSurface,
-        )
     }
 }
 

@@ -1,5 +1,6 @@
 package com.kira.kiba.ui.songs
 
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
@@ -31,6 +32,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -38,6 +40,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.Modifier
@@ -69,6 +72,7 @@ import com.kira.kiba.ui.common.difficultyLabel
 import com.kira.kiba.ui.common.pageContentPadding
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Button
@@ -208,9 +212,31 @@ fun SongsScreen(
             else -> Unit
         }
     }
-    // 卡片出现时回到列表顶部，保证用户第一时间看到进度
-    LaunchedEffect(refreshCardVisible) {
-        if (refreshCardVisible) listState.animateScrollToItem(0)
+    // 卡片出现时：列表立刻重置到顶 + 顶栏动画恢复展开。
+    // 用 snapshotFlow 而非以 visible 为 key 的 LaunchedEffect：
+    // 检查完成卡片消失会重启 effect 并打断滚动。列表用瞬移而非 animateScrollToItem——
+    // 长列表（1300+ 首）的 spring 回顶又慢又易被打断；
+    // 且歌曲 item 带 key，后插入的进度卡（key="sync_card"）会被锚定在视口外，
+    // 必须等卡片进入组合（等一帧）后才能 scrollToItem(0)。
+    LaunchedEffect(Unit) {
+        snapshotFlow { refreshCardVisible }
+            .filter { it }
+            .collect {
+                val topBarState = scrollBehavior.state
+                topBarState.contentOffset = 0f
+                launch {
+                    if (topBarState.heightOffset < 0f) {
+                        Animatable(topBarState.heightOffset).animateTo(
+                            targetValue = 0f,
+                            animationSpec = tween(durationMillis = 300),
+                        ) {
+                            topBarState.heightOffset = value
+                        }
+                    }
+                }
+                withFrameNanos { }
+                listState.scrollToItem(0)
+            }
     }
 
     // 曲库数据更新提示（对齐 MaimaiData 的 MaterialDialog）
