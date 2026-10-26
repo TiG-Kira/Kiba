@@ -1,11 +1,8 @@
 package com.kira.kiba.ui.songdetail
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
@@ -16,7 +13,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -220,16 +216,21 @@ private fun ChartHeaderCard(chart: ChartEntity, song: SongDataEntity?, fitDiff: 
 @Composable
 private fun NotesCard(chart: ChartEntity) {
     val totalScore = totalScoreOf(chart)
+    val rows = buildList {
+        add(listOf("总", "${chart.notesTotal}"))
+        add(listOf("TAP", "${chart.notesTap}"))
+        add(listOf("HOLD", "${chart.notesHold}"))
+        add(listOf("SLIDE", "${chart.notesSlide}"))
+        if (chart.notesTouch > 0) add(listOf("TOUCH", "${chart.notesTouch}"))
+        add(listOf("BREAK", "${chart.notesBreak}"))
+    }
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                InfoPill("总 ${chart.notesTotal}")
-                InfoPill("TAP ${chart.notesTap}")
-                InfoPill("HOLD ${chart.notesHold}")
-                InfoPill("SLIDE ${chart.notesSlide}")
-                if (chart.notesTouch > 0) InfoPill("TOUCH ${chart.notesTouch}")
-                InfoPill("BREAK ${chart.notesBreak}")
-            }
+            SimpleTable(
+                headers = listOf("Note 类型", "数量"),
+                weights = listOf(1f, 1f),
+                rows = rows,
+            )
             VGap(8.dp)
             Text(
                 text = "判定权重总分 $totalScore（TAP/TOUCH×1 + HOLD×2 + SLIDE×3 + BREAK×5）",
@@ -335,16 +336,16 @@ private fun RatingTableCard(chart: ChartEntity) {
         "A" to 80.0, "BBB" to 75.0, "BB" to 70.0, "B" to 60.0,
         "C" to 50.0, "D" to 40.0,
     )
+    val rows = tiers.map { (rank, achievement) ->
+        listOf(rank, "${"%.1f".format(achievement)}%", "${SongRating.songRating(ds, achievement)}")
+    }
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                tiers.forEach { (rank, achievement) ->
-                    InfoPill("$rank ${SongRating.songRating(ds, achievement)}")
-                }
-            }
+            SimpleTable(
+                headers = listOf("档位", "达成率", "单曲 Rating"),
+                weights = listOf(1f, 1f, 1.2f),
+                rows = rows,
+            )
             VGap(8.dp)
             Text(
                 text = "Rating = round(定数 × 完成度 × 乘数)，完成度封顶 100.5%（SSS+）。",
@@ -394,6 +395,50 @@ private fun RecordCard(chart: ChartEntity, record: RecordEntity) {
 }
 
 // ── 表格基础组件 ──
+
+/**
+ * 轻量键值表格：表头（灰色 footnote）+ 数据行（正文色，按 weight 分列）。
+ */
+@Composable
+private fun SimpleTable(
+    headers: List<String>,
+    weights: List<Float>,
+    rows: List<List<String>>,
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(modifier = Modifier.fillMaxWidth()) {
+            headers.forEachIndexed { i, h ->
+                Text(
+                    text = h,
+                    style = MiuixTheme.textStyles.footnote2,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    modifier = Modifier.weight(weights[i]),
+                )
+            }
+        }
+        VGap(6.dp)
+        rows.forEach { row ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                row.forEachIndexed { i, cell ->
+                    Text(
+                        text = cell,
+                        style = MiuixTheme.textStyles.body2,
+                        color = if (i == 0) {
+                            MiuixTheme.colorScheme.onSurface
+                        } else {
+                            MiuixTheme.colorScheme.onSurfaceVariantSummary
+                        },
+                        modifier = Modifier.weight(weights[i]),
+                    )
+                }
+            }
+            VGap(5.dp)
+        }
+    }
+}
 
 private data class LossRow(val label: String, val count: Int, val weight: Double, val totalScore: Double)
 
@@ -515,21 +560,5 @@ private fun LossRowLine(label: String, value: String, hint: String) {
                 )
             }
         }
-    }
-}
-
-/** 小信息胶囊。 */
-@Composable
-private fun InfoPill(text: String) {
-    Box(
-        modifier = Modifier
-            .background(MiuixTheme.colorScheme.onSurface.copy(alpha = 0.06f), RoundedCornerShape(6.dp))
-            .padding(horizontal = 7.dp, vertical = 2.dp),
-    ) {
-        Text(
-            text = text,
-            style = MiuixTheme.textStyles.footnote2,
-            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-        )
     }
 }

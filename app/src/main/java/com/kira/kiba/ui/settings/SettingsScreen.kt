@@ -108,6 +108,7 @@ fun SettingsScreen(
                             KibaState.ThemeMode.Light -> "浅色"
                             KibaState.ThemeMode.Dark -> "深色"
                         },
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Theme) },
                         onSelectedIndexChange = { index ->
                             KibaState.ThemeMode.values().getOrNull(index)
                                 ?.let { KibaState.setThemeMode(it) }
@@ -118,6 +119,7 @@ fun SettingsScreen(
                         onCheckedChange = { KibaState.setDynamicColor(it) },
                         title = "动态取色",
                         summary = if (dynamicColor) "已开启（跟随壁纸取色）" else "已关闭",
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Tune) },
                     )
                 }
             }
@@ -138,6 +140,7 @@ fun SettingsScreen(
                         } else {
                             "Agent 仅使用本地逻辑与网页搜索"
                         },
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Messages) },
                     )
                     ArrowPreference(
                         title = "Agent 模型配置",

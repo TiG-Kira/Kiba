@@ -419,11 +419,12 @@ private fun drawableId(name: String): Int {
 }
 
 /**
- * 评级贴图（UI_GAM_Rank_*）：d/c/b/bb/bbb/a/aa/aaa/s/sp/ss/ssp/sss/sssp。
+ * 评级贴图（kiba_rank_*，源 MaimaiData mmd_player_rtsong_*，xxhdpi 600×267）：
+ * d/c/b/bb/bbb/a/aa/aaa/s/sp/ss/ssp/sss/sssp。
  * 取不到素材时退回文字，保证不空白。
  */
 @Composable
-fun RankBadge(rate: String, height: androidx.compose.ui.unit.Dp = 40.dp) {
+fun RankBadge(rate: String, height: androidx.compose.ui.unit.Dp = 48.dp) {
     val file = when (rate.lowercase()) {
         "d" -> "d"; "c" -> "c"; "b" -> "b"; "bb" -> "bb"; "bbb" -> "bbb"
         "a" -> "a"; "aa" -> "aa"; "aaa" -> "aaa"
@@ -432,7 +433,7 @@ fun RankBadge(rate: String, height: androidx.compose.ui.unit.Dp = 40.dp) {
         "sss" -> "sss"; "sssp" -> "sssp"; "sss+" -> "sssp"
         else -> ""
     }
-    val id = drawableId("kiba_ui_gam_rank_$file")
+    val id = drawableId("kiba_rank_$file")
     if (file.isBlank() || id == 0) {
         Text(
             text = rate.uppercase(),
@@ -450,17 +451,18 @@ fun RankBadge(rate: String, height: androidx.compose.ui.unit.Dp = 40.dp) {
 }
 
 /**
- * 连击贴图（UI_MSS_MBase_Icon_*_S）：fc / fcp（FC+）/ ap / app（AP+）。
+ * 连击贴图（kiba_combo_*，源 MaimaiData mmd_player_rtsong_*，xxhdpi 144×144）：
+ * fc / fcp（FC+）/ ap / app（AP+）。
  * 空值不渲染（Bot 的同位置会贴 Blank，这里直接留白更干净）。
  */
 @Composable
-fun ComboBadge(fc: String, height: androidx.compose.ui.unit.Dp = 32.dp) {
+fun ComboBadge(fc: String, height: androidx.compose.ui.unit.Dp = 38.dp) {
     val file = when (fc.lowercase()) {
         "fc" -> "fc"; "fcp" -> "fcp"; "fc+" -> "fcp"
         "ap" -> "ap"; "app" -> "app"; "ap+" -> "app"
         else -> return
     }
-    val id = drawableId("kiba_ui_mss_mbase_icon_${file}_s")
+    val id = drawableId("kiba_combo_$file")
     if (id == 0) return
     Image(
         painter = androidx.compose.ui.res.painterResource(id),
@@ -471,16 +473,17 @@ fun ComboBadge(fc: String, height: androidx.compose.ui.unit.Dp = 32.dp) {
 }
 
 /**
- * 同步贴图（UI_MSS_MBase_Icon_*_S）：fs / fsp（FS+）/ fsd（FDX）/ fsdp（FDX+）。
+ * 同步贴图（kiba_combo_*，源 MaimaiData mmd_player_rtsong_*，xxhdpi 144×144）：
+ * fs / fsp（FS+）/ fsd（FDX）/ fsdp（FDX+）。
  */
 @Composable
-fun SyncBadge(fs: String, height: androidx.compose.ui.unit.Dp = 32.dp) {
+fun SyncBadge(fs: String, height: androidx.compose.ui.unit.Dp = 38.dp) {
     val file = when (fs.lowercase()) {
         "fs" -> "fs"; "fsp" -> "fsp"; "fs+" -> "fsp"
         "fsd" -> "fsd"; "fsdp" -> "fsdp"; "fdx" -> "fsd"; "fdx+" -> "fsdp"
         else -> return
     }
-    val id = drawableId("kiba_ui_mss_mbase_icon_${file}_s")
+    val id = drawableId("kiba_combo_$file")
     if (id == 0) return
     Image(
         painter = androidx.compose.ui.res.painterResource(id),

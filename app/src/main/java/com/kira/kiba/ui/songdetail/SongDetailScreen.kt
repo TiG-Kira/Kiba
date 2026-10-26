@@ -247,7 +247,10 @@ private fun ChartCard(
             VGap(8.dp)
 
             // notes 构成
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
                 MetaChip("总 ${chart.notesTotal}")
                 MetaChip("TAP ${chart.notesTap}")
                 MetaChip("HOLD ${chart.notesHold}")
@@ -277,7 +280,10 @@ private fun ChartCard(
                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
             )
             VGap(4.dp)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
                 RatingTierChip("SSS+", SongRating.maxSongRating(chart.ds))
                 RatingTierChip("SSS", SongRating.songRating(chart.ds, 100.0))
                 RatingTierChip("SS+", SongRating.songRating(chart.ds, 99.5))
