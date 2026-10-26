@@ -41,21 +41,22 @@ import com.kira.kiba.ui.agent.AgentScreen
 import com.kira.kiba.ui.agent.LlmConfigScreen
 import com.kira.kiba.ui.me.Best50Screen
 import com.kira.kiba.ui.me.FavoritesScreen
-import com.kira.kiba.ui.me.LevelProgressScreen
 import com.kira.kiba.ui.me.LoginScreen
 import com.kira.kiba.ui.me.MeScreen
-import com.kira.kiba.ui.me.ProgressDetailScreen
-import com.kira.kiba.ui.me.RecordsScreen
-import com.kira.kiba.ui.me.VersionProgressScreen
+import com.kira.kiba.ui.me.ScoreQueryScreen
 import com.kira.kiba.ui.settings.AboutScreen
 import com.kira.kiba.ui.settings.SettingsScreen
 import com.kira.kiba.ui.share.ShareImageAction
 import com.kira.kiba.ui.songdetail.ChartDetailScreen
 import com.kira.kiba.ui.tools.DxConverterScreen
+import com.kira.kiba.ui.tools.HotChartsScreen
 import com.kira.kiba.ui.tools.MachineUpdateScreen
+import com.kira.kiba.ui.tools.RatingCalcScreen
+import com.kira.kiba.ui.tools.VersionMapScreen
 import com.kira.kiba.ui.songdetail.SongDetailScreen
 import com.kira.kiba.ui.songdetail.SongDetailTopBarSlot
 import com.kira.kiba.ui.songs.SongGroupScreen
+import com.kira.kiba.ui.songs.SongsRefreshCard
 import com.kira.kiba.ui.songs.SongsScreen
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
@@ -77,7 +78,7 @@ import top.yukonga.miuix.kmp.icon.glass.*
  * - 底栏：**Termux Ultra 默认悬浮底栏** [GlassNavigationBar]（玻璃胶囊，非液态玻璃那套）；
  * - 取景层：单一 miuix-blur layerBackdrop，顶栏与底栏共用，内容区注册到同一层。
  *
- * 二级页面（歌曲详情 / Best 50 / 成绩记录 / 版本进度 / 等级进度 / 模型配置 / 关于）
+ * 二级页面（歌曲详情 / Best 50 / 成绩查询 / 模型配置 / 关于）
  * 以 [KibaSubPage] 全屏覆盖当前 Tab：顶栏切「返回 + 标题」，底栏隐藏，
  * 系统返回与顶栏返回都先退子页面（BackHandler + KibaBackAction）。
  *
@@ -129,19 +130,24 @@ sealed interface KibaSubPage {
         override val title: String = "Best 50"
     }
 
-    /** 成绩记录（查分器全量成绩 + 手动刷新）。 */
-    data object Records : KibaSubPage {
-        override val title: String = "成绩记录"
+    /** 成绩查询（EasyMai 式筛选 / 排序 / 网格，替代旧成绩记录 + 版本/等级进度）。 */
+    data object ScoreQuery : KibaSubPage {
+        override val title: String = "成绩查询"
     }
 
-    /** 版本进度（各版本歌曲收集 / 游玩情况）。 */
-    data object VersionProgress : KibaSubPage {
-        override val title: String = "版本进度"
+    /** 单曲 Rating 计算（工具箱）。 */
+    data object RatingCalc : KibaSubPage {
+        override val title: String = "单曲 Rating 计算"
     }
 
-    /** 等级进度（各难度等级谱面游玩情况）。 */
-    data object LevelProgress : KibaSubPage {
-        override val title: String = "等级进度"
+    /** 版本名称对照表（工具箱）。 */
+    data object VersionMap : KibaSubPage {
+        override val title: String = "版本对照表"
+    }
+
+    /** 热门乐曲排行（工具箱，水鱼谱面统计）。 */
+    data object HotCharts : KibaSubPage {
+        override val title: String = "热门乐曲排行"
     }
 
     /** Agent 模型配置（LLM）。 */
@@ -152,14 +158,6 @@ sealed interface KibaSubPage {
     /** 查分器登录（账号密码 / OAuth 双通道；独立子页避免弹层与软键盘冲突）。 */
     data object Login : KibaSubPage {
         override val title: String = "登录查分器"
-    }
-
-    /** 进度明细（版本 / 等级分类下的歌曲列表）。 */
-    data class ProgressDetail(
-        val groupType: com.kira.kiba.core.stats.ProgressDetail.GroupType,
-        val groupKey: String,
-    ) : KibaSubPage {
-        override val title: String = groupKey
     }
 
     /** 曲目归类分组子页面（按版本 / MASTER 谱师 / 曲师）。 */
@@ -232,7 +230,6 @@ fun KibaMainScreen() {
         is KibaTab -> "tab:${page.name}"
         is KibaSubPage.SongDetail -> "sub:song:${page.songId}"
         is KibaSubPage.ChartDetail -> "sub:chart:${page.songId}:${page.difficultyOrdinal}"
-        is KibaSubPage.ProgressDetail -> "sub:progress:${page.groupType}:${page.groupKey}"
         is KibaSubPage.SongGroup -> "sub:group:${page.mode.key}:${page.key}"
         is KibaSubPage -> "sub:${page.javaClass.simpleName}"
         else -> page.toString()
@@ -328,6 +325,8 @@ fun KibaMainScreen() {
                                     // 曲库检查更新 / 立即更新（原曲目页「曲库数据」卡迁入顶栏）
                                     KibaRefreshAction {
                                         if (songSyncing) return@KibaRefreshAction
+                                        // 仅曲目页刷新点亮置顶进度卡（设置页刷新不触发）
+                                        SongsRefreshCard.visible.value = true
                                         if (songUpdateAvailable != null) {
                                             KibaState.refreshSongData(context)
                                         } else {
@@ -356,7 +355,7 @@ fun KibaMainScreen() {
                         scrollBehavior = scrollBehavior,
                         navigationIcon = { KibaBackAction { popPage() } },
                         actions = {
-                            if (sub is KibaSubPage.Records) {
+                            if (sub is KibaSubPage.ScoreQuery) {
                                 KibaRefreshAction { KibaState.refreshRecords() }
                             }
                             if (sub is KibaSubPage.ChartDetail) {
@@ -471,32 +470,20 @@ fun KibaMainScreen() {
                                     )
                                 },
                             )
-                            is KibaSubPage.Records -> RecordsScreen(
+                            is KibaSubPage.ScoreQuery -> ScoreQueryScreen(
                                 scrollBehavior = scrollBehavior,
                                 onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
                             )
-                            is KibaSubPage.VersionProgress -> VersionProgressScreen(
+                            is KibaSubPage.RatingCalc -> RatingCalcScreen(scrollBehavior = scrollBehavior)
+                            is KibaSubPage.VersionMap -> VersionMapScreen(scrollBehavior = scrollBehavior)
+                            is KibaSubPage.HotCharts -> HotChartsScreen(
                                 scrollBehavior = scrollBehavior,
-                                onOpenDetail = { type, key ->
-                                    pushPage(KibaSubPage.ProgressDetail(type, key))
-                                },
-                            )
-                            is KibaSubPage.LevelProgress -> LevelProgressScreen(
-                                scrollBehavior = scrollBehavior,
-                                onOpenDetail = { type, key ->
-                                    pushPage(KibaSubPage.ProgressDetail(type, key))
-                                },
+                                onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
                             )
                             is KibaSubPage.LlmConfig -> LlmConfigScreen(scrollBehavior = scrollBehavior)
                             is KibaSubPage.Login -> LoginScreen(
                                 scrollBehavior = scrollBehavior,
                                 onLoginSuccess = { popPage() },
-                            )
-                            is KibaSubPage.ProgressDetail -> ProgressDetailScreen(
-                                groupType = target.groupType,
-                                groupKey = target.groupKey,
-                                scrollBehavior = scrollBehavior,
-                                onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
                             )
                             is KibaSubPage.SongGroup -> SongGroupScreen(
                                 mode = target.mode,
@@ -534,18 +521,16 @@ fun KibaMainScreen() {
                                 scrollBehavior = scrollBehavior,
                                 onOpenLogin = { pushPage(KibaSubPage.Login) },
                                 onOpenBest50 = { pushPage(KibaSubPage.Best50) },
-                                onOpenRecords = { pushPage(KibaSubPage.Records) },
-                                onOpenVersionProgress = { pushPage(KibaSubPage.VersionProgress) },
-                                onOpenLevelProgress = { pushPage(KibaSubPage.LevelProgress) },
-                                onOpenProgressDetail = { type, key ->
-                                    pushPage(KibaSubPage.ProgressDetail(type, key))
-                                },
+                                onOpenScoreQuery = { pushPage(KibaSubPage.ScoreQuery) },
                                 onOpenDxConverter = { pushPage(KibaSubPage.DxConverter) },
                                 onOpenFavorites = { pushPage(KibaSubPage.Favorites) },
                                 // 登录机台：拉起微信「舞萌 | 中二」公众号拿玩家二维码
                                 onOpenMachineLogin = {
                                     WeChatJump.openOfficialAccount(context)
                                 },
+                                onOpenRatingCalc = { pushPage(KibaSubPage.RatingCalc) },
+                                onOpenVersionMap = { pushPage(KibaSubPage.VersionMap) },
+                                onOpenHotCharts = { pushPage(KibaSubPage.HotCharts) },
                             )
                             KibaTab.Settings -> SettingsScreen(
                                 scrollBehavior = scrollBehavior,

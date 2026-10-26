@@ -18,9 +18,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.kira.kiba.core.account.DivingFishAccount
-import com.kira.kiba.core.stats.ProgressDetail
+import com.kira.kiba.core.utils.BrowserJump
 import com.kira.kiba.ui.common.DxRatingTag
 import com.kira.kiba.ui.common.SectionTitle
 import com.kira.kiba.ui.common.pageContentPadding
@@ -50,26 +51,26 @@ private fun PrefIcon(icon: androidx.compose.ui.graphics.vector.ImageVector) {
  * “我”页面（miuix preference 规范 + miuix Card 分组包裹）：
  * - 置顶 [ArrowPreference]：已登录展示昵称 + DX Rating 段位徽章（官方色表），
  *   点击进 Best 50；未登录展示引导，点击进登录页（账号密码 / OAuth 双通道）；
- * - 查分器入口：成绩记录（Best 50 由顶部卡片承载）；
+ * - 查分器入口：成绩查询（EasyMai 式筛选 / 排序 / 网格视图，Best 50 由顶部卡片承载）；
  * - 我的收藏：收藏的歌曲列表；
- * - 进度入口：版本进度 / 等级进度（可下钻到歌曲明细）；
- * - 工具：DX 分数转换 / 退出登录。
- * - 登录机台：跳微信「舞萌 | 中二」公众号拿玩家二维码（国行机台扫码登录）。
+ * - 工具箱（移植自 EasyMai）：实用网站 + 数据工具；
+ * - 工具：登录机台 / DX 分数转换 / 退出登录。
  */
 @Composable
 fun MeScreen(
     scrollBehavior: ScrollBehavior,
     onOpenLogin: () -> Unit,
     onOpenBest50: () -> Unit,
-    onOpenRecords: () -> Unit,
-    onOpenVersionProgress: () -> Unit,
-    onOpenLevelProgress: () -> Unit,
+    onOpenScoreQuery: () -> Unit,
     onOpenDxConverter: () -> Unit,
     onOpenFavorites: () -> Unit,
     onOpenMachineLogin: () -> Unit,
-    onOpenProgressDetail: (ProgressDetail.GroupType, String) -> Unit,
+    onOpenRatingCalc: () -> Unit,
+    onOpenVersionMap: () -> Unit,
+    onOpenHotCharts: () -> Unit,
 ) {
     val account by DivingFishAccount.state.collectAsState()
+    val context = LocalContext.current
 
     Scaffold(
         modifier = Modifier
@@ -125,10 +126,10 @@ fun MeScreen(
                         onClick = onOpenLogin,
                     )
                     ArrowPreference(
-                        title = "成绩记录",
-                        summary = "全量成绩列表，顶栏刷新按钮可从查分器更新",
+                        title = "成绩查询",
+                        summary = "筛选 / 排序 / 网格视图浏览全量成绩，顶栏刷新可更新",
                         startAction = { PrefIcon(MiuixGlassIcons.Regular.Notes) },
-                        onClick = onOpenRecords,
+                        onClick = onOpenScoreQuery,
                     )
                 }
             }
@@ -146,21 +147,64 @@ fun MeScreen(
                 }
             }
 
-            item(key = "progress_title") { SectionTitle("进度") }
+            // ── 工具箱（移植自 EasyMai toolbox）──
+            item(key = "toolbox_title") { SectionTitle("工具箱") }
 
-            item(key = "progress_card") {
+            item(key = "toolbox_sites") {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     ArrowPreference(
-                        title = "版本进度",
-                        summary = "各版本歌曲的收集 / 游玩情况（点击进入歌曲明细）",
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Months) },
-                        onClick = onOpenVersionProgress,
+                        title = "水鱼查分器",
+                        summary = "本应用接口的本家，成绩上传与查询官网",
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Search) },
+                        onClick = {
+                            BrowserJump.openUrl(
+                                context,
+                                "https://www.diving-fish.com/maimaidx/prober/",
+                            )
+                        },
                     )
                     ArrowPreference(
-                        title = "等级进度",
-                        summary = "各难度等级谱面的游玩情况（点击进入歌曲明细）",
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.GridView) },
-                        onClick = onOpenLevelProgress,
+                        title = "DXRating.net",
+                        summary = "包含 ZXZR 曲目信息的查询网站",
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Layers) },
+                        onClick = { BrowserJump.openUrl(context, "https://dxrating.net/search") },
+                    )
+                    ArrowPreference(
+                        title = "音游地图",
+                        summary = "查查你地区的机台",
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.MapAlbum) },
+                        onClick = { BrowserJump.openUrl(context, "https://map.bemanicn.com/") },
+                    )
+                    ArrowPreference(
+                        title = "FindMaiMai",
+                        summary = "机厅位置可视化工具（浏览器定位后查看附近机台）",
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Location) },
+                        onClick = {
+                            BrowserJump.openUrl(context, "https://www.godserver.cn/earth")
+                        },
+                    )
+                }
+            }
+
+            item(key = "toolbox_tools") {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    ArrowPreference(
+                        title = "单曲 Rating 计算",
+                        summary = "根据定数及达成率算出 Rating（附 RANK 系数表）",
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Tune) },
+                        onClick = onOpenRatingCalc,
+                    )
+                    ArrowPreference(
+                        title = "热门乐曲排行",
+                        summary = "按水鱼游玩样本数排序，看看最火爆的谱面是哪些",
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.TopDownloads) },
+                        onClick = onOpenHotCharts,
+                    )
+                    ArrowPreference(
+                        title = "版本名称对照表",
+                        summary = "版本名称与牌子代号对照，妈妈再也不担心分不清版本",
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Album) },
+                        onClick = onOpenVersionMap,
                     )
                 }
             }
@@ -175,7 +219,7 @@ fun MeScreen(
                         onClick = onOpenMachineLogin,
                     )
                     ArrowPreference(
-                        title = "DX 分数转换",
+                        title = "达成率计算",
                         summary = "由判定数量反推达成率与单曲 Rating",
                         startAction = { PrefIcon(MiuixGlassIcons.Regular.ConvertFile) },
                         onClick = onOpenDxConverter,

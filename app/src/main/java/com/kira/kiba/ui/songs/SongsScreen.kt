@@ -1,5 +1,11 @@
 package com.kira.kiba.ui.songs
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -39,6 +45,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -60,6 +67,8 @@ import com.kira.kiba.ui.common.collectAsStateCached
 import com.kira.kiba.ui.common.difficultyColor
 import com.kira.kiba.ui.common.difficultyLabel
 import com.kira.kiba.ui.common.pageContentPadding
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Button
@@ -80,6 +89,16 @@ import top.yukonga.miuix.kmp.utils.PressFeedbackType
  * 否则 LazyColumn 空测量会把恢复出的滚动位置钳回 0（详见 [ListSnapshotCache]）。
  */
 object SongsListCache : ListSnapshotCache<List<SongWithChartsEntity>>(emptyList())
+
+/**
+ * 曲目页刷新进度卡（进程级，UI 层状态）。
+ *
+ * 只有曲目页的刷新入口（顶栏刷新按钮 / 更新对话框「立即更新」/ 空列表兜底按钮）会点亮，
+ * 设置页的曲库更新选项不触发；刷新结束（成功即隐，失败短暂提示后自动隐藏）。
+ */
+object SongsRefreshCard {
+    val visible = MutableStateFlow(false)
+}
 
 /**
  * 曲目页：真实曲库数据（SongWithChartRepository → Room → LiveData 响应式刷新）。
@@ -168,12 +187,30 @@ fun SongsScreen(
     val localVersion = remember { SpUtil.getDataVersion() }
     val syncing = syncState is SongDataSync.SyncState.Checking ||
         syncState is SongDataSync.SyncState.Downloading
+    // 刷新进度卡：仅曲目页入口点亮（见 [SongsRefreshCard]）
+    val refreshCardVisible by SongsRefreshCard.visible.collectAsState()
 
     // 冷启动兜底：bootstrap 未跑（异常进程恢复等）时补一次检查
     LaunchedEffect(Unit) {
         if (SongDataSync.state.value is SongDataSync.SyncState.Idle) {
             KibaState.checkSongUpdate()
         }
+    }
+
+    // 刷新进度卡生命周期：成功立即隐藏；失败短暂展示错误后自动隐藏
+    LaunchedEffect(syncState) {
+        when (syncState) {
+            is SongDataSync.SyncState.Done -> SongsRefreshCard.visible.value = false
+            is SongDataSync.SyncState.Failed -> {
+                delay(3000)
+                SongsRefreshCard.visible.value = false
+            }
+            else -> Unit
+        }
+    }
+    // 卡片出现时回到列表顶部，保证用户第一时间看到进度
+    LaunchedEffect(refreshCardVisible) {
+        if (refreshCardVisible) listState.animateScrollToItem(0)
     }
 
     // 曲库数据更新提示（对齐 MaimaiData 的 MaterialDialog）
@@ -184,6 +221,7 @@ fun SongsScreen(
             onDismiss = { SongDataSync.dismissUpdatePrompt() },
             onConfirm = {
                 SongDataSync.dismissUpdatePrompt()
+                SongsRefreshCard.visible.value = true
                 KibaState.refreshSongData(context)
             },
         )
@@ -203,6 +241,13 @@ fun SongsScreen(
             contentPadding = pageContentPadding(),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            // 刷新进度卡（置顶）：仅曲目页刷新入口触发，完成 / 失败提示后隐藏
+            if (refreshCardVisible) {
+                item(key = "sync_card") {
+                    SongsSyncProgressCard(state = syncState)
+                }
+            }
+
             // 搜索栏（默认隐藏，顶栏搜索按钮切换）
             if (searchVisible) {
                 item(key = "search") {
@@ -234,7 +279,10 @@ fun SongsScreen(
                         } else {
                             {
                                 Button(
-                                    onClick = { KibaState.refreshSongData(context) },
+                                    onClick = {
+                                        SongsRefreshCard.visible.value = true
+                                        KibaState.refreshSongData(context)
+                                    },
                                 ) {
                                     Text(text = "立即更新曲库")
                                 }
@@ -351,6 +399,128 @@ private fun SongDataUpdateDialog(
                 Spacer(Modifier.width(8.dp))
                 TextButton(text = "立即更新", onClick = onConfirm)
             }
+        }
+    }
+}
+
+/**
+ * 曲库刷新进度卡（曲目页置顶）：
+ * - Checking → 不定态动画条「正在检查曲库更新」；
+ * - Downloading → 真实进度条（received/total，total 未知时退化为动画条）「正在下载最新曲目库」；
+ * - Failed → 红色错误提示（外层 3 秒后自动隐藏卡片）；
+ * - Done → 外层立即隐藏，不会渲染到这里。
+ */
+@Composable
+private fun SongsSyncProgressCard(state: SongDataSync.SyncState) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                when (state) {
+                    is SongDataSync.SyncState.Checking -> {
+                        Text(
+                            text = "正在检查曲库更新…",
+                            style = MiuixTheme.textStyles.body1,
+                            color = MiuixTheme.colorScheme.onSurface,
+                        )
+                    }
+                    is SongDataSync.SyncState.Downloading -> {
+                        val totalMb = state.total / (1024f * 1024f)
+                        val receivedMb = state.received / (1024f * 1024f)
+                        Text(
+                            text = if (state.total > 0) {
+                                "正在下载最新曲目库  %.1f / %.1f MB".format(receivedMb, totalMb)
+                            } else {
+                                "正在下载最新曲目库  %.1f MB".format(receivedMb)
+                            },
+                            style = MiuixTheme.textStyles.body1,
+                            color = MiuixTheme.colorScheme.onSurface,
+                        )
+                    }
+                    is SongDataSync.SyncState.Failed -> {
+                        Text(
+                            text = "曲库刷新失败",
+                            style = MiuixTheme.textStyles.body1,
+                            color = MiuixTheme.colorScheme.primary,
+                        )
+                    }
+                    else -> Unit
+                }
+            }
+            if (state is SongDataSync.SyncState.Failed) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = state.message,
+                    style = MiuixTheme.textStyles.footnote1,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                )
+            } else {
+                Spacer(Modifier.height(10.dp))
+                when (state) {
+                    is SongDataSync.SyncState.Downloading, is SongDataSync.SyncState.Checking ->
+                        SyncProgressBar(
+                            progress = (state as? SongDataSync.SyncState.Downloading)
+                                ?.takeIf { it.total > 0 }
+                                ?.let { it.received.toFloat() / it.total },
+                        )
+                    else -> Unit
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 同步进度条：progress 非空时为定态进度条（带平滑动画），
+ * 为空时为不定态来回滑动动画条（「无法获取进度」的兜底形态）。
+ */
+@Composable
+private fun SyncProgressBar(progress: Float?) {
+    if (progress != null) {
+        val animated by animateFloatAsState(
+            targetValue = progress.coerceIn(0f, 1f),
+            animationSpec = tween(durationMillis = 200),
+            label = "syncProgress",
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(6.dp)
+                .clip(RoundedCornerShape(3.dp))
+                .background(MiuixTheme.colorScheme.primary.copy(alpha = 0.15f)),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(animated)
+                    .height(6.dp)
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(MiuixTheme.colorScheme.primary),
+            )
+        }
+    } else {
+        val transition = rememberInfiniteTransition(label = "syncIndeterminate")
+        val offset by transition.animateFloat(
+            initialValue = -1.2f,
+            targetValue = 3.2f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 1300, easing = LinearEasing),
+            ),
+            label = "syncIndeterminateOffset",
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(6.dp)
+                .clip(RoundedCornerShape(3.dp))
+                .background(MiuixTheme.colorScheme.primary.copy(alpha = 0.15f)),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(0.3f)
+                    .height(6.dp)
+                    .graphicsLayer { translationX = offset * size.width }
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(MiuixTheme.colorScheme.primary),
+            )
         }
     }
 }

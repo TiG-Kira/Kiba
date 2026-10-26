@@ -11,6 +11,7 @@ import com.kira.kiba.core.db.entity.ChartEntity
 import com.kira.kiba.core.db.entity.RecordEntity
 import com.kira.kiba.core.db.entity.SongDataEntity
 import com.kira.kiba.core.model.DifficultyType
+import com.kira.kiba.core.stats.RecommendFusion
 import com.kira.kiba.core.utils.SpUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -597,6 +598,33 @@ class KibaAgent(private val context: Context) {
             .sortedWith(compareBy({ it.gap }, { -it.potential }))
             .take(10)
 
+        // ── EasyMai 融合：水鱼大数据两路参考（拟合定数热门 / 定数差值性价比）。
+        //    Kiba 档位候选仍是主回答，这里只补充「全服玩家视角」的参考曲目；
+        //    chart_stats 未同步或为空时静默降级为纯 Kiba 档位推荐。──
+        val fusionRating = b50.rating.takeIf { it > 0 }
+            ?: (b35.sumOf { it.ra } + b15.sumOf { it.ra })
+        val fusion = withContext(Dispatchers.IO) {
+            runCatching {
+                val stats = AppDataBase.getInstance().chartStatsDao().getAllChartStatsList()
+                if (stats.isEmpty()) return@runCatching null
+                RecommendFusion.recommend(
+                    stats = stats.map {
+                        RecommendFusion.StatChart(
+                            songId = it.songId,
+                            levelIndex = it.levelIndex,
+                            cnt = it.cnt ?: 0.0,
+                            avg = it.avg ?: 0.0,
+                            fitDiff = it.fitDiff,
+                        )
+                    },
+                    dsByChart = charts
+                        .filter { !isUtageChart(it, utageIds) }
+                        .associate { it.songId to it.difficultyType.ordinal to it.ds },
+                    rating = fusionRating,
+                )
+            }.getOrNull()
+        }
+
         val sb = StringBuilder()
         // ── Markdown 排版（AgentScreen 走 GFM 渲染器）──
         // 歌名加粗作每条锚点；难度定数用行内代码做「chip」；条目间 `---` 分隔线明确分批。
@@ -641,6 +669,37 @@ class KibaAgent(private val context: Context) {
                         )
                     }
                 }
+            }
+        }
+
+        // ── EasyMai 融合输出：水鱼大数据参考（有数据且任一路非空才展示）──
+        if (fusion != null && (fusion.fitCandidates.isNotEmpty() || fusion.diffCandidates.isNotEmpty())) {
+            sb.append("\n\n---\n\n")
+            sb.append("## 水鱼大数据参考\n\n")
+            sb.append(
+                "平均定数 ${fusion.averageDs} · 推荐定数范围 **${fusion.rangeMin} ~ ${fusion.rangeMax}**（EasyMai 算法）\n\n"
+            )
+            if (fusion.fitCandidates.isNotEmpty()) {
+                sb.append("### 热门高均分\n\n")
+                sb.append(
+                    fusion.fitCandidates.take(5).joinToString("\n") { c ->
+                        val title = mdEscape(titleById[c.songId] ?: "id ${c.songId}")
+                        "- **$title** · `${difficultyLabel(c.levelIndex)} ${c.ds}` · " +
+                            "全服均分 ${"%.2f%%".format(c.avg)} · 样本 ${c.cnt.toInt()}"
+                    }
+                )
+                sb.append("\n\n")
+            }
+            if (fusion.diffCandidates.isNotEmpty()) {
+                sb.append("### 定数虚高性价比\n\n")
+                sb.append(
+                    fusion.diffCandidates.take(5).joinToString("\n") { c ->
+                        val title = mdEscape(titleById[c.songId] ?: "id ${c.songId}")
+                        "- **$title** · `${difficultyLabel(c.levelIndex)}` " +
+                            "官标 ${c.ds} / 拟合 ${"%.2f".format(c.fitDiff ?: 0.0)}" +
+                            "（虚高 +${"%.2f".format(c.dsDifference ?: 0.0)}）"
+                    }
+                )
             }
         }
         return AgentReply(sb.toString().trimEnd())

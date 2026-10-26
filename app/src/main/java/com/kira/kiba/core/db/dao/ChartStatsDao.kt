@@ -44,6 +44,10 @@ interface ChartStatsDao {
     @Query("SELECT * FROM chart_stats WHERE song_id = :songId AND level_index = :index LIMIT 1")
     suspend fun getChartStatsOnce(songId: Int, index: Int): ChartStatsEntity?
 
+    /** 全量查询（推荐算法 / 热门乐曲排行）。 */
+    @Query("SELECT * FROM chart_stats")
+    suspend fun getAllChartStatsList(): List<ChartStatsEntity>
+
 
     @Insert
     fun insertAllChartStats(list: List<ChartStatsEntity>)

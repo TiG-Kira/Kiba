@@ -14,9 +14,10 @@ import kotlin.math.roundToInt
 object SongRating {
 
     /** 完成度(%) → (档位, 乘数)。从高到低匹配，命中即返回。 */
-    private data class Tier(val minAchievement: Double, val rank: String, val multiplier: Double)
+    data class Tier(val minAchievement: Double, val rank: String, val multiplier: Double)
 
-    private val TIERS = listOf(
+    /** 官方档位表（公开给 Rating 计算器等展示场景）。 */
+    val TIERS = listOf(
         Tier(100.5, "SSS+", 0.224),
         Tier(100.0, "SSS", 0.216),
         Tier(99.5, "SS+", 0.211),

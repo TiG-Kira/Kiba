@@ -170,7 +170,10 @@ private fun CoverImageChain(
  * 1. 自定义图床前缀（设置页可填，命中自己的镜像最快）；
  * 2. 水鱼 CDN `covers/%05d.png` 三种编号形态（songId / mod 10000 / mod 100000，
  *    水鱼只收录到 DX 2024 曲库，DX2025+ 新曲没有）；
- * 3. 官网图床 maimaidx.jp + 若干镜像（DX 新曲唯一来源，国内可能需镜像）。
+ * 3. 水鱼 CDN EasyMai 编号映射（移植自 EasyMai coverManager.processSongId：
+ *    4 位 id 前拼 `1`（500 → 01500）、`10xxx` 掐头（10012 → 00012 / 11234 → 11234），
+ *    覆盖老曲在水鱼 CDN 的另一种归档编号）；
+ * 4. 官网图床 maimaidx.jp + 若干镜像（DX 新曲唯一来源，国内可能需镜像）。
  */
 fun coverCandidateUrls(songId: Int, imageUrl: String): List<String> {
     val list = mutableListOf<String>()
@@ -194,6 +197,20 @@ fun coverCandidateUrls(songId: Int, imageUrl: String): List<String> {
     if (mod10k != songId) pushCd(mod10k)
     val mod100k = songId % 100000
     if (mod100k != songId && mod100k != mod10k) pushCd(mod100k)
+
+    // 水鱼 CDN：EasyMai 的编号映射（processSongId + padStart(5, '0')）
+    val idStr = songId.toString()
+    val easyMaiId = when {
+        idStr.length == 4 -> "1$idStr"
+        idStr.length == 5 && idStr.startsWith("10") ->
+            if (idStr.startsWith("100")) idStr.drop(3) else idStr.drop(2)
+        else -> idStr
+    }
+    val easyMaiPadded = easyMaiId.padStart(5, '0')
+    val easyMaiNumeric = easyMaiPadded.toIntOrNull()
+    if (easyMaiNumeric != null && easyMaiNumeric >= 0 && easyMaiPadded != "%05d".format(songId)) {
+        pushCd(easyMaiNumeric)
+    }
 
     // 官网图床 + 镜像（DX 新曲靠它们）
     if (imageUrl.isNotBlank()) {
