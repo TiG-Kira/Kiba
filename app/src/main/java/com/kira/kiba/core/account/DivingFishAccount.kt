@@ -284,12 +284,18 @@ object DivingFishAccount {
                     cookie
                 }
             }.onSuccess { cookie ->
-                SpUtil.saveDivingFishJwt(cookie)
-                SpUtil.setDivingFishBound(true)
-                // 同步写入原版登录凭据：机台成绩更新（VPN 抓包上传）需要用户名 + 密码，
-                // 否则「我」页显示已登录但机台页显示"未登录"，两处状态不一致。
-                SpUtil.putLoginInfo(user, password, cookie)
-                _state.value = AccountState(bound = true, loading = true)
+                // 持久化与状态切换整体兜底：这里任何异常都会沿 Result 链抛回
+                // LoginScreen 的协程（无捕获 → 闪退）。SP 写入失败不该阻止登录成功。
+                runCatching {
+                    SpUtil.saveDivingFishJwt(cookie)
+                    SpUtil.setDivingFishBound(true)
+                    // 同步写入原版登录凭据：机台成绩更新（VPN 抓包上传）需要用户名 + 密码，
+                    // 否则「我」页显示已登录但机台页显示"未登录"，两处状态不一致。
+                    SpUtil.putLoginInfo(user, password, cookie)
+                    _state.value = AccountState(bound = true, loading = true)
+                }.onFailure { e ->
+                    Log.w(TAG, "login post-success persistence failed", e)
+                }
                 // 拉取成绩切应用级作用域：登录页随即退页，UI 作用域一取消
                 // 就会把拉取掐死在半路（loading 卡死，见 appScope 注释）
                 appScope.launch { runCatching { refreshRecords() } }

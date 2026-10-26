@@ -6,17 +6,33 @@ import com.kira.kiba.core.vpn.VpnSettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.IOException
 
 object CrawlerCaller {
     private var listener: WechatCrawlerListener? = null
 
-    fun getWechatAuthUrl(): String? {
+    /**
+     * 取微信授权链接（suspend 版，供 UI 协程调用）。
+     *
+     * 必须切 IO 线程：内部走 OkHttp 同步请求（含 DNS 解析），若在主线程协程里直接调
+     * 会抛 NetworkOnMainThreadException——该异常没有 message，UI 曾显示成「抓包失败：null」。
+     */
+    suspend fun getWechatAuthUrl(): String? = withContext(Dispatchers.IO) {
+        getWechatAuthUrlBlocking()
+    }
+
+    /**
+     * 取微信授权链接（阻塞版，供非主线程调用方使用：NanoHTTPD 的 serve 在工作线程）。
+     * **禁止在主线程调用**。
+     */
+    @JvmStatic
+    fun getWechatAuthUrlBlocking(): String? {
         return try {
             val crawler = WechatCrawler()
             crawler.getWechatAuthUrl()
         } catch (error: IOException) {
-            writeLog("获取微信登录url时出现错误:")
+            writeLog("获取微信登录url时出现错误: ${error.javaClass.simpleName}: ${error.message}")
             onError(error)
             null
         }

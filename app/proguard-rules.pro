@@ -20,6 +20,19 @@
 -keep class com.google.gson.** { *; }
 -dontwarn com.google.gson.**
 
+# Gson 反射受 R8 破坏的两个实证（1.4.0 release，debug 正常）：
+# ① TypeToken 匿名子类的泛型签名被优化删除 → 登录成功瞬间
+#    "Missing type parameter" 崩溃（SpUtil.getAccountHistory）；
+# ② 仅经反射访问的 DTO（DivingFishAccount$RecordsEnvelope、KibaLlm$ChatResponse 等）
+#    被 R8 整类删除/合并 → 成绩获取报 "Unable to create instance of class
+#    kotlin.text.CharsKt"（类字面量被替换后的产物）。
+# 保留 TypeToken 体系与其全部子类，以及承载反射 DTO 的包。
+-keep class com.google.gson.reflect.TypeToken { *; }
+-keep class * extends com.google.gson.reflect.TypeToken
+-keep class com.kira.kiba.core.account.** { *; }
+-keep class com.kira.kiba.core.agent.** { *; }
+-keep class kotlin.Pair { *; }
+
 # ── Retrofit / OkHttp（接口经动态代理调用，注解须保留）──
 -dontwarn okhttp3.**
 -dontwarn retrofit2.**

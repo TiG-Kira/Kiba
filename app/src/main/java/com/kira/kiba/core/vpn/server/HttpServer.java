@@ -42,7 +42,7 @@ public class HttpServer extends NanoHTTPD {
     }
 
     private Response redirectToWechatAuthUrl(IHTTPSession session) {
-        String url = CrawlerCaller.INSTANCE.getWechatAuthUrl();
+        String url = CrawlerCaller.getWechatAuthUrlBlocking();
         if (url == null)
             return newFixedLengthResponse(Response.Status.BAD_REQUEST, MIME_HTML, "");
         Log.d(TAG, url);

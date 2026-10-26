@@ -5,6 +5,7 @@ import android.content.ClipboardManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -90,7 +91,8 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
             }
 
             override fun onError(e: Exception) {
-                logs.add("出错：${e.message}")
+                Log.e(TAG, "机台更新 onError", e)
+                logs.add("出错：${e.javaClass.simpleName}: ${e.message}")
             }
         }
         CrawlerCaller.setOnWechatCrawlerListener(listener)
@@ -112,7 +114,7 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
         runCatching {
             context.startService(Intent(context, LocalVpnService::class.java))
             context.startService(Intent(context, HttpServerService::class.java))
-        }.onFailure { logs.add("服务启动失败：${it.message}") }
+        }.onFailure { logs.add("服务启动失败：${it.javaClass.simpleName}: ${it.message}") }
         running = true
         // 生成随机链接并复制到剪贴板，引导用户在微信里打开
         val chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
@@ -135,7 +137,8 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
                 logs.add("已获取微信授权，开始抓取机台成绩…")
                 CrawlerCaller.fetchData(authUrl)
             } catch (e: Exception) {
-                logs.add("抓包失败：${e.message}")
+                Log.e(TAG, "抓包失败", e)
+                logs.add("抓包失败：${e.javaClass.simpleName}: ${e.message}")
             }
         }
     }
@@ -299,6 +302,8 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
 }
 
 /** 难度对应的曲库等级说明。 */
+private const val TAG = "MachineUpdate"
+
 private fun chartCountHint(difficultyIndex: Int): String = when (difficultyIndex) {
     0 -> "BASIC 初级"
     1 -> "ADVANCED 高级"

@@ -152,8 +152,10 @@ public class WechatCrawler {
     }
 
     public void fetchAndUploadData(String username, String password, Set<Integer> difficulties, String wechatAuthUrl) throws IOException {
-        if (wechatAuthUrl.startsWith("http"))
-            wechatAuthUrl = wechatAuthUrl.replaceFirst("http", "https");
+        // 仅对明文 http:// 提升为 https://。原来 startsWith("http") 会把已经 https:// 的
+        // 授权链接改写成 httpss://，OkHttp 直接抛 IllegalArgumentException。
+        if (wechatAuthUrl.startsWith("http://"))
+            wechatAuthUrl = wechatAuthUrl.replaceFirst("http://", "https://");
 
         jar.clearCookieStroe();
 
