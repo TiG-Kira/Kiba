@@ -132,8 +132,12 @@ private fun TileContent(
 ) {
     // 右段元素（评级 / 模式图标 / 连击同步 / 序号）随九宫格拉伸整体右移的设计 px 数
     val r = extraDp.value
-    // tag 水平位置：右移到 x200 腾出中段给歌名；小屏（extra 小）回退到评级左侧
-    val tagX = minOf(200f, 146f + r)
+    // tag 水平位置与最大宽（随屏幕拉伸量 r 智能适配，永不压 rank 贴图）：
+    // 右界 = rank 左缘 (156+r) - 10；优先放 x200（腾中段给歌名），空间不足时
+    // 左移起点（最小 148，达成率右缘）换取最小可读宽 36，仍不足则收窄（≥24）
+    val tagRight = 156f + r - 10f
+    val tagX = minOf(200f, (tagRight - 36f).coerceAtLeast(148f))
+    val tagMaxW = (tagRight - tagX).coerceAtLeast(24f)
     // 歌名可延伸到 tag 左缘 - 6（半角 8px/列）
     val titleMaxCols = ((tagX - 38f) / 8f).toInt().coerceIn(12, 24)
 
@@ -156,12 +160,11 @@ private fun TileContent(
 
         // ── 拉伸空白区（达成率右侧偏右）的流派 / 版本 tag：上下两个、小字号，
         //    底部与达成率字形底（baseline ≈ y63）对齐，DX 分数条在 y73 起、不会压到；
-        //    小屏（extra 小）自动回退到评级左侧，永不重叠 ──
+        //    宽度与起点随屏幕拉伸量智能适配（见上方 tagX/tagMaxW），永不重叠 rank ──
         Column(
             modifier = Modifier.offset(x = u * tagX, y = u * 35f),
             verticalArrangement = Arrangement.spacedBy(u * 2f),
         ) {
-            val tagMaxW = (156f + r - tagX - 10f).coerceAtLeast(60f)
             if (genre.isNotBlank()) {
                 TileTag(text = genre, u = u, modifier = Modifier.widthIn(max = u * tagMaxW))
             }
