@@ -50,7 +50,7 @@ private fun PrefIcon(icon: androidx.compose.ui.graphics.vector.ImageVector) {
 /**
  * “我”页面（miuix preference 规范 + miuix Card 分组包裹）：
  * - 置顶 [ArrowPreference]：已登录展示昵称 + DX Rating 段位徽章（官方色表），
- *   点击进 Best 50；未登录展示引导，点击进登录页（账号密码 / OAuth 双通道）；
+ *   点击进 Best 50；未登录展示引导，点击进登录页（账号密码，OAuth 已暂时停用）；
  * - 查分器入口：成绩查询（EasyMai 式筛选 / 排序 / 网格视图，Best 50 由顶部卡片承载）；
  * - 我的收藏：收藏的歌曲列表；
  * - 工具箱（移植自 EasyMai 并合并原「工具」组）：实用网站 + 数据工具 + 登录机台等。
@@ -94,7 +94,7 @@ fun MeScreen(
                             "未绑定查分器"
                         },
                         summary = when {
-                            !account.bound -> "OAuth 授权或账号密码登录，解锁 Best 50 / 推分推荐"
+                            !account.bound -> "账号密码登录，解锁 Best 50 / 推分推荐"
                             account.loading -> "正在获取成绩…"
                             account.error != null -> "${account.error}（点击查看 Best 50）"
                             else -> "成绩 ${account.recordCount} 条 · 点击查看 Best 50"
@@ -119,7 +119,7 @@ fun MeScreen(
                         summary = if (account.bound) {
                             "当前：${account.nickname.ifBlank { "查分器用户" }}（Rating ${account.rating}）"
                         } else {
-                            "支持水鱼账号密码（原版）与 OAuth 授权两种方式"
+                            "支持水鱼账号密码登录（OAuth 授权已暂时停用）"
                         },
                         startAction = { PrefIcon(MiuixGlassIcons.Regular.Lock) },
                         onClick = onOpenLogin,

@@ -29,8 +29,8 @@ android {
         // miuix 0.9.4 各模块（blur/ui/icons/preference）要求 minSdk >= 33
         minSdk = 33
         targetSdk = 37
-        versionCode = 36
-        versionName = "1.4.2"
+        versionCode = 37
+        versionName = "1.5.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
@@ -171,6 +171,14 @@ dependencies {
 
     // 机台成绩更新（VPN 方案）：本地 HTTP 跳转服务
     implementation("org.nanohttpd:nanohttpd:2.2.0")
+
+    // 机台成绩更新（二维码导入）：扫码（CameraX 取景 + ZXing 解码）与图片识别
+    val cameraxVersion = "1.4.2"
+    implementation("androidx.camera:camera-core:$cameraxVersion")
+    implementation("androidx.camera:camera-camera2:$cameraxVersion")
+    implementation("androidx.camera:camera-lifecycle:$cameraxVersion")
+    implementation("androidx.camera:camera-view:$cameraxVersion")
+    implementation("com.google.zxing:core:3.5.3")
 
     // 测试
     testImplementation("junit:junit:4.13.2")

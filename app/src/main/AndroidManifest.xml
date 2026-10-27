@@ -13,6 +13,11 @@
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
     <!-- 应用内更新：下载 GitHub Release 的 APK 并唤起安装器 -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- 机台成绩更新（二维码导入）：摄像头实时扫码（无摄像头设备不强制） -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
 
 
     <application

@@ -165,7 +165,7 @@ sealed interface KibaSubPage {
         override val title: String = "模型配置"
     }
 
-    /** 查分器登录（账号密码 / OAuth 双通道；独立子页避免弹层与软键盘冲突）。 */
+    /** 查分器登录（账号密码；OAuth 通道已暂时停用。独立子页避免弹层与软键盘冲突）。 */
     data object Login : KibaSubPage {
         override val title: String = "登录查分器"
     }

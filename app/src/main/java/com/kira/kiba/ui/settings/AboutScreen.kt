@@ -293,8 +293,7 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
                         Text(
                             text = "· 曲库 / 歌曲数据：水鱼（diving-fish）公共曲库；\n" +
                                 "· 成绩 / Best 50 / Rating：水鱼查分器（用户本人授权只读）；\n" +
-                                "· 本机不保存任何账号口令（OAuth 设备码通道）；\n" +
-                                "· 账号密码通道的 jwt 仅存本机私有目录。",
+                                "· 账号密码通道的 jwt 仅存本机私有目录，不保存任何账号口令。",
                             style = MiuixTheme.textStyles.body2,
                             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                         )
