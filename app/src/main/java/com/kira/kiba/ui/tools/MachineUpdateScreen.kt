@@ -35,6 +35,7 @@ import com.kira.kiba.core.vpn.VpnSettings
 import com.kira.kiba.core.vpn.crawler.CrawlerCaller
 import com.kira.kiba.core.vpn.crawler.WechatCrawlerListener
 import com.kira.kiba.core.vpn.core.LocalVpnService
+import com.kira.kiba.core.state.KibaState
 import com.kira.kiba.core.vpn.server.HttpServerService
 import com.kira.kiba.ui.common.SectionTitle
 import com.kira.kiba.ui.common.pageContentPadding
@@ -85,6 +86,9 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
 
             override fun onFinishUpdate() {
                 logs.add("成绩更新完成")
+                // 立刻刷新查分器账户态：拉最新成绩/评分，防止回到「我」页时
+                // 账户卡还挂着上一次拉取失败留下的错误提示（如 connection closed）
+                KibaState.refreshRecords()
             }
 
             override fun onError(e: Exception) {

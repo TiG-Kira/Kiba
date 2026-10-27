@@ -24,6 +24,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.kira.kiba.core.maimai.MaiQrGateway
 import com.kira.kiba.core.maimai.QrScoreImport
+import com.kira.kiba.core.state.KibaState
 import com.kira.kiba.ui.common.SectionTitle
 import com.kira.kiba.ui.common.pageContentPadding
 import java.text.SimpleDateFormat
@@ -110,6 +111,9 @@ fun EasyMaiAccountScreen(scrollBehavior: ScrollBehavior) {
                 .onSuccess {
                     message = "手动同步完成：$it 条记录已上传水鱼"
                     refreshState()
+                    // 立刻刷新查分器账户态：拉最新成绩/评分，防止回到「我」页时
+                    // 账户卡还挂着旧的错误提示/过期缓存
+                    KibaState.refreshRecords()
                 }
                 .onFailure { message = "同步失败：${it.message}" }
             syncing = false

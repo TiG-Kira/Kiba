@@ -32,6 +32,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.kira.kiba.core.account.DivingFishAccount
 import com.kira.kiba.core.maimai.QrScoreImport
+import com.kira.kiba.core.state.KibaState
 import com.kira.kiba.ui.common.SectionTitle
 import com.kira.kiba.ui.common.pageContentPadding
 import kotlinx.coroutines.launch
@@ -97,6 +98,9 @@ fun QrImportScreen(scrollBehavior: ScrollBehavior) {
             ) { logs.add(it) }
             result.onSuccess {
                 logs.add("导入完成：${it.recordCount} 条记录已上传水鱼（${it.serverMessage}）")
+                // 立刻刷新查分器账户态：拉最新成绩/评分，防止回到「我」页时
+                // 账户卡还挂着旧的错误提示/过期缓存
+                KibaState.refreshRecords()
             }
             result.onFailure {
                 logs.add("导入失败：${it.message}")

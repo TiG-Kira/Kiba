@@ -94,11 +94,9 @@ private fun genreStrokeRes(genre: String): Int = when (genre) {
 }
 
 /**
- * 歌曲封面加载（多候选链）：
- * 1. 水鱼 CDN （原版同源，文件名是去掉版本前缀的曲号，五位数补零）；
- * 2. 水鱼 CDN 其余候选号（DX 2024+ 曲用版本前缀 id 存图，需再试序号形态）；
- * 3. 舞萌官网图床 （DX 新曲唯一来源，
- *    国内可能不可达，此时落回占位图）。
+ * 歌曲封面加载（多候选链，源与编号规则详见 [coverCandidateUrls] 的 KDoc）：
+ * 自定义图床 → 水鱼 CDN（仅 DX）→ 落雪 lxns（标准+DX 全覆盖）→
+ * EasyMai 封面 OSS → 官网图床镜像。
  * 全部失败 → 流派色块 + 音符占位。
  */
 @Composable
@@ -166,14 +164,17 @@ private fun CoverImageChain(
     )
 }
 
-/** 封面候选 URL 链（公开给 TopBar 封面背景等处复用）：
+/** 封面候选 URL 链（公开给 TopBar 封面背景等处复用）。
+ * 各源实测编号规则（2026-10 用 curl 逐一验证过 200/404）：
  * 1. 自定义图床前缀（设置页可填，命中自己的镜像最快）；
- * 2. 水鱼 CDN `covers/%05d.png` 三种编号形态（songId / mod 10000 / mod 100000，
- *    水鱼只收录到 DX 2024 曲库，DX2025+ 新曲没有）；
- * 3. 水鱼 CDN EasyMai 编号映射（移植自 EasyMai coverManager.processSongId：
- *    4 位 id 前拼 `1`（500 → 01500）、`10xxx` 掐头（10012 → 00012 / 11234 → 11234），
- *    覆盖老曲在水鱼 CDN 的另一种归档编号）；
- * 4. 官网图床 maimaidx.jp + 若干镜像（DX 新曲唯一来源，国内可能需镜像）。
+ * 2. 水鱼 CDN `covers/{songId}.png`：**只收录 DX 5 位编号**（11001+，无前导零），
+ *    标准曲任何形态都 404（原 `%05d` 补零形态对标准曲是永远打不中的无效请求）；
+ * 3. 落雪 lxns `assets2.lxns.net/maimai/jacket/{官方编号}.png`：**唯一同时覆盖
+ *    标准曲 + DX 的源**（标准曲原样 1-999，DX 曲 = df id - 10000），实测 200；
+ * 4. EasyMai 封面 OSS `oss.lista233.cn/cover/cover/{df id}.jpg`（反编译自 EasyMai：
+ *    列表页直接用数据 id 拼 `/cover/cover/{id}.jpg`），DX 曲补充源，实测 200；
+ * 5. 官网图床 maimaidx.jp + 若干镜像（DX 新曲兜底，国内可能不可达）。
+ * 全部失败 → 流派色块 + 音符占位。
  */
 fun coverCandidateUrls(songId: Int, imageUrl: String): List<String> {
     val list = mutableListOf<String>()
@@ -182,37 +183,27 @@ fun coverCandidateUrls(songId: Int, imageUrl: String): List<String> {
         if (url.isNotBlank() && url !in list) list.add(url)
     }
 
-    // 自定义图床
+    // 1. 自定义图床
     val custom = SpUtil.getCoverSource()
     if (custom.isNotBlank() && imageUrl.isNotBlank()) {
         push(custom.trimEnd('/') + "/" + imageUrl)
     }
 
-    // 水鱼 CDN：多种编号形态
-    fun pushCd(id: Int) {
-        push(MaimaiDataClient.DIVING_FISH_COVER_URL + "%05d".format(id) + ".png")
-    }
-    pushCd(songId)
-    val mod10k = songId % 10000
-    if (mod10k != songId) pushCd(mod10k)
-    val mod100k = songId % 100000
-    if (mod100k != songId && mod100k != mod10k) pushCd(mod100k)
-
-    // 水鱼 CDN：EasyMai 的编号映射（processSongId + padStart(5, '0')）
-    val idStr = songId.toString()
-    val easyMaiId = when {
-        idStr.length == 4 -> "1$idStr"
-        idStr.length == 5 && idStr.startsWith("10") ->
-            if (idStr.startsWith("100")) idStr.drop(3) else idStr.drop(2)
-        else -> idStr
-    }
-    val easyMaiPadded = easyMaiId.padStart(5, '0')
-    val easyMaiNumeric = easyMaiPadded.toIntOrNull()
-    if (easyMaiNumeric != null && easyMaiNumeric >= 0 && easyMaiPadded != "%05d".format(songId)) {
-        pushCd(easyMaiNumeric)
+    // 2. 水鱼 CDN（仅 DX 5 位编号会命中，标准曲直接跳过省一次必败请求）
+    if (songId >= 10000) {
+        push(MaimaiDataClient.DIVING_FISH_COVER_URL + songId + ".png")
     }
 
-    // 官网图床 + 镜像（DX 新曲靠它们）
+    // 3. 落雪 lxns jacket（官方编号：DX 曲 df id 需减 10000；标准曲原样）
+    val officialId = if (songId >= 10000) songId - 10000 else songId
+    if (officialId > 0) {
+        push("https://assets2.lxns.net/maimai/jacket/$officialId.png")
+    }
+
+    // 4. EasyMai 封面 OSS（df 数据 id 原样，.jpg；DX 曲的补充源）
+    push("https://oss.lista233.cn/cover/cover/$songId.jpg")
+
+    // 5. 官网图床 + 镜像（DX 新曲靠它们兜底）
     if (imageUrl.isNotBlank()) {
         MIRRORS.forEach { base -> push(base.trimEnd('/') + "/" + imageUrl) }
     }
