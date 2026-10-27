@@ -15,6 +15,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
 
 /**
@@ -37,8 +38,10 @@ import java.util.concurrent.TimeUnit
  * 注意：解析 SGWCMAID 必须经 EasyMai 接口（与本机经微信访问官方接口同源），二维码
  * 字符串会出现在该请求 URL 中——这与 EasyMai 官方客户端行为一致。
  *
- * 水鱼登录态非必须（与 EasyMai 原版一致）；若本机已有账号密码登录的 jwt，会顺带传给
- * EasyMai 接口（OAuth 短 token 不传）。OAuth 绑定后写成绩走 Bearer 授权，无需导入令牌。
+ * 重要前置：读取官方成绩（/apiqr、/getUserMusic）必须经 mai.lista233.cn，该接口要求携带
+ * 「账号密码登录水鱼」拿到的 legacy jwt（加密后放入 `jwt-token` 头）。OAuth 授权拿不到此
+ * jwt，故 QR 导入**必须先用水鱼账号密码登录**（见 [importFromQr] 入口校验）。OAuth 仅用于
+ * 「写入水鱼」那一步（免手填导入令牌），覆盖不了读取环节。
  */
 object QrScoreImport {
 
@@ -55,6 +58,15 @@ object QrScoreImport {
     /** EasyMai 与水鱼后端约定的 jwt 加密密钥（与 mai.lista233.cn 服务端对齐）。 */
     private const val EASYMAI_SECRET = "MaiLista233QwQ"
 
+    /**
+     * 浏览器 UA。OkHttp 默认 UA 是 `okhttp/4.x`，而 mai.lista233.cn 对请求来源有环境校验，
+     * 非浏览器 UA 会被直接断连（"能握手但被关"的一大诱因）。统一伪装成 Android Chrome，
+     * 让服务端认为请求来自网页版 EasyMai。
+     */
+    private const val BROWSER_UA =
+        "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) " +
+            "Chrome/120.0.0.0 Mobile Safari/537.36"
+
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
@@ -65,6 +77,16 @@ object QrScoreImport {
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(120, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
+        // 统一注入浏览器环境头，复刻网页版 EasyMai 的请求特征（防来源校验断连）。
+        .addInterceptor { chain ->
+            chain.proceed(
+                chain.request().newBuilder()
+                    .header("User-Agent", BROWSER_UA)
+                    .header("Accept", "application/json, text/plain, */*")
+                    .header("Accept-Language", "zh-CN,zh;q=0.9")
+                    .build(),
+            )
+        }
         .build()
 
     // ── DTO（kotlinx.serialization 直出生成器，无 Gson 反射，不惧 R8） ──
@@ -377,11 +399,16 @@ object QrScoreImport {
     ): Result<QrImportSummary> {
         onLog("开始二维码导入流程")
 
-        // 1. 水鱼 jwt：非必须（EasyMai 原版即无水鱼登录态）；有账号密码 jwt 就顺带传
-        val rawJwt = rawDivingFishJwt()
-        if (rawJwt.isNullOrBlank()) {
-            onLog("未检测到水鱼账号密码登录态（不影响导入，仅凭 OAuth 授权或导入令牌上传）")
-        }
+        // 1. 读取官方成绩必须经 mai.lista233.cn，该接口要求携带「账号密码登录」拿到的 legacy
+        //    jwt（加密后放入 jwt-token 头）。OAuth 授权拿不到此 jwt，故 QR 导入必须先用水鱼
+        //    账号密码登录——否则服务端直接断连（早年 connection closed 主因）。
+        val rawJwt = rawDivingFishJwt() ?: return Result.failure(
+            IllegalStateException(
+                "二维码导入需要先用水鱼「账号密码」登录：读取官方成绩依赖账号密码登录态，" +
+                    "OAuth 授权不支持此环节。请到「我」页用账号密码登录水鱼后再试。",
+            ),
+        )
+        onLog("已检测到水鱼账号密码登录态（用于读取官方成绩）")
 
         // 2. 二维码合法性
         val qrCode = extractQrCode(qrCodeRaw)
@@ -392,7 +419,7 @@ object QrScoreImport {
         onLog("正在解析二维码…")
         val userId = resolveUserId(qrCode, rawJwt).getOrElse {
             Log.w(TAG, "resolveUserId failed", it)
-            return Result.failure(IllegalStateException("解析二维码失败：${it.message}"))
+            return Result.failure(IllegalStateException(dnsMsg("解析二维码失败", it)))
         }
         if (userId <= 0L) {
             return Result.failure(IllegalStateException("二维码不合法或已过期（请在公众号重新生成）"))
@@ -403,7 +430,7 @@ object QrScoreImport {
         onLog("正在拉取官方游玩数据（全难度）…")
         val official = fetchUserMusic(userId, rawJwt).getOrElse {
             Log.w(TAG, "fetchUserMusic failed", it)
-            return Result.failure(IllegalStateException("获取官方数据失败：${it.message}"))
+            return Result.failure(IllegalStateException(dnsMsg("获取官方数据失败", it)))
         }
         if (official.userMusicList.isEmpty()) {
             return Result.failure(IllegalStateException("官方数据为空（可能二维码已过期），请在公众号重新生成后再试"))
@@ -445,6 +472,23 @@ object QrScoreImport {
                 serverMessage = message,
             ),
         )
+    }
+
+    /**
+     * 把异常转成友好文案：DNS 解析失败（No address / Unable to resolve host）提示切换网络或
+     * 开 VPN；其余原样透出 message。
+     */
+    private fun dnsMsg(prefix: String, e: Throwable): String {
+        val msg = e.message.orEmpty()
+        val isDns = e is UnknownHostException ||
+            msg.contains("Unable to resolve host", ignoreCase = true) ||
+            msg.contains("No address associated with hostname", ignoreCase = true)
+        return if (isDns) {
+            "$prefix：无法解析二维码服务域名（当前网络可能限制了 mai.lista233.cn 的 DNS），" +
+                "请切换网络或开启 VPN 后重试"
+        } else {
+            "$prefix：$msg"
+        }
     }
 
     /**

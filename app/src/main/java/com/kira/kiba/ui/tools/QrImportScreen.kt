@@ -130,6 +130,14 @@ fun QrImportScreen(scrollBehavior: ScrollBehavior) {
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
                             Text(
+                                text = "⚠ 关键前置：二维码导入必须先在本应用「我」页用「账号密码」登录水鱼。" +
+                                    "读取官方成绩依赖账号密码登录态，仅靠 OAuth 授权无法导入（OAuth 只负责把成绩写回水鱼）。" +
+                                    "若你只做了 OAuth 授权、没用账号密码登录，导入会直接失败，请先补上账号密码登录。",
+                                style = MiuixTheme.textStyles.footnote1,
+                                color = MiuixTheme.colorScheme.error,
+                            )
+                            Spacer(Modifier.height(10.dp))
+                            Text(
                                 text = "① 官方登录二维码（拉成绩用）",
                                 style = MiuixTheme.textStyles.subtitle,
                                 color = MiuixTheme.colorScheme.onSurface,
@@ -152,12 +160,11 @@ fun QrImportScreen(scrollBehavior: ScrollBehavior) {
                             )
                             Spacer(Modifier.height(4.dp))
                             Text(
-                                text = "导入令牌是水鱼查分器给第三方工具的「上传钥匙」。\n" +
-                                    "· 若你已在本应用「我」页通过 OAuth 授权登录水鱼（推荐），可留空——" +
-                                    "应用会自动用授权令牌上传，无需任何手动操作；\n" +
-                                    "· 否则需手动获取并粘贴：用浏览器打开水鱼查分器 www.diving-fish.com/maimaidx/prober 并登录 → " +
-                                    "点右上角昵称进入「个人资料」→ 找到「导入令牌」一栏查看/复制，" +
-                                    "粘贴到下方输入框。",
+                                text = "导入令牌是水鱼查分器给第三方工具的「上传钥匙」，用于把成绩写回水鱼。\n" +
+                                    "· 前提：必须先在本应用「我」页用「账号密码」登录水鱼（读取官方成绩依赖此登录态，OAuth 授权无法替代）；\n" +
+                                    "· 已账号密码登录后，本应用会自动用登录态换取导入令牌上传，无需手填；\n" +
+                                    "· 也可手动获取并粘贴：浏览器打开水鱼查分器 www.diving-fish.com/maimaidx/prober 登录 → " +
+                                    "点右上角昵称进入「个人资料」→ 找到「导入令牌」一栏查看/复制，粘贴到下方输入框。",
                                 style = MiuixTheme.textStyles.footnote1,
                                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                             )
