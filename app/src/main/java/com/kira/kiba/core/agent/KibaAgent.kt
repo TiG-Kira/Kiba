@@ -272,10 +272,12 @@ class KibaAgent(private val context: Context) {
         for (round in 0 until MAX_ROUNDS) {
             val result = if (onChunk != null) {
                 KibaLlm.chatStream(messages, tools, maxTokens = budget, onChunk = onChunk).getOrElse {
-                    // 流式不可用（不支持 SSE / 网络错误）：退回一次性请求，结果整块回传
+                    // 流式不可用（不支持 SSE / 网络错误 / 中途被採断）：退回一次性请求。
+                    // 流式可能已流出半截内容：先 reset 清掉，再整块回传，避免新旧文本拼接重复。
                     val single = KibaLlm.chat(messages, tools, maxTokens = budget).getOrElse { e ->
                         return AgentReply("LLM 调用失败：${e.message}", skills = SKILLS)
                     }
+                    onChunk(KibaLlm.StreamChunk(reset = true))
                     onChunk(KibaLlm.StreamChunk(text = single.text, reasoning = single.reasoning))
                     single
                 }
@@ -342,13 +344,14 @@ class KibaAgent(private val context: Context) {
             // 没有工具调用 —— 看是「有答案」还是「只在空谈」
             val answer = result.text.trim()
             val narration = detectNarratedSkills(answer.ifBlank { result.reasoning })
+            val unpicked = narration.filter { it !in executed }
 
-            if (narration.isNotEmpty() && narration.none { it in executed }) {
+            if (narration.isNotEmpty() && unpicked.isNotEmpty()) {
                 // 模型嘴上说「我打算调用 best50 / push_rating」却没真调：
                 // 直接按它点名的技能兜底执行，把真实数据拿回来再让它总结。
                 // 已流出的空谈正文先清掉，否则用户会看到一段没有结论的话。
                 onChunk?.invoke(KibaLlm.StreamChunk(reset = true))
-                val picked = narration.filter { it !in executed }
+                val picked = unpicked
                 val results = LinkedHashMap<String, String>()
                 for (name in picked) {
                     val reply = runToolCall(name, "", input)
@@ -369,6 +372,12 @@ class KibaAgent(private val context: Context) {
                     return collected.copy(text = collected.text.ifBlank { "已完成技能调用。" })
                 }
                 continue
+            }
+
+            if (narration.isNotEmpty() && answer.isBlank() && collected.text.isNotBlank()) {
+                // 模型反复空谈「我要调用 X」但 X 都已执行过、正文始终空白：
+                // 手里已有真实数据，直接交付，不再让模型空转到底
+                return collected
             }
 
             if (answer.isBlank() && result.reasoning.isNotBlank() && !budgetRetried) {

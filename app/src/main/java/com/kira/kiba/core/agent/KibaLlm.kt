@@ -2,7 +2,9 @@ package com.kira.kiba.core.agent
 
 import android.util.Log
 import com.google.gson.Gson
+import com.google.gson.JsonArray
 import com.google.gson.JsonElement
+import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.google.gson.annotations.SerializedName
 import com.kira.kiba.core.utils.SpUtil
@@ -196,7 +198,9 @@ object KibaLlm {
 
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(120, TimeUnit.SECONDS)
+        // 推理模型（如 MiMo）思考期网关可能长时间不吐字节，读超时给足余量，
+        // 避免正文还没开始就被 SocketTimeout 中途採断（读超时按「两次字节之间」计）
+        .readTimeout(300, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
         .build()
 
@@ -273,6 +277,8 @@ object KibaLlm {
             val rejectedTools = e.code == 400 && tools.isNotEmpty()
             if (!rejectedTools) throw e
             Log.w(TAG, "provider 拒绝 tools 参数，去掉后重试（改走文本内联调用协议）：${e.message}")
+            // 流式场景下前一次可能已流出部分内容：重置后再重试，避免新旧文本拼接重复
+            if (stream && onChunk != null) onChunk(StreamChunk(reset = true))
             executeOnce(messages, emptyList(), maxTokens, stream, onChunk)
         }
     }
@@ -495,7 +501,15 @@ object KibaLlm {
         }
     }
 
-    /** 读 SSE 流。 */
+    /**
+     * 读 SSE 流。
+     *
+     * 容错覆盖（国产模型 / 中转网关的常见花样，任一异常都不允许採断整条流）：
+     * - 一个事件的数据分散在多个 `data:` 行（SSE 规范，空行收尾）：缓冲拼接后再解析；
+     * - content / reasoning_content 是数组或对象形态（多模态兼容格式）而非纯字符串；
+     * - 事件缺少 choices，delta / message / content 直接挂在顶层；
+     * - 服务端根本没走 SSE：无 `data:` 前缀的逐行 JSON 事件，或一次性普通 JSON。
+     */
     private suspend fun readStream(
         response: okhttp3.Response,
         tools: List<ToolDef>,
@@ -507,64 +521,61 @@ object KibaLlm {
         val calls = linkedMapOf<Int, MutableMap<String, String>>()
         val plainLines = mutableListOf<String>()
         var sawData = false
+        var pendingData = ""
+
+        suspend fun tryProcess(payload: String): Boolean {
+            val obj = runCatching { JsonParser.parseString(payload).asJsonObject }.getOrNull()
+                ?: return false
+            // 事件结构千奇百怪：解析成功但字段形态异常也不能让整条流挂掉
+            runCatching { consumeStreamEvent(obj, textSb, reasonSb, calls, onChunk) }
+            return true
+        }
+
         while (!source.exhausted()) {
             val line = source.readUtf8Line() ?: break
             if (!line.startsWith("data:")) {
-                if (line.isNotBlank()) plainLines += line
+                if (line.isBlank()) {
+                    // 事件边界：把缓冲里攒出的完整事件处理掉
+                    if (pendingData.isNotEmpty()) {
+                        tryProcess(pendingData)
+                        pendingData = ""
+                    }
+                } else {
+                    plainLines += line
+                }
                 continue
             }
             val payload = line.removePrefix("data:").trim()
-            if (payload.isEmpty() || payload == "[DONE]") continue
+            if (payload == "[DONE]" || payload.isEmpty()) continue
             sawData = true
-            val obj = runCatching {
-                JsonParser.parseString(payload).asJsonObject
-            }.getOrNull() ?: continue
-            val choices = obj.getAsJsonArray("choices") ?: continue
-            for (c in choices) {
-                val co = c.asJsonObject
-                val delta = co.getAsJsonObject("delta") ?: co.getAsJsonObject("message") ?: continue
-                val rawContent = delta.get("content")?.takeIf { !it.isJsonNull }?.asString.orEmpty()
-                val rawReason = (
-                    delta.get("reasoning_content")?.takeIf { !it.isJsonNull }
-                        ?: delta.get("reasoning")
-                    )?.takeIf { !it.isJsonNull }?.asString.orEmpty()
-                // 有些中转把同一段话同时塞进 content 和 reasoning_content：
-                // 这种重复只算思考，正文不再重复回传。
-                val isEcho = rawReason.isNotEmpty() && rawContent == rawReason
-                val dText = if (isEcho) "" else rawContent
-                val dReason = if (isEcho) rawContent else rawReason
-                if (dText.isNotEmpty()) {
-                    textSb.append(dText)
-                    onChunk(StreamChunk(text = dText))
-                }
-                if (dReason.isNotEmpty()) {
-                    reasonSb.append(dReason)
-                    onChunk(StreamChunk(reasoning = dReason))
-                }
-                delta.getAsJsonArray("tool_calls")?.forEach { tc ->
-                    val t = tc.asJsonObject
-                    val idx = t.get("index")?.asInt ?: 0
-                    val slot = calls.getOrPut(idx) { mutableMapOf() }
-                    t.get("id")?.takeIf { !it.isJsonNull }?.asString?.let { slot["id"] = it }
-                    t.getAsJsonObject("function")?.let { fn ->
-                        fn.get("name")?.takeIf { !it.isJsonNull }?.asString?.let { name ->
-                            slot["name"] = mergeStreamText(slot["name"], name)
-                        }
-                        fn.get("arguments")?.takeIf { !it.isJsonNull }?.asString?.let {
-                            slot["arguments"] = slot["arguments"].orEmpty() + it
-                        }
-                    }
+            val candidate = if (pendingData.isEmpty()) payload else "$pendingData\n$payload"
+            if (tryProcess(candidate)) pendingData = "" else pendingData = candidate
+        }
+        if (pendingData.isNotEmpty()) tryProcess(pendingData)
+
+        if (!sawData) {
+            // 服务端没走 SSE。两种可能：
+            // ① 逐行 JSON 事件（无 data: 前缀的伪流）——逐行喂给流事件处理；
+            // ② 一次性普通 JSON ——整块按非流式解析（不重发请求）。
+            var lineEvents = 0
+            for (pl in plainLines) {
+                val trimmed = pl.trim()
+                if (!trimmed.startsWith("{")) continue
+                val obj = runCatching { JsonParser.parseString(trimmed).asJsonObject }.getOrNull()
+                    ?: continue
+                if (obj.has("choices") || obj.has("delta") || obj.has("content")) {
+                    runCatching { consumeStreamEvent(obj, textSb, reasonSb, calls, onChunk) }
+                    lineEvents++
                 }
             }
-        }
-        if (!sawData) {
-            // 服务端没走 SSE：把收到的普通 JSON 当成一次性响应解析（不重发请求）
-            val raw = plainLines.joinToString("\n")
-            if (raw.isBlank()) throw LlmError.Server(response.code, "服务端未返回流式数据")
-            val parsed = parseChatBody(raw, tools.map { it.name }.toSet(), response.code)
-            if (parsed.text.isNotBlank()) onChunk(StreamChunk(text = parsed.text))
-            if (parsed.reasoning.isNotBlank()) onChunk(StreamChunk(reasoning = parsed.reasoning))
-            return parsed
+            if (lineEvents == 0) {
+                val raw = plainLines.joinToString("\n")
+                if (raw.isBlank()) throw LlmError.Server(response.code, "服务端未返回流式数据")
+                val parsed = parseChatBody(raw, tools.map { it.name }.toSet(), response.code)
+                if (parsed.text.isNotBlank()) onChunk(StreamChunk(text = parsed.text))
+                if (parsed.reasoning.isNotBlank()) onChunk(StreamChunk(reasoning = parsed.reasoning))
+                return parsed
+            }
         }
         val toolCalls = calls.entries.sortedBy { it.key }.map { (_, v) ->
             ToolCall(
@@ -579,6 +590,114 @@ object KibaLlm {
         val inline = parseInlineToolCalls(text, tools.map { it.name }.toSet())
         text = inline.cleanedText
         return ChatResult(text = text, toolCalls = toolCalls + inline.calls, reasoning = reasoning)
+    }
+
+    /**
+     * 处理单个流式事件：标准 `choices[].delta` 结构，
+     * 或 delta / message / content 直接挂顶层的非标准包装。
+     */
+    private suspend fun consumeStreamEvent(
+        obj: JsonObject,
+        textSb: StringBuilder,
+        reasonSb: StringBuilder,
+        calls: LinkedHashMap<Int, MutableMap<String, String>>,
+        onChunk: suspend (StreamChunk) -> Unit,
+    ) {
+        val choices = obj.get("choices") as? JsonArray
+        if (choices != null) {
+            for (c in choices) {
+                if (!c.isJsonObject) continue
+                val co = c.asJsonObject
+                val delta = co.get("delta") as? JsonObject
+                    ?: co.get("message") as? JsonObject
+                    ?: continue
+                consumeDelta(delta, textSb, reasonSb, calls, onChunk)
+            }
+            return
+        }
+        // 非标准包装：delta / message 直接挂在顶层
+        val topDelta = obj.get("delta") as? JsonObject ?: obj.get("message") as? JsonObject
+        if (topDelta != null) {
+            consumeDelta(topDelta, textSb, reasonSb, calls, onChunk)
+            return
+        }
+        emitDelta(
+            text = readTextElement(obj.get("content")),
+            reasoning = readTextElement(obj.get("reasoning_content"))
+                .ifBlank { readTextElement(obj.get("reasoning")) },
+            textSb = textSb,
+            reasonSb = reasonSb,
+            onChunk = onChunk,
+        )
+    }
+
+    /** 处理一条 delta：正文 / 思考 / 工具调用增量。 */
+    private suspend fun consumeDelta(
+        delta: JsonObject,
+        textSb: StringBuilder,
+        reasonSb: StringBuilder,
+        calls: LinkedHashMap<Int, MutableMap<String, String>>,
+        onChunk: suspend (StreamChunk) -> Unit,
+    ) {
+        emitDelta(
+            text = readTextElement(delta.get("content")),
+            reasoning = readTextElement(delta.get("reasoning_content"))
+                .ifBlank { readTextElement(delta.get("reasoning")) },
+            textSb = textSb,
+            reasonSb = reasonSb,
+            onChunk = onChunk,
+        )
+        val tcArr = delta.get("tool_calls") as? JsonArray ?: return
+        for (tc in tcArr) {
+            if (!tc.isJsonObject) continue
+            val t = tc.asJsonObject
+            val idx = t.get("index")?.takeIf { it.isJsonPrimitive }?.asInt ?: 0
+            val slot = calls.getOrPut(idx) { mutableMapOf() }
+            t.get("id")?.takeIf { it.isJsonPrimitive }?.asString?.let { slot["id"] = it }
+            val fn = t.get("function") as? JsonObject ?: continue
+            fn.get("name")?.takeIf { it.isJsonPrimitive }?.asString?.let { name ->
+                slot["name"] = mergeStreamText(slot["name"], name)
+            }
+            fn.get("arguments")?.takeIf { it.isJsonPrimitive }?.asString?.let {
+                slot["arguments"] = slot["arguments"].orEmpty() + it
+            }
+        }
+    }
+
+    /** 把一对增量回传并累积（含「中转把同一段话同时塞进 content 与 reasoning」的去重）。 */
+    private suspend fun emitDelta(
+        text: String,
+        reasoning: String,
+        textSb: StringBuilder,
+        reasonSb: StringBuilder,
+        onChunk: suspend (StreamChunk) -> Unit,
+    ) {
+        val isEcho = reasoning.isNotEmpty() && text == reasoning
+        val dText = if (isEcho) "" else text
+        val dReason = if (isEcho) text else reasoning
+        if (dText.isNotEmpty()) {
+            textSb.append(dText)
+            onChunk(StreamChunk(text = dText))
+        }
+        if (dReason.isNotEmpty()) {
+            reasonSb.append(dReason)
+            onChunk(StreamChunk(reasoning = dReason))
+        }
+    }
+
+    /**
+     * 容错读取 JSON 值的文本：字符串直取；数组拼接各元素；
+     * 对象取 text / content 字段。非标准形态一律不抛异常。
+     */
+    private fun readTextElement(el: JsonElement?): String = when {
+        el == null || el.isJsonNull -> ""
+        el.isJsonPrimitive -> el.asString
+        el.isJsonArray -> el.asJsonArray.joinToString("") { readTextElement(it) }
+        el.isJsonObject -> {
+            val obj = el.asJsonObject
+            readTextElement(obj.get("text")).ifBlank { readTextElement(obj.get("content")) }
+        }
+        else -> ""
     }
 
     /**
