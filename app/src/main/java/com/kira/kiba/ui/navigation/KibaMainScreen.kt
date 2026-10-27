@@ -42,6 +42,7 @@ import com.kira.kiba.ui.agent.LlmConfigScreen
 import com.kira.kiba.ui.me.Best50Screen
 import com.kira.kiba.ui.me.FavoritesScreen
 import com.kira.kiba.ui.me.LoginScreen
+import com.kira.kiba.ui.me.EasyMaiAccountScreen
 import com.kira.kiba.ui.me.MeScreen
 import com.kira.kiba.ui.me.ScoreQueryScreen
 import com.kira.kiba.ui.settings.AboutScreen
@@ -187,6 +188,11 @@ sealed interface KibaSubPage {
     /** 二维码导入成绩（免 VPN：官方二维码 + 水鱼导入令牌）。 */
     data object QrImport : KibaSubPage {
         override val title: String = "二维码导入成绩"
+    }
+
+    /** 接入第三方解析服务账号（登录/注册 + 同步管理）。 */
+    data object GatewayAccount : KibaSubPage {
+        override val title: String = "接入 Easymai 账号"
     }
 
     /** DX 分数转换（判定数量 → 达成率 / Rating）。 */
@@ -522,6 +528,7 @@ fun KibaMainScreen() {
                               is KibaSubPage.DxConverter -> DxConverterScreen(scrollBehavior = scrollBehavior)
                               is KibaSubPage.MachineUpdate -> MachineUpdateScreen(scrollBehavior = scrollBehavior)
                               is KibaSubPage.QrImport -> QrImportScreen(scrollBehavior = scrollBehavior)
+                              is KibaSubPage.GatewayAccount -> EasyMaiAccountScreen(scrollBehavior = scrollBehavior)
                               is KibaSubPage.Favorites -> FavoritesScreen(
                                   scrollBehavior = scrollBehavior,
                                   onOpenSong = { song -> pushPage(KibaSubPage.SongDetail(song.songData.id)) },
@@ -557,6 +564,7 @@ fun KibaMainScreen() {
                                   onOpenMachineLogin = {
                                       WeChatJump.openOfficialAccount(context)
                                   },
+                                  onOpenGatewayAccount = { pushPage(KibaSubPage.GatewayAccount) },
                                   onOpenRatingCalc = { pushPage(KibaSubPage.RatingCalc) },
                                   onOpenVersionMap = { pushPage(KibaSubPage.VersionMap) },
                                   onOpenHotCharts = { pushPage(KibaSubPage.HotCharts) },

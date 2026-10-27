@@ -19,6 +19,18 @@ val dfClientId = (localProps.getProperty("kiba.dfClientId")
 val dfClientSecret = (localProps.getProperty("kiba.dfClientSecret")
     ?: System.getenv("KIBA_DF_CLIENT_SECRET") ?: "").toString()
 
+// 二维码取数网关接入点与协议密钥：同上不入库，真实值存 GitHub Secrets
+// （KIBA_QR_GATEWAY_BASE / KIBA_QR_GATEWAY_SECRET），本地存 local.properties。
+val qrGatewayBase = (localProps.getProperty("kiba.qrGatewayBase")
+    ?: System.getenv("KIBA_QR_GATEWAY_BASE") ?: "").toString()
+val qrGatewaySecret = (localProps.getProperty("kiba.qrGatewaySecret")
+    ?: System.getenv("KIBA_QR_GATEWAY_SECRET") ?: "").toString()
+
+// 网关各端点路径同样不入库：固定顺序「登录|注册|续期|二维码取数|拉取同步成绩」，
+// CI 用单条 Secret KIBA_QR_GATEWAY_PATHS（| 分隔）注入。
+val qrGatewayPaths = (localProps.getProperty("kiba.qrGatewayPaths")
+    ?: System.getenv("KIBA_QR_GATEWAY_PATHS") ?: "").split('|')
+
 android {
     namespace = "com.kira.kiba"
     // miuix 0.9.4 / kyant backdrop 2.0.1 硬要求 compileSdk >= 37
@@ -29,13 +41,20 @@ android {
         // miuix 0.9.4 各模块（blur/ui/icons/preference）要求 minSdk >= 33
         minSdk = 33
         targetSdk = 37
-        versionCode = 39
-        versionName = "1.5.2"
+        versionCode = 40
+        versionName = "1.5.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
         buildConfigField("String", "DIVINGFISH_CLIENT_ID", "\"$dfClientId\"")
         buildConfigField("String", "DIVINGFISH_CLIENT_SECRET", "\"$dfClientSecret\"")
+        buildConfigField("String", "QR_GATEWAY_BASE", "\"$qrGatewayBase\"")
+        buildConfigField("String", "QR_GATEWAY_SECRET", "\"$qrGatewaySecret\"")
+        buildConfigField("String", "QR_PATH_LOGIN", "\"${qrGatewayPaths.getOrElse(0) { "" }}\"")
+        buildConfigField("String", "QR_PATH_REGISTER", "\"${qrGatewayPaths.getOrElse(1) { "" }}\"")
+        buildConfigField("String", "QR_PATH_REFRESH", "\"${qrGatewayPaths.getOrElse(2) { "" }}\"")
+        buildConfigField("String", "QR_PATH_QR_BIND", "\"${qrGatewayPaths.getOrElse(3) { "" }}\"")
+        buildConfigField("String", "QR_PATH_SCORE", "\"${qrGatewayPaths.getOrElse(4) { "" }}\"")
         ksp {
             arg("room.schemaLocation", "$projectDir/schemas")
         }

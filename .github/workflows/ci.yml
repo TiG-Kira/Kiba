@@ -26,4 +26,7 @@ jobs:
         env:
           KIBA_DF_CLIENT_ID: ${{ secrets.KIBA_DF_CLIENT_ID }}
           KIBA_DF_CLIENT_SECRET: ${{ secrets.KIBA_DF_CLIENT_SECRET }}
+          KIBA_QR_GATEWAY_BASE: ${{ secrets.KIBA_QR_GATEWAY_BASE }}
+          KIBA_QR_GATEWAY_SECRET: ${{ secrets.KIBA_QR_GATEWAY_SECRET }}
+          KIBA_QR_GATEWAY_PATHS: ${{ secrets.KIBA_QR_GATEWAY_PATHS }}
         run: ./gradlew assembleDebug --no-daemon

@@ -53,6 +53,9 @@ jobs:
           KIBA_KEYSTORE_TYPE: ${{ env.KIBA_KEYSTORE_TYPE }}
           KIBA_DF_CLIENT_ID: ${{ secrets.KIBA_DF_CLIENT_ID }}
           KIBA_DF_CLIENT_SECRET: ${{ secrets.KIBA_DF_CLIENT_SECRET }}
+          KIBA_QR_GATEWAY_BASE: ${{ secrets.KIBA_QR_GATEWAY_BASE }}
+          KIBA_QR_GATEWAY_SECRET: ${{ secrets.KIBA_QR_GATEWAY_SECRET }}
+          KIBA_QR_GATEWAY_PATHS: ${{ secrets.KIBA_QR_GATEWAY_PATHS }}
         run: |
           # PKCS12 强制 store 密码 == key 密码；用已验证可打开 store 的口令派生 key 口令，
           # 避免独立的 KIBA_KEY_PASSWORD 口令不一致导致 "Get Key failed / final block not properly padded"。

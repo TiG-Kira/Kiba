@@ -10,6 +10,9 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -19,49 +22,39 @@ import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
 
 /**
- * 机台成绩更新「二维码导入」链路（复刻 EasyMai 的取数逻辑）。
+ * 机台成绩更新「二维码导入」与「从账号同步」链路。
  *
  * 与 VPN 抓包方案互补：无需 VPN / 机台 WiFi / 微信，只需用户的官方舞萌登录二维码
- * （在「舞萌 DX」公众号长按二维码复制出的 SGWCMAID 串）：
+ * （在「舞萌 DX」公众号长按二维码复制出的 SGWCMAID 串）。整体分两步：
  *
- * 1. 上传凭证（分级，见 [resolveUploadCredential]）：
- *    - 用户手填的导入令牌（legacy import-token 路径）；
- *    - 或本机已 OAuth 绑定水鱼 → 直接用授权令牌上传（client_id 已获写权限，免手填）；
- *    - 或账号密码登录过 → 自动 PUT import_token 换令牌（[refreshImportToken]）；
- * 2. [resolveUserId]：GET EasyMai 接口 /apiqr?qr_code=<SGWCMAID> 解出官方加密 userId；
- * 3. [fetchUserMusic]：GET /getUserMusic?userID=<uid> 拉官方全量游玩数据；
- * 4. [convertOfficialRecords]：本地曲库补 title/type，转成水鱼 update_records 格式；
- * 5. 上传：按上述凭证 POST 水鱼 /player/update_records（JSON 数组）。
+ * 1. 同步进账号：[MaiQrGateway.fetchByQrCode] 把二维码交给解析服务（互操作实现，见
+ *    [MaiQrGateway] KDoc），服务端完成「解密二维码 → 拉官方数据 → 转查分器格式」并存入
+ *    用户账号云端。前置条件：用户已在「我」页接入账号；
+ * 2. 从账号拉取并上传水鱼：[syncGatewayToDivingFish] 调 [MaiQrGateway.pullScores] 拉取
+ *    账号云端的同步成绩（查分器通用格式，[parseGatewayRecord] 宽容解析），本地曲库补
+ *    title/type 后，按分级凭证（见 [resolveUploadCredential]）POST 水鱼
+ *    /player/update_records。
+ *
+ * 二维码导入 = 1 + 2 一条龙；账号页的「手动同步」= 单独执行 2（不扫二维码也能把账号
+ * 云端已有数据拉到水鱼）。每次成功拉取都会刷新「最近同步时间」（[lastSyncAt]）。
  *
  * 隐私铁律：二维码字符串只作为**函数参数**在内存中流转，任何环节都不写 SP / 日志明文 /
  * 数据库；更新完成后调用方清空输入框状态，二维码数据即随 GC 丢弃（「用完即毁」）。
- * 注意：解析 SGWCMAID 必须经 EasyMai 接口（与本机经微信访问官方接口同源），二维码
- * 字符串会出现在该请求 URL 中——这与 EasyMai 官方客户端行为一致。
- *
- * 重要前置：读取官方成绩（/apiqr、/getUserMusic）必须经 mai.lista233.cn，该接口要求携带
- * 「账号密码登录水鱼」拿到的 legacy jwt（加密后放入 `jwt-token` 头）。OAuth 授权拿不到此
- * jwt，故 QR 导入**必须先用水鱼账号密码登录**（见 [importFromQr] 入口校验）。OAuth 仅用于
- * 「写入水鱼」那一步（免手填导入令牌），覆盖不了读取环节。
+ * 水鱼登录态非必须：有账号密码 jwt 时会作为 dfCode 传给解析服务（服务端可能用于附加
+ * 校验），OAuth 短 token 不传。
  */
 object QrScoreImport {
 
     private const val TAG = "QrScoreImport"
-
-    /** EasyMai 后端（负责 SGWCMAID → userId 解密与官方数据代理拉取）。 */
-    private const val EASYMAI_BASE = "https://mai.lista233.cn"
 
     private const val DF_LEGACY_API = "https://www.diving-fish.com/api/maimaidxprober"
 
     /** 水鱼 OAuth API（Bearer 鉴权，带 write scope 即可写成绩）。 */
     private const val DF_OAUTH_API = "https://maimai.diving-fish.com/api/maimaidxprober"
 
-    /** EasyMai 与水鱼后端约定的 jwt 加密密钥（与 mai.lista233.cn 服务端对齐）。 */
-    private const val EASYMAI_SECRET = "MaiLista233QwQ"
-
     /**
-     * 浏览器 UA。OkHttp 默认 UA 是 `okhttp/4.x`，而 mai.lista233.cn 对请求来源有环境校验，
-     * 非浏览器 UA 会被直接断连（"能握手但被关"的一大诱因）。统一伪装成 Android Chrome，
-     * 让服务端认为请求来自网页版 EasyMai。
+     * 浏览器 UA。水鱼部分接口对请求来源有环境校验，OkHttp 默认 UA（okhttp/4.x）可能被
+     * 直接断连。统一伪装成 Android Chrome。
      */
     private const val BROWSER_UA =
         "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) " +
@@ -77,7 +70,6 @@ object QrScoreImport {
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(120, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
-        // 统一注入浏览器环境头，复刻网页版 EasyMai 的请求特征（防来源校验断连）。
         .addInterceptor { chain ->
             chain.proceed(
                 chain.request().newBuilder()
@@ -89,39 +81,9 @@ object QrScoreImport {
         }
         .build()
 
-    // ── DTO（kotlinx.serialization 直出生成器，无 Gson 反射，不惧 R8） ──
+    // ── DTO ──
 
-    /** GET /apiqr 响应：userID == -1 表示二维码不合法或已过期。 */
-    @Serializable
-    data class ApiQrResponse(val userID: Long = -1L)
-
-    /** 官方单条游玩记录（achievement 为 ×10000 的整数，如 1005000 = 100.5000%）。 */
-    @Serializable
-    data class OfficialMusicDetail(
-        val musicId: Int = 0,
-        val level: Int = 0,
-        val achievement: Double = 0.0,
-        val deluxscoreMax: Long = 0L,
-        val comboStatus: Int = 0,
-        val syncStatus: Int = 0,
-        val playCount: Int = 0,
-    )
-
-    @Serializable
-    data class OfficialUserMusic(val userMusicDetailList: List<OfficialMusicDetail> = emptyList())
-
-    /** GET /getUserMusic 响应：官方全量玩家数据。 */
-    @Serializable
-    data class OfficialUserData(
-        val userId: Long = -1L,
-        val nickname: String? = null,
-        val rating: Int? = null,
-        @SerialName("additional_rating") val additionalRating: Int? = null,
-        val plate: String? = null,
-        val userMusicList: List<OfficialUserMusic> = emptyList(),
-    )
-
-    /** 水鱼 update_records 单条记录格式（与官方代理工具 / EasyMai 一致）。 */
+    /** 水鱼 update_records 单条记录格式。 */
     @Serializable
     data class DivingFishRecord(
         val achievements: Double,
@@ -138,18 +100,21 @@ object QrScoreImport {
     @Serializable
     data class UpdateResponse(val message: String? = null)
 
+    @Serializable
+    private data class ImportTokenEnvelope(val token: String? = null)
+
     /** 本地曲库元信息（补 title / type 用）。 */
     data class SongMeta(val title: String, val type: String)
 
     /** 导入结果摘要（不含任何二维码数据）。 */
     data class QrImportSummary(
         val nickname: String,
-        val officialRating: Int?,
+        val officialUserId: Long,
         val recordCount: Int,
         val serverMessage: String,
     )
 
-    // ── 纯逻辑：官方数据 → 水鱼格式（供单测） ──
+    // ── 纯逻辑：宽容解析账号同步数据（供单测） ──
 
     /** comboStatus → 水鱼 fc 字符串。 */
     fun fcLabel(comboStatus: Int): String = when (comboStatus) {
@@ -171,41 +136,6 @@ object QrScoreImport {
     }
 
     /**
-     * 官方全量数据 → 水鱼 update_records 记录列表。
-     * 本地曲库查不到的歌（新曲未同步等）跳过并计数——宁缺毋滥，避免脏 title。
-     */
-    fun convertOfficialRecords(
-        data: OfficialUserData,
-        songMetaById: Map<Int, SongMeta>,
-    ): Pair<List<DivingFishRecord>, Int> {
-        val records = ArrayList<DivingFishRecord>()
-        var skipped = 0
-        for (music in data.userMusicList) {
-            for (detail in music.userMusicDetailList) {
-                val meta = songMetaById[detail.musicId]
-                if (meta == null) {
-                    skipped++
-                    continue
-                }
-                records.add(
-                    DivingFishRecord(
-                        achievements = detail.achievement / 10000.0,
-                        dxScore = detail.deluxscoreMax,
-                        fc = fcLabel(detail.comboStatus),
-                        fs = fsLabel(detail.syncStatus),
-                        levelIndex = detail.level,
-                        musicId = detail.musicId,
-                        playCount = detail.playCount,
-                        type = meta.type,
-                        title = meta.title,
-                    ),
-                )
-            }
-        }
-        return records to skipped
-    }
-
-    /**
      * 从用户粘贴的文本中提取 SGWCMAID 串：
      * 容忍前后杂文/换行，从「SGWCMAID」出现处截取到首个空白符。
      */
@@ -216,21 +146,83 @@ object QrScoreImport {
     }
 
     /**
-     * 复刻 EasyMai 的 jwt 加密（与 mai.lista233.cn 服务端对齐）：XOR + 偏移代换密码，
-     * 密钥固定为 "MaiLista233QwQ"。二维码两步请求都把 DivingFish 的 legacy jwt 加密后
-     * 放进 `jwt-token` 头——服务端大概率要求此头，缺失/裸传会直接断连（早年"connection closed"主因）。
+     * 宽容解析单条账号同步记录 → 水鱼 update_records 格式。
+     *
+     * 同步数据为查分器通用格式，但字段名/数值形态存在变体，这里全部兜住：
+     * - 歌曲标识：`song_id` / `musicId` / `music_id` / `id`；
+     * - 难度：`level_index` / `levelIndex`（0..5，越界视为脏数据丢弃）；
+     * - 达成率：`achievements` / `achievement`，字符串或数值。数值形态启发式：
+     *   大于 101.0 视为 ×10000 整数（如 1005000 = 100.5000%）并除回；≤101.0 恒为
+     *   百分数原样保留（100.5% 这类合法值在 (100,101] 区间，不能误除）；
+     * - fc/fs：字符串原样（fc/fcp/ap/app、fs/fsp/fdx/fdxp/sync），数字则按官方
+     *   comboStatus/syncStatus 枚举映射，未知/空置空；
+     * - dxScore：`dxScore` / `deluxscore` / `deluxscoreMax` / `dx_score`；
+     * - playCount：`playCount` / `play_count`，缺省 0；
+     * - title/type：记录自带则用；缺失时从本地曲库补，曲库也没有则返回 null（跳过，
+     *   宁缺毋滥，避免脏 title 上传）。
      */
-    internal fun encryptString(text: String, key: String = EASYMAI_SECRET): String {
-        var offset = key.sumOf { it.code } % 256
-        val sb = StringBuilder(text.length * 4)
-        for (i in text.indices) {
-            val charCode = text[i].code
-            val keyChar = key[i % key.length].code
-            val encrypted = ((charCode + offset) % 65536) xor keyChar
-            sb.append(encrypted.toString(16).padStart(4, '0'))
-            offset = (offset + charCode) % 256
+    internal fun parseGatewayRecord(
+        element: JsonElement,
+        songMetaById: Map<Int, SongMeta>,
+    ): DivingFishRecord? {
+        if (element !is JsonObject) return null
+
+        fun str(vararg keys: String): String? = keys.firstNotNullOfOrNull { key ->
+            (element[key] as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
         }
-        return sb.toString()
+        fun num(vararg keys: String): Double? = keys.firstNotNullOfOrNull { key ->
+            (element[key] as? JsonPrimitive)?.content?.trim()?.toDoubleOrNull()
+        }
+
+        val songId = num("song_id", "musicId", "music_id", "id")?.toInt() ?: return null
+        val levelIndex = num("level_index", "levelIndex")?.toInt() ?: return null
+        if (levelIndex !in 0..5) return null
+
+        val achievementRaw = num("achievements", "achievement") ?: return null
+        val achievements = if (achievementRaw > 101.0) achievementRaw / 10000.0 else achievementRaw
+
+        fun statusOrLabel(vararg keys: String, enumLabel: (Int) -> String): String {
+            val raw = str(*keys) ?: return ""
+            val asInt = raw.trim().toDoubleOrNull()?.toInt()
+            return if (asInt != null) enumLabel(asInt) else raw
+        }
+        val fc = statusOrLabel("fc", "comboStatus", "combo_type", enumLabel = ::fcLabel)
+        val fs = statusOrLabel("fs", "syncStatus", "sync_type", enumLabel = ::fsLabel)
+
+        val dxScore = num("dxScore", "deluxscore", "deluxscoreMax", "dx_score")?.toLong() ?: 0L
+        val playCount = num("playCount", "play_count")?.toInt() ?: 0
+
+        var title = str("title") ?: ""
+        var type = str("type") ?: ""
+        val meta = songMetaById[songId]
+        if (title.isBlank()) title = meta?.title ?: return null
+        if (type.isBlank()) type = meta?.type ?: return null
+
+        return DivingFishRecord(
+            achievements = achievements,
+            dxScore = dxScore,
+            fc = fc,
+            fs = fs,
+            levelIndex = levelIndex,
+            musicId = songId,
+            playCount = playCount,
+            type = type,
+            title = title,
+        )
+    }
+
+    /** 原始记录列表 → 水鱼格式（返回 records 与跳过数）。 */
+    fun convertGatewayRecords(
+        rawRecords: List<JsonElement>,
+        songMetaById: Map<Int, SongMeta>,
+    ): Pair<List<DivingFishRecord>, Int> {
+        val records = ArrayList<DivingFishRecord>(rawRecords.size)
+        var skipped = 0
+        for (raw in rawRecords) {
+            val parsed = runCatching { parseGatewayRecord(raw, songMetaById) }.getOrNull()
+            if (parsed == null) skipped++ else records.add(parsed)
+        }
+        return records to skipped
     }
 
     // ── 网络步骤 ──
@@ -276,46 +268,6 @@ object QrScoreImport {
         }
         return trimmed
     }
-
-    @Serializable
-    private data class ImportTokenEnvelope(val token: String? = null)
-
-    /** SGWCMAID → 官方加密 userId（-1 = 不合法或已过期）。 */
-    suspend fun resolveUserId(qrCode: String, rawJwt: String?): Result<Long> =
-        withContext(Dispatchers.IO) {
-            runCatching {
-                val encoded = java.net.URLEncoder.encode(qrCode, "UTF-8")
-                val builder = Request.Builder()
-                    .url("$EASYMAI_BASE/apiqr?qr_code=$encoded")
-                    .get()
-                if (!rawJwt.isNullOrBlank()) builder.header("jwt-token", encryptString(rawJwt))
-                client.newCall(builder.build()).execute().use { response ->
-                    val text = response.body?.string().orEmpty()
-                    if (!response.isSuccessful) {
-                        throw IllegalStateException("解析二维码失败（HTTP ${response.code}）：${text.take(80)}")
-                    }
-                    json.decodeFromString(ApiQrResponse.serializer(), text).userID
-                }
-            }
-        }
-
-    /** userId → 官方全量游玩数据。 */
-    suspend fun fetchUserMusic(userId: Long, rawJwt: String?): Result<OfficialUserData> =
-        withContext(Dispatchers.IO) {
-            runCatching {
-                val builder = Request.Builder()
-                    .url("$EASYMAI_BASE/getUserMusic?userID=$userId")
-                    .get()
-                if (!rawJwt.isNullOrBlank()) builder.header("jwt-token", encryptString(rawJwt))
-                client.newCall(builder.build()).execute().use { response ->
-                    val text = response.body?.string().orEmpty()
-                    if (!response.isSuccessful) {
-                        throw IllegalStateException("获取官方数据失败（HTTP ${response.code}）：${text.take(80)}")
-                    }
-                    json.decodeFromString(OfficialUserData.serializer(), text)
-                }
-            }
-        }
 
     /** 上传到水鱼（legacy 路径）：POST update_records（import-token 头，JSON 数组 body）。 */
     suspend fun uploadRecords(importToken: String, records: List<DivingFishRecord>): Result<String> =
@@ -381,10 +333,63 @@ object QrScoreImport {
         return null
     }
 
-    // ── 一条龙编排 ──
+    // ── 同步：账号云端 → 水鱼（二维码导入的后半程，也是「手动同步」本体） ──
 
     /**
-     * 二维码导入全流程：校验 → 解码 → 拉数据 → 转换 → 上传。
+     * 从账号云端拉取同步成绩并上传水鱼。
+     * 成功后刷新「最近同步时间」（[lastSyncAt]）。
+     *
+     * @return 上传记录数
+     */
+    suspend fun syncGatewayToDivingFish(
+        importToken: String? = null,
+        onLog: (String) -> Unit = {},
+    ): Result<Int> {
+        onLog("正在从账号拉取同步成绩…")
+        val rawRecords = MaiQrGateway.pullScores().getOrElse {
+            Log.w(TAG, "pullScores failed", it)
+            return Result.failure(IllegalStateException(dnsMsg("拉取同步数据失败", it)))
+        }
+        if (rawRecords.isEmpty()) {
+            return Result.failure(IllegalStateException("账号云端暂无同步数据，请先用二维码导入一次"))
+        }
+        onLog("已拉取 ${rawRecords.size} 条原始记录，正在转换…")
+
+        val songMetaById = withContext(Dispatchers.IO) { loadSongMeta() }
+        val (records, skipped) = convertGatewayRecords(rawRecords, songMetaById)
+        if (records.isEmpty()) {
+            return Result.failure(IllegalStateException("没有可上传的记录（本地曲库可能未同步，请先更新曲库）"))
+        }
+        onLog("转换完成：${records.size} 条记录${if (skipped > 0) "（跳过无法解析 $skipped 条）" else ""}")
+
+        val cred = resolveUploadCredential(importToken) ?: return Result.failure(
+            IllegalStateException(
+                "没有可用的水鱼写入凭证：请先在本应用「我」页通过 OAuth 授权登录水鱼，" +
+                    "或填入水鱼网页版「个人资料」的导入令牌",
+            ),
+        )
+        onLog("正在上传至水鱼查分器（凭证：${cred.desc}）…")
+        val message = postUpdateRecords(cred.baseUrl, cred.headerName, cred.headerValue, records)
+            .getOrElse {
+                Log.w(TAG, "uploadRecords failed", it)
+                return Result.failure(it)
+            }
+        if (message.contains("token", ignoreCase = true) && message.contains("误")) {
+            return Result.failure(IllegalStateException("导入令牌有误，请到水鱼网页版「个人资料」核对后重试"))
+        }
+        onLog("水鱼响应：$message")
+
+        SpUtil.setQrGatewayLastSyncAt(System.currentTimeMillis())
+        return Result.success(records.size)
+    }
+
+    /** 本机记录的最近一次「账号 → 水鱼」同步时间（毫秒；从未同步过为 0）。 */
+    fun lastSyncAt(): Long = SpUtil.getQrGatewayLastSyncAt()
+
+    // ── 二维码导入一条龙：校验 → 同步进账号 → 拉取 → 上传水鱼 ──
+
+    /**
+     * 二维码导入全流程。
      *
      * @param qrCodeRaw 用户输入 / 扫码得到的原始文本（内部自动提取 SGWCMAID）
      * @param importToken 用户在水鱼网页版「个人资料」查看的**成绩导入令牌**（可选）：
@@ -399,84 +404,41 @@ object QrScoreImport {
     ): Result<QrImportSummary> {
         onLog("开始二维码导入流程")
 
-        // 1. 读取官方成绩必须经 mai.lista233.cn，该接口要求携带「账号密码登录」拿到的 legacy
-        //    jwt（加密后放入 jwt-token 头）。OAuth 授权拿不到此 jwt，故 QR 导入必须先用水鱼
-        //    账号密码登录——否则服务端直接断连（早年 connection closed 主因）。
-        val rawJwt = rawDivingFishJwt() ?: return Result.failure(
-            IllegalStateException(
-                "二维码导入需要先用水鱼「账号密码」登录：读取官方成绩依赖账号密码登录态，" +
-                    "OAuth 授权不支持此环节。请到「我」页用账号密码登录水鱼后再试。",
-            ),
-        )
-        onLog("已检测到水鱼账号密码登录态（用于读取官方成绩）")
-
-        // 2. 二维码合法性
+        // 1. 二维码合法性
         val qrCode = extractQrCode(qrCodeRaw)
             ?: return Result.failure(IllegalStateException("未识别到 SGWCMAID 二维码内容，请确认粘贴的是公众号二维码解析文本"))
         onLog("已提取二维码内容（SGWCMAID…${qrCode.takeLast(4)}，共 ${qrCode.length} 字符）")
 
-        // 3. QR → userId
-        onLog("正在解析二维码…")
-        val userId = resolveUserId(qrCode, rawJwt).getOrElse {
-            Log.w(TAG, "resolveUserId failed", it)
-            return Result.failure(IllegalStateException(dnsMsg("解析二维码失败", it)))
-        }
-        if (userId <= 0L) {
-            return Result.failure(IllegalStateException("二维码不合法或已过期（请在公众号重新生成）"))
-        }
-        onLog("解析成功，官方 userId 已获取")
-
-        // 4. 官方数据
-        onLog("正在拉取官方游玩数据（全难度）…")
-        val official = fetchUserMusic(userId, rawJwt).getOrElse {
-            Log.w(TAG, "fetchUserMusic failed", it)
-            return Result.failure(IllegalStateException(dnsMsg("获取官方数据失败", it)))
-        }
-        if (official.userMusicList.isEmpty()) {
-            return Result.failure(IllegalStateException("官方数据为空（可能二维码已过期），请在公众号重新生成后再试"))
-        }
-        onLog("官方数据已获取：${official.nickname.orEmpty().ifBlank { "未知昵称" }}，Rating ${official.rating ?: "?"}")
-
-        // 5. 转换（本地曲库补 title / type）
-        val songMetaById = withContext(Dispatchers.IO) { loadSongMeta() }
-        val (records, skipped) = convertOfficialRecords(official, songMetaById)
-        if (records.isEmpty()) {
-            return Result.failure(IllegalStateException("没有可上传的记录（本地曲库可能未同步，请先更新曲库）"))
-        }
-        onLog("转换完成：${records.size} 条记录${if (skipped > 0) "（跳过本地曲库未收录 $skipped 条）" else ""}")
-
-        // 6. 解析上传凭证（分级：手动令牌 > OAuth Bearer > legacy 自动换令牌）
-        val cred = resolveUploadCredential(importToken) ?: return Result.failure(
-            IllegalStateException(
-                "没有可用的水鱼写入凭证：请先在本应用「我」页通过 OAuth 授权登录水鱼，" +
-                    "或在下方填入水鱼网页版「个人资料」的导入令牌",
-            ),
-        )
-        onLog("正在上传至水鱼查分器（凭证：${cred.desc}）…")
-        val message = postUpdateRecords(cred.baseUrl, cred.headerName, cred.headerValue, records)
+        // 2. 同步进账号（解析服务一步完成解密+拉官方+转换入库；需已接入账号）
+        onLog("正在把二维码交给解析服务同步（全难度）…")
+        val dfCode = rawDivingFishJwt()
+        val fetch = MaiQrGateway.fetchByQrCode(qrCode, divingFishCode = dfCode, onLog = onLog)
             .getOrElse {
-                Log.w(TAG, "uploadRecords failed", it)
-                return Result.failure(it)
+                Log.w(TAG, "fetchByQrCode failed", it)
+                return Result.failure(IllegalStateException(dnsMsg("同步二维码数据失败", it)))
             }
-        if (message.contains("token", ignoreCase = true) && message.contains("误")) {
-            return Result.failure(IllegalStateException("导入令牌有误，请到水鱼网页版「个人资料」核对后重试"))
+        val preview = fetch.preview
+        onLog("同步成功：${preview.userName.orEmpty().ifBlank { "未知昵称" }}，正在拉取全量数据…")
+
+        // 3. 从账号拉取并上传水鱼
+        val count = syncGatewayToDivingFish(importToken, onLog).getOrElse {
+            return Result.failure(it)
         }
-        onLog("水鱼响应：$message")
 
         // 二维码数据到此已无任何引用（qrCode 为局部变量，函数返回即随 GC 丢弃）
         return Result.success(
             QrImportSummary(
-                nickname = official.nickname.orEmpty(),
-                officialRating = official.rating,
-                recordCount = records.size,
-                serverMessage = message,
+                nickname = preview.userName.orEmpty(),
+                officialUserId = preview.userId,
+                recordCount = count,
+                serverMessage = "同步完成",
             ),
         )
     }
 
     /**
-     * 把异常转成友好文案：DNS 解析失败（No address / Unable to resolve host）提示切换网络或
-     * 开 VPN；其余原样透出 message。
+     * 把异常转成友好文案：DNS 解析失败（No address / Unable to resolve host）提示切换网络
+     * 或开 VPN；其余原样透出 message。
      */
     private fun dnsMsg(prefix: String, e: Throwable): String {
         val msg = e.message.orEmpty()
@@ -484,8 +446,7 @@ object QrScoreImport {
             msg.contains("Unable to resolve host", ignoreCase = true) ||
             msg.contains("No address associated with hostname", ignoreCase = true)
         return if (isDns) {
-            "$prefix：无法解析二维码服务域名（当前网络可能限制了 mai.lista233.cn 的 DNS），" +
-                "请切换网络或开启 VPN 后重试"
+            "$prefix：无法解析服务域名（当前网络可能限制了 DNS），请切换网络或开启 VPN 后重试"
         } else {
             "$prefix：$msg"
         }
@@ -493,7 +454,7 @@ object QrScoreImport {
 
     /**
      * 取水鱼原始 jwt token 值。SP 里存的是账号密码登录响应的完整 Set-Cookie 串
-     * （`jwt_token=xxx; Path=/; ...`），import_token / EasyMai 接口要的是裸值。
+     * （`jwt_token=xxx; Path=/; ...`），import_token / 解析服务要的是裸值。
      */
     internal fun rawDivingFishJwt(): String? {
         val stored = SpUtil.getDivingFishJwt()

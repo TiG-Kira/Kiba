@@ -45,6 +45,10 @@ object SpUtil {
     private const val KEY_DF_INSTALL_ID = "diving_fish_install_id"
     private const val KEY_DF_NICKNAME_OAUTH = "diving_fish_nickname_oauth"
     private const val KEY_DF_JWT = "diving_fish_jwt"
+    private const val KEY_QR_GATEWAY_USERNAME = "qr_gateway_username"
+    private const val KEY_QR_GATEWAY_PASSWORD = "qr_gateway_password"
+    private const val KEY_QR_GATEWAY_TOKEN = "qr_gateway_token"
+    private const val KEY_QR_GATEWAY_LAST_SYNC = "qr_gateway_last_sync_at"
 
     private const val KEY_VERSION = "db_version"
     private const val KEY_LAST_UPDATE_TIME = "chart_stats_db_last_update_time"
@@ -163,6 +167,35 @@ object SpUtil {
 
     /** 任一通道有效即视为已登录：OAuth 绑定（KEY_DF_BOUND）或原版 jwt。 */
     fun isDivingFishLoggedIn(): Boolean = isDivingFishBound() || getDivingFishJwt().isNotBlank()
+
+    // ================= 二维码取数网关账号（仅存本机） =================
+
+    fun getQrGatewayUsername(): String =
+        userInfoPrefs.getString(KEY_QR_GATEWAY_USERNAME, "") ?: ""
+
+    fun getQrGatewayPassword(): String =
+        userInfoPrefs.getString(KEY_QR_GATEWAY_PASSWORD, "") ?: ""
+
+    fun putQrGatewayCredentials(username: String, password: String) {
+        userInfoPrefs.edit {
+            putString(KEY_QR_GATEWAY_USERNAME, username)
+            putString(KEY_QR_GATEWAY_PASSWORD, password)
+        }
+    }
+
+    fun getQrGatewayToken(): String =
+        userInfoPrefs.getString(KEY_QR_GATEWAY_TOKEN, "") ?: ""
+
+    fun putQrGatewayToken(token: String) {
+        userInfoPrefs.edit { putString(KEY_QR_GATEWAY_TOKEN, token) }
+    }
+
+    /** 最近一次「账号云端 → 水鱼」同步时间（毫秒；从未同步为 0）。 */
+    fun getQrGatewayLastSyncAt(): Long = userInfoPrefs.getLong(KEY_QR_GATEWAY_LAST_SYNC, 0L)
+
+    fun setQrGatewayLastSyncAt(timestampMs: Long) {
+        userInfoPrefs.edit { putLong(KEY_QR_GATEWAY_LAST_SYNC, timestampMs) }
+    }
 
     // ================= SONG INFO =================
 

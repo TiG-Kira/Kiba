@@ -64,6 +64,7 @@ fun MeScreen(
     onOpenDxConverter: () -> Unit,
     onOpenFavorites: () -> Unit,
     onOpenMachineLogin: () -> Unit,
+    onOpenGatewayAccount: () -> Unit,
     onOpenRatingCalc: () -> Unit,
     onOpenVersionMap: () -> Unit,
     onOpenHotCharts: () -> Unit,
@@ -202,6 +203,12 @@ fun MeScreen(
                         summary = "打开微信「舞萌 | 中二」公众号，点底部「玩家二维码」菜单即可扫码上机",
                         startAction = { PrefIcon(MiuixGlassIcons.Regular.Phone) },
                         onClick = onOpenMachineLogin,
+                    )
+                    ArrowPreference(
+                        title = "接入 Easymai 账号",
+                        summary = "二维码导入成绩的前置账号：登录/注册、手动同步、注销",
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.ContactsBook) },
+                        onClick = onOpenGatewayAccount,
                     )
                     ArrowPreference(
                         title = "达成率计算",
