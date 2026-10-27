@@ -53,8 +53,9 @@ object DivingFishAccount {
     /** 原版通道域名（login / records / query/player 与传统 prober API 一致）。 */
     private const val LEGACY_API_URL = "https://www.diving-fish.com/api/maimaidxprober"
 
-    /** 与应用获批权限一致；写权限审核通过后可加 prober.records.write。 */
-    private const val SCOPE = "openid profile prober.profile.read prober.records.read"
+    /** 与应用获批权限一致：读 + 写（client_id 已通过人工审核，拥有成绩写入权限）。 */
+    private const val SCOPE =
+        "openid profile prober.profile.read prober.records.read prober.records.write"
 
     private const val GRANT_CONFIRMATION_CODE =
         "urn:diving-fish:params:oauth:grant-type:confirmation-code"
@@ -602,6 +603,21 @@ object DivingFishAccount {
         cachedToken = token
         tokenExpireAtMs = System.currentTimeMillis() +
             (expiresInSec - TOKEN_EXPIRE_MARGIN_SEC).coerceAtLeast(0) * 1000L
+    }
+
+    /**
+     * OAuth 写入凭证：已通过 OAuth 绑定的用户，返回带 write scope 的 Bearer access_token，
+     * 用于水鱼 `maimai.diving-fish.com` 的 `player/update_records` 写接口。
+     *
+     * 本应用是**公开客户端**（仅 client_id、无 client_secret），client_id 已通过人工审核、
+     * 拥有 `prober.records.write` 权限，因此 OAuth 短令牌可直接用于写成绩，无需用户手填导入令牌。
+     *
+     * 未绑定 OAuth（仅 legacy jwt 登录 / 完全未登录）返回 null，由调用方退回导入令牌 / legacy 路径。
+     */
+    suspend fun oauthWriteBearer(): String? {
+        // legacy jwt 通道走 Cookie，不走 OAuth 写；交给调用方用 import-token 老路径
+        if (SpUtil.getDivingFishJwt().isNotBlank()) return null
+        return obtainToken().getOrNull()?.let { "Bearer $it" }
     }
 
     // ── 数据访问（供 Agent / UI） ──

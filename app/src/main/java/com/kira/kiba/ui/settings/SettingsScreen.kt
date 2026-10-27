@@ -80,6 +80,7 @@ fun SettingsScreen(
     scrollBehavior: ScrollBehavior,
     onOpenLlmConfig: () -> Unit,
     onOpenMachineUpdate: () -> Unit,
+    onOpenQrImport: () -> Unit,
     onOpenAbout: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -236,10 +237,16 @@ fun SettingsScreen(
             item(key = "tool_card") {
                 Card(modifier = (Modifier.fillMaxWidth())) {
                     ArrowPreference(
-                        title = "机台成绩更新",
-                        summary = "VPN 抓包方案：在机台 WiFi 下把成绩同步到水鱼",
+                        title = "机台成绩更新（VPN）",
+                        summary = "在机台 WiFi 下抓包，把成绩同步到水鱼",
                         startAction = { PrefIcon(MiuixGlassIcons.Regular.Update) },
                         onClick = onOpenMachineUpdate,
+                    )
+                    ArrowPreference(
+                        title = "二维码导入成绩",
+                        summary = "免 VPN：官方登录二维码 + 导入令牌直接同步",
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Scan) },
+                        onClick = onOpenQrImport,
                     )
                 }
             }

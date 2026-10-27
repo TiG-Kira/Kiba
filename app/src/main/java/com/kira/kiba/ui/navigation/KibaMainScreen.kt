@@ -51,6 +51,7 @@ import com.kira.kiba.ui.songdetail.ChartDetailScreen
 import com.kira.kiba.ui.tools.DxConverterScreen
 import com.kira.kiba.ui.tools.HotChartsScreen
 import com.kira.kiba.ui.tools.MachineUpdateScreen
+import com.kira.kiba.ui.tools.QrImportScreen
 import com.kira.kiba.ui.tools.RatingCalcScreen
 import com.kira.kiba.ui.tools.VersionMapScreen
 import com.kira.kiba.ui.songdetail.SongDetailScreen
@@ -181,6 +182,11 @@ sealed interface KibaSubPage {
     /** 机台成绩更新（VPN 抓包方案）。 */
     data object MachineUpdate : KibaSubPage {
         override val title: String = "机台成绩更新"
+    }
+
+    /** 二维码导入成绩（免 VPN：官方二维码 + 水鱼导入令牌）。 */
+    data object QrImport : KibaSubPage {
+        override val title: String = "二维码导入成绩"
     }
 
     /** DX 分数转换（判定数量 → 达成率 / Rating）。 */
@@ -515,6 +521,7 @@ fun KibaMainScreen() {
                               )
                               is KibaSubPage.DxConverter -> DxConverterScreen(scrollBehavior = scrollBehavior)
                               is KibaSubPage.MachineUpdate -> MachineUpdateScreen(scrollBehavior = scrollBehavior)
+                              is KibaSubPage.QrImport -> QrImportScreen(scrollBehavior = scrollBehavior)
                               is KibaSubPage.Favorites -> FavoritesScreen(
                                   scrollBehavior = scrollBehavior,
                                   onOpenSong = { song -> pushPage(KibaSubPage.SongDetail(song.songData.id)) },
@@ -558,6 +565,7 @@ fun KibaMainScreen() {
                                   scrollBehavior = scrollBehavior,
                                   onOpenLlmConfig = { pushPage(KibaSubPage.LlmConfig) },
                                   onOpenMachineUpdate = { pushPage(KibaSubPage.MachineUpdate) },
+                                  onOpenQrImport = { pushPage(KibaSubPage.QrImport) },
                                   onOpenAbout = { pushPage(KibaSubPage.About) },
                               )
                           }

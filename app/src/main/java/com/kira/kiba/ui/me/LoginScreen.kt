@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
@@ -35,18 +36,18 @@ import top.yukonga.miuix.kmp.basic.CardDefaults
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
  * 查分器登录页（独立二级页，非弹层——miuix OverlayDialog 与软键盘不兼容）。
  *
- * 登录方式：账号密码（原版 MaimaiData 方式）：POST username/password
- * 换长效 jwt_token，仅存本机私有 SP。
- *
- * OAuth 设备码通道已暂时停用（服务端返回 unauthorized_client，入口已移除）——
- * core 里 [DivingFishAccount.startDeviceAuth] / [finishDeviceAuth] 实现保留，
- * 审核通过后恢复入口只需加回 UI。
+ * 双通道：
+ * 1. 账号密码（原版 MaimaiData 方式，保底可用）：POST username/password
+ *    换长效 jwt_token，仅存本机私有 SP；
+ * 2. OAuth 设备码（推荐，公开客户端）：client_id 已通过人工审核、拥有成绩写入权限，
+ *    直接用本机 client_id 发起授权即可，不碰口令、授权关系存水鱼服务端。
  */
 @Composable
 fun LoginScreen(
@@ -60,6 +61,12 @@ fun LoginScreen(
     var password by remember { mutableStateOf("") }
     var passwordBusy by remember { mutableStateOf(false) }
     var passwordError by remember { mutableStateOf<String?>(null) }
+
+    // OAuth 通道状态
+    var oauthBusy by remember { mutableStateOf(false) }
+    var oauthError by remember { mutableStateOf<String?>(null) }
+    var oauthCode by remember { mutableStateOf("") }
+    var deviceAuth by remember { mutableStateOf<DivingFishAccount.DeviceAuth?>(null) }
 
     // 只有「本次进入后真正发起过登录」且已登录，才自动退出本页。
     // 否则在已登录状态点「重新登录 / 切换账户」时，bound 一进来就是 true，
@@ -147,6 +154,104 @@ fun LoginScreen(
                             ) {
                                 Text(text = if (passwordBusy) "正在登录…" else "登录")
                             }
+                        }
+                    }
+                }
+            }
+
+            // ── OAuth 设备码（推荐通道，公开客户端、已获写权限）──
+            item(key = "oauth_title") { SectionTitle("OAuth 授权登录（推荐）") }
+            item(key = "oauth_card") {
+                Card(
+                    modifier = (Modifier.fillMaxWidth()),
+                    cornerRadius = CardDefaults.CornerRadius,
+                    insideMargin = CardDefaults.InsideMargin,
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = "设备码授权流程（不碰口令，授权关系存水鱼服务端）。" +
+                                "本应用已通过水鱼人工审核、拥有成绩写入权限；作为公开客户端，" +
+                                "直接用本机 client_id 发起授权即可，无需任何密钥。授权后可直接用来" +
+                                "上传成绩（二维码导入成绩页无需再手填导入令牌）。",
+                            style = MiuixTheme.textStyles.footnote1,
+                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        if (deviceAuth == null) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End,
+                            ) {
+                                TextButton(
+                                    text = if (oauthBusy) "正在发起…" else "发起 OAuth 授权",
+                                    onClick = {
+                                        oauthBusy = true
+                                        oauthError = null
+                                        submitted = true
+                                        scope.launch {
+                                            DivingFishAccount.startDeviceAuth()
+                                                .onSuccess { deviceAuth = it }
+                                                .onFailure { e -> oauthError = e.message }
+                                            oauthBusy = false
+                                        }
+                                    },
+                                )
+                            }
+                        } else {
+                            val da = deviceAuth
+                            Text(
+                                text = "授权页显示的确认码（${da?.userCode.orEmpty()}）：",
+                                style = MiuixTheme.textStyles.body2,
+                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            TextField(
+                                value = oauthCode,
+                                onValueChange = { oauthCode = it },
+                                label = "一次性确认码",
+                                useLabelAsPlaceholder = true,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = "授权链接：${da?.verificationUri.orEmpty()}",
+                                style = MiuixTheme.textStyles.footnote2,
+                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            Row(modifier = Modifier.fillMaxWidth()) {
+                                TextButton(
+                                    text = "完成绑定",
+                                    onClick = {
+                                        oauthBusy = true
+                                        oauthError = null
+                                        submitted = true
+                                        scope.launch {
+                                            DivingFishAccount.finishDeviceAuth(oauthCode)
+                                                .onFailure { e -> oauthError = e.message }
+                                            oauthBusy = false
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                )
+                                Spacer(Modifier.width(12.dp))
+                                TextButton(
+                                    text = "取消",
+                                    onClick = {
+                                        deviceAuth = null
+                                        oauthCode = ""
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                        }
+                        oauthError?.let { msg ->
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                text = msg,
+                                style = MiuixTheme.textStyles.footnote1,
+                                color = MiuixTheme.colorScheme.primary,
+                            )
                         }
                     }
                 }

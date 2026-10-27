@@ -141,4 +141,21 @@ class QrScoreImportTest {
         assertNull(QrScoreImport.parseImportToken(""))
         assertNull(QrScoreImport.parseImportToken("{}"))
     }
+
+    // ── encryptString（复刻 EasyMai，与 mai.lista233.cn 服务端对齐）──
+
+    @Test
+    fun `encryptString与EasyMai原版逐字节一致`() {
+        // 以下基准值由 EasyMai 源码 utils/apiconfig.js 的 encryptString 经 Node 实跑得出
+        assertEquals("", QrScoreImport.encryptString(""))
+        assertEquals("016b00e90082", QrScoreImport.encryptString("abc"))
+        assertEquals(
+            "016200c7017300350084012f00b3014d00a800ca0119000d00f8009200b5",
+            QrScoreImport.encryptString("jwt_token_12345"),
+        )
+        assertEquals(
+            "016700c20084011900de008d011500ab012b00b100ff0144001d00b50160003f00c50159003600eb00b2015f0084011d0095014f00e1015f00cb00d5014400ea017600eb016500eb0131004f",
+            QrScoreImport.encryptString("eyJhbGciOiJIUzI1NiJ9.xxxxxxxx.yyyyyyyy"),
+        )
+    }
 }
