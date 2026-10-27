@@ -4,6 +4,7 @@ import android.util.Log
 import com.kira.kiba.core.utils.SpUtil
 import com.kira.kiba.BuildConfig
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -36,10 +37,11 @@ import javax.crypto.spec.SecretKeySpec
  * - 登录 / 注册：body `{username, password}`（均为对称加密后的密文），成功返回
  *   `{code:1, data:{token}}`，token 为 JWT（注册成功时 `code != 0`）；
  * - 续期：header `Authorization: <裸 JWT>`，成功返回 `{code:1, data:{token}}`；
- * - 取数：body `{qr_code, lxCode, dfCode}`，header `Authorization: <对称加密后的 JWT>`
- *   与 `update-async: use`，成功为 HTTP 200 且 `message == "成绩已获取"`，
- *   数据在 `data.{preview, records}`；
- * - 拉取同步成绩：header `Authorization: <裸 JWT>`，返回 `data.records`。
+     * - 取数：body `{qr_code, lxCode, dfCode}`，header `Authorization: <对称加密后的 JWT>`
+     *   与 `update-async: use`，成功为 HTTP 200 且 `message == "成绩已获取"`；
+     *   响应体为**扁平结构** `{message, preview, playCount, b50, records}`（无 data 包裹层，
+     *   与登录端点不同），records 异步落库时可能缺席，需再经拉取端点补取；
+     * - 拉取同步成绩：header `Authorization: <裸 JWT>`，响应体同为扁平结构 `{records, playCount}`。
  *
  * 接入策略：用户在「我」页显式登录/注册（用户名密码），凭据与 JWT 仅存本机私有 SP；
  * 取数时 token 过期自动续期/重登，对用户透明。授权码 `lxCode`（其他查分平台）Kiba
@@ -159,21 +161,19 @@ object MaiQrGateway {
         @kotlinx.serialization.SerialName("iconId") val iconId: Int = -1,
     )
 
-    /** qr-bind 成功响应 envelope（records 原样保留为 JSON 元素，交宽容解析处理）。 */
-    @Serializable
-    data class QrBindEnvelope(
-        val code: Int = 0,
-        val message: String? = null,
-        val data: QrBindData? = null,
-    )
-
-    @Serializable
-    data class QrBindData(
-        val preview: Preview? = null,
-        val playCount: kotlinx.serialization.json.JsonElement? = null,
-        val b50: kotlinx.serialization.json.JsonElement? = null,
-        val records: List<kotlinx.serialization.json.JsonElement> = emptyList(),
-    )
+/**
+ * qr-bind / score 端点的**扁平**响应体（无包裹层）：字段直接位于响应体根部，
+ * 与登录/续期端点的 `{code, message, data}` 包裹结构不同，注意区分。
+ * records 原样保留为 JSON 元素，交宽容解析处理。
+ */
+@Serializable
+data class GatewayDataResponse(
+    val message: String? = null,
+    val preview: Preview? = null,
+    val playCount: kotlinx.serialization.json.JsonElement? = null,
+    val b50: kotlinx.serialization.json.JsonElement? = null,
+    val records: List<kotlinx.serialization.json.JsonElement> = emptyList(),
+)
 
     /** 取数结果（不含二维码任何数据）。 */
     data class QrFetchResult(
@@ -358,7 +358,7 @@ object MaiQrGateway {
                 .header("use-mock", "")
                 .post(body.toRequestBody("application/json; charset=utf-8".toMediaType()))
                 .build()
-            client.newCall(request).execute().use { response ->
+            val bound = client.newCall(request).execute().use { response ->
                 val text = response.body?.string().orEmpty()
                 if (response.code == 403) {
                     throw IllegalStateException("取数被拒绝：${text.take(120)}")
@@ -366,18 +366,32 @@ object MaiQrGateway {
                 if (!response.isSuccessful) {
                     throw IllegalStateException("取数失败（HTTP ${response.code}）：${text.take(120)}")
                 }
-                val envelope = runCatching {
-                    json.decodeFromString(QrBindEnvelope.serializer(), text)
+                // 注意：qr-bind 响应体是扁平结构（message/preview/records 在根部），
+                // 与登录端点的 {code, message, data} 包裹结构不同。
+                val parsed = runCatching {
+                    json.decodeFromString(GatewayDataResponse.serializer(), text)
                 }.getOrElse { throw IllegalStateException("取数响应无法解析：${text.take(120)}") }
-                if (envelope.message != "成绩已获取" || envelope.data == null) {
+                if (parsed.message != "成绩已获取") {
                     throw IllegalStateException(
-                        envelope.message?.takeIf { it.isNotBlank() } ?: "取数异常（服务返回未知状态）",
+                        parsed.message?.takeIf { it.isNotBlank() } ?: "取数异常（服务返回未知状态）",
                     )
                 }
-                val preview = envelope.data.preview
-                    ?: throw IllegalStateException("取数响应缺少玩家概要")
-                QrFetchResult(preview, envelope.data.records)
+                parsed
             }
+            val preview = bound.preview
+                ?: throw IllegalStateException("取数响应缺少玩家概要")
+
+            // 服务端异步落库时 qr-bind 响应可能不带 records，改从账号云端拉取（带重试）。
+            var records = bound.records
+            if (records.isEmpty()) {
+                for (attempt in 1..3) {
+                    onLog("第 $attempt 次从账号云端拉取数据…")
+                    delay(2_000L)
+                    records = pullScores().getOrElse { emptyList() }
+                    if (records.isNotEmpty()) break
+                }
+            }
+            QrFetchResult(preview, records)
         }
     }
 
@@ -411,10 +425,11 @@ object MaiQrGateway {
                     if (!response.isSuccessful) {
                         throw IllegalStateException("拉取同步数据失败（HTTP ${response.code}）：${text.take(120)}")
                     }
-                    val envelope = runCatching {
-                        json.decodeFromString(QrBindEnvelope.serializer(), text)
-                    }.getOrElse { throw IllegalStateException("拉取响应无法解析：${text.take(120)}") }
-                    envelope.data?.records ?: emptyList()
+                // 注意：score 端点响应体同样是扁平结构（records/playCount 在根部）。
+                val parsed = runCatching {
+                    json.decodeFromString(GatewayDataResponse.serializer(), text)
+                }.getOrElse { throw IllegalStateException("拉取响应无法解析：${text.take(120)}") }
+                parsed.records
                 }
             }
         }

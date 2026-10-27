@@ -36,6 +36,7 @@ import com.kira.kiba.ui.common.SectionTitle
 import com.kira.kiba.ui.common.pageContentPadding
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.Button
+import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
 import top.yukonga.miuix.kmp.basic.Scaffold
@@ -255,6 +256,7 @@ fun QrImportScreen(scrollBehavior: ScrollBehavior) {
 
                 item(key = "action_card") {
                     Button(
+                        colors = ButtonDefaults.buttonColorsPrimary(),
                         onClick = { startImport() },
                         modifier = Modifier.fillMaxWidth(),
                         enabled = !importing && qrText.isNotBlank() &&

@@ -53,6 +53,7 @@ import com.kira.kiba.ui.navigation.LocalNavBarBottomPadding
 import com.kira.kiba.ui.navigation.LocalTopBarClearance
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.Button
+import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
@@ -299,7 +300,7 @@ fun AgentScreen(
                     // 放弃：直接公布答案、结束对局（输入「放弃 / 不猜了」等效）
                     TextButton(text = "放弃", onClick = { send("放弃") })
                     Spacer(Modifier.width(4.dp))
-                    Button(onClick = { send(input) }) {
+                    Button(onClick = { send(input) }, colors = ButtonDefaults.buttonColorsPrimary()) {
                         Text(text = if (thinking) "…" else "猜猜看")
                     }
                 }
@@ -317,7 +318,7 @@ fun AgentScreen(
                         modifier = Modifier.weight(1f),
                     )
                     Spacer(Modifier.width(8.dp))
-                    Button(onClick = { send(input) }) {
+                    Button(onClick = { send(input) }, colors = ButtonDefaults.buttonColorsPrimary()) {
                         Text(text = if (thinking) "…" else "发送")
                     }
                 }

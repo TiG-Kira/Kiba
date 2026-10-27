@@ -39,6 +39,7 @@ import com.kira.kiba.core.vpn.server.HttpServerService
 import com.kira.kiba.ui.common.SectionTitle
 import com.kira.kiba.ui.common.pageContentPadding
 import top.yukonga.miuix.kmp.basic.Button
+import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
 import top.yukonga.miuix.kmp.basic.Scaffold
@@ -253,6 +254,7 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
                             Button(
+                                colors = ButtonDefaults.buttonColorsPrimary(),
                                 onClick = {
                                     if (running) {
                                         stopServices()

@@ -31,6 +31,7 @@ import com.kira.kiba.ui.common.SectionTitle
 import com.kira.kiba.ui.common.pageContentPadding
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.Button
+import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
 import top.yukonga.miuix.kmp.basic.Scaffold
@@ -140,6 +141,7 @@ fun LoginScreen(
                             horizontalArrangement = Arrangement.End,
                         ) {
                             Button(
+                                colors = ButtonDefaults.buttonColorsPrimary(),
                                 onClick = {
                                     passwordBusy = true
                                     passwordError = null

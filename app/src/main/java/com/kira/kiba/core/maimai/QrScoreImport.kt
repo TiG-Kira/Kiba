@@ -339,21 +339,30 @@ object QrScoreImport {
      * 从账号云端拉取同步成绩并上传水鱼。
      * 成功后刷新「最近同步时间」（[lastSyncAt]）。
      *
+     * @param preFetchedRecords 二维码导入链路中 qr-bind 已拿到的原始记录（可选）：
+     *   非空时跳过重新拉取，直接使用（省一次全量网络传输）。
      * @return 上传记录数
      */
     suspend fun syncGatewayToDivingFish(
         importToken: String? = null,
+        preFetchedRecords: List<JsonElement>? = null,
         onLog: (String) -> Unit = {},
     ): Result<Int> {
-        onLog("正在从账号拉取同步成绩…")
-        val rawRecords = MaiQrGateway.pullScores().getOrElse {
-            Log.w(TAG, "pullScores failed", it)
-            return Result.failure(IllegalStateException(dnsMsg("拉取同步数据失败", it)))
+        val rawRecords: List<JsonElement>
+        if (preFetchedRecords != null && preFetchedRecords.isNotEmpty()) {
+            rawRecords = preFetchedRecords
+            onLog("已取到 ${rawRecords.size} 条原始记录，正在转换…")
+        } else {
+            onLog("正在从账号拉取同步成绩…")
+            rawRecords = MaiQrGateway.pullScores().getOrElse {
+                Log.w(TAG, "pullScores failed", it)
+                return Result.failure(IllegalStateException(dnsMsg("拉取同步数据失败", it)))
+            }
+            if (rawRecords.isEmpty()) {
+                return Result.failure(IllegalStateException("账号云端暂无同步数据，请先用二维码导入一次"))
+            }
+            onLog("已拉取 ${rawRecords.size} 条原始记录，正在转换…")
         }
-        if (rawRecords.isEmpty()) {
-            return Result.failure(IllegalStateException("账号云端暂无同步数据，请先用二维码导入一次"))
-        }
-        onLog("已拉取 ${rawRecords.size} 条原始记录，正在转换…")
 
         val songMetaById = withContext(Dispatchers.IO) { loadSongMeta() }
         val (records, skipped) = convertGatewayRecords(rawRecords, songMetaById)
@@ -420,8 +429,8 @@ object QrScoreImport {
         val preview = fetch.preview
         onLog("同步成功：${preview.userName.orEmpty().ifBlank { "未知昵称" }}，正在拉取全量数据…")
 
-        // 3. 从账号拉取并上传水鱼
-        val count = syncGatewayToDivingFish(importToken, onLog).getOrElse {
+        // 3. 从账号拉取并上传水鱼（qr-bind 已拿到全量记录则直接透传，不重复拉取）
+        val count = syncGatewayToDivingFish(importToken, preFetchedRecords = fetch.rawRecords, onLog = onLog).getOrElse {
             return Result.failure(it)
         }
 

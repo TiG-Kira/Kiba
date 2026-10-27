@@ -31,6 +31,7 @@ import com.kira.kiba.ui.common.SectionTitle
 import com.kira.kiba.ui.common.pageContentPadding
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.Button
+import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
@@ -317,6 +318,7 @@ internal fun TextEditDialog(
                 TextButton(text = "取消", onClick = onDismiss)
                 Spacer(Modifier.width(12.dp))
                 Button(
+                    colors = ButtonDefaults.buttonColorsPrimary(),
                     onClick = { onConfirm(value) },
                 ) {
                     Text(

@@ -31,6 +31,7 @@ import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.Button
+import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
 import top.yukonga.miuix.kmp.basic.Scaffold
@@ -169,6 +170,7 @@ fun EasyMaiAccountScreen(scrollBehavior: ScrollBehavior) {
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
                                 Button(
+                                    colors = ButtonDefaults.buttonColorsPrimary(),
                                     onClick = { doLogin() },
                                     modifier = Modifier.weight(1f),
                                     enabled = !busy && username.isNotBlank() && password.isNotBlank(),
@@ -228,6 +230,7 @@ fun EasyMaiAccountScreen(scrollBehavior: ScrollBehavior) {
                 }
                 item(key = "sync_button") {
                     Button(
+                        colors = ButtonDefaults.buttonColorsPrimary(),
                         onClick = { doManualSync() },
                         modifier = Modifier.fillMaxWidth(),
                         enabled = !syncing,

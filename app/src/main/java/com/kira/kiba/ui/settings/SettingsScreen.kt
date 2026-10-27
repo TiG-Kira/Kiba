@@ -35,6 +35,7 @@ import com.kira.kiba.ui.common.SectionTitle
 import com.kira.kiba.ui.common.pageContentPadding
 import com.kira.kiba.ui.material.restartMainActivity
 import top.yukonga.miuix.kmp.basic.Button
+import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.DropdownItem
 import top.yukonga.miuix.kmp.basic.Icon
@@ -346,7 +347,7 @@ private fun CoverSourceDialog(
             ) {
                 TextButton(text = "取消", onClick = onDismiss)
                 Spacer(Modifier.width(12.dp))
-                Button(onClick = { onConfirm(value) }) {
+                Button(onClick = { onConfirm(value) }, colors = ButtonDefaults.buttonColorsPrimary()) {
                     Text(text = "保存")
                 }
             }

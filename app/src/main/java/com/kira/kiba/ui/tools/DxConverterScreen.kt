@@ -28,6 +28,7 @@ import com.kira.kiba.core.stats.SongRating
 import com.kira.kiba.ui.common.SectionTitle
 import com.kira.kiba.ui.common.pageContentPadding
 import top.yukonga.miuix.kmp.basic.Button
+import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
 import top.yukonga.miuix.kmp.basic.Scaffold
@@ -170,6 +171,7 @@ fun DxConverterScreen(scrollBehavior: ScrollBehavior) {
                             horizontalArrangement = Arrangement.End,
                         ) {
                             Button(
+                                colors = ButtonDefaults.buttonColorsPrimary(),
                                 onClick = {
                                     error = null
                                     val ds = dsInput.trim().toDoubleOrNull()

@@ -76,6 +76,7 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Button
+import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
@@ -305,6 +306,7 @@ fun SongsScreen(
                         } else {
                             {
                                 Button(
+                                    colors = ButtonDefaults.buttonColorsPrimary(),
                                     onClick = {
                                         SongsRefreshCard.visible.value = true
                                         KibaState.refreshSongData(context)

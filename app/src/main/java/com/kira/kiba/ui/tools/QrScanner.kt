@@ -50,6 +50,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.Button
+import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import java.util.concurrent.Executors
@@ -213,7 +214,7 @@ fun QrCameraScanner(
                 .padding(bottom = 32.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Button(onClick = onClose) {
+            Button(onClick = onClose, colors = ButtonDefaults.buttonColorsPrimary()) {
                 Text(text = "取消扫码", color = MiuixTheme.colorScheme.onPrimary)
             }
             Spacer(Modifier.height(8.dp))

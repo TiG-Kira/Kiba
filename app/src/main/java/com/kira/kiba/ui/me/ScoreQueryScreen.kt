@@ -58,6 +58,7 @@ import com.kira.kiba.ui.common.difficultyColor
 import com.kira.kiba.ui.common.difficultyLabel
 import com.kira.kiba.ui.common.pageContentPadding
 import top.yukonga.miuix.kmp.basic.Button
+import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.DropdownItem
 import top.yukonga.miuix.kmp.basic.Scaffold
@@ -315,6 +316,7 @@ fun ScoreQueryScreen(
             // ── 折叠开关：筛选 + 显示两组默认折叠，点按钮展开 / 收起 ──
             item(key = "filter_toggle", span = { GridItemSpan(maxLineSpan) }) {
                 Button(
+                    colors = ButtonDefaults.buttonColorsPrimary(),
                     onClick = { filtersExpanded = !filtersExpanded },
                     modifier = Modifier.fillMaxWidth(),
                 ) {
