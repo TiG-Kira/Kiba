@@ -30,6 +30,7 @@ import com.kira.kiba.core.account.DivingFishAccount
 import com.kira.kiba.core.data.SongDataSync
 import com.kira.kiba.core.state.KibaState
 import com.kira.kiba.core.utils.SpUtil
+import com.kira.kiba.core.utils.CacheCleaner
 import com.kira.kiba.core.utils.DeviceGrade
 import com.kira.kiba.ui.common.SectionTitle
 import com.kira.kiba.ui.common.pageContentPadding
@@ -99,6 +100,11 @@ fun SettingsScreen(
     var score by remember { mutableStateOf(SpUtil.getDeviceScore()) }
     var passes by remember { mutableStateOf(SpUtil.getDeviceScore() >= DeviceGrade.PASS_SCORE) }
     var scoring by remember { mutableStateOf(false) }
+
+    // ── 封面缓存手动清理 ──
+    var coverCacheMsg by remember { mutableStateOf<String?>(null) }
+    var clearingCovers by remember { mutableStateOf(false) }
+    var showCoverClearConfirm by remember { mutableStateOf(false) }
 
     Scaffold(
         modifier = Modifier
@@ -284,6 +290,22 @@ fun SettingsScreen(
                         }
                     },
                 )
+                ArrowPreference(
+                    title = "清理封面缓存",
+                    summary = when {
+                        clearingCovers -> "正在清理…"
+                        coverCacheMsg != null -> coverCacheMsg
+                        else -> "自动清理不会清除封面缓存；清理后离线封面需重新联网加载"
+                    },
+                    startAction = { PrefIcon(MiuixGlassIcons.Clear) },
+                    onClick = {
+                        if (!clearingCovers) {
+                            coverCacheMsg = null
+                            showCoverClearConfirm = true
+                        }
+                    },
+                    enabled = !clearingCovers,
+                )
                 }
             }
 
@@ -297,6 +319,45 @@ fun SettingsScreen(
                         startAction = { PrefIcon(MiuixGlassIcons.Regular.Info) },
                         onClick = onOpenAbout,
                     )
+                }
+            }
+        }
+    }
+
+    if (showCoverClearConfirm) {
+        KibaGlassDialog(
+            show = true,
+            title = "清理封面缓存",
+            summary = "将清空已缓存的封面图片（内存 + 磁盘）。" +
+                "自动清理永远不会清除封面缓存；手动清理后，离线时封面需重新联网加载。",
+            onDismissRequest = { showCoverClearConfirm = false },
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextButton(text = "取消", onClick = { showCoverClearConfirm = false })
+                Spacer(Modifier.width(12.dp))
+                Button(
+                    onClick = {
+                        showCoverClearConfirm = false
+                        clearingCovers = true
+                        scope.launch(Dispatchers.IO) {
+                            val freed = CacheCleaner.clearCoverCache(context)
+                            withContext(Dispatchers.Main) {
+                                clearingCovers = false
+                                coverCacheMsg = if (freed > 0) {
+                                    if (freed >= 1 shl 20) "已清理 ${freed shr 20} MB（重新联网可恢复）"
+                                    else "已清理 ${(freed shr 10).coerceAtLeast(1)} KB（重新联网可恢复）"
+                                } else {
+                                    "缓存为空，无需清理"
+                                }
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColorsPrimary(),
+                ) {
+                    Text(text = "清理")
                 }
             }
         }

@@ -2,6 +2,7 @@ package com.kira.kiba.core.utils
 
 import android.content.Context
 import android.util.Log
+import coil.imageLoader
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -23,6 +24,11 @@ import java.util.concurrent.TimeUnit
  * 守卫条件（需求：在用户未使用图片生成功能时清理）：
  * - [markGenerationActive] 在分享 / Best50 生成 / 梗图生成开始时打点；
  * - 距最近一次打点不足 [ACTIVE_GRACE_MS] 视为"正在使用"，跳过本次清理，避免误删用户手头文件。
+ *
+ * ⚠️ 封面缓存（Coil image_cache）【永不】被自动清理：离线查分依赖已缓存的封面，
+ * 清掉会导致离线状态下歌曲/谱面无图。封面缓存只经 [clearCoverCache] 由用户显式清理
+ * （设置页「数据 → 清理封面缓存」入口）。因此本类的清理范围严格限定在
+ * [transientDirs] 白名单内，后续新增自动清理目标必须先确认不影响封面可用性。
  */
 object CacheCleaner {
 
@@ -79,7 +85,18 @@ object CacheCleaner {
     }
 
     /**
-     * 清理 transient 缓存（share / generated / updates）。
+     * 自动清理白名单：只允许清这些 transient 目录。
+     * 封面缓存（Coil image_cache）刻意不在名单内——见类注释，保离线封面。
+     */
+    private fun transientDirs(context: Context): List<Pair<File, Long>> = listOf(
+        CacheDirs.share(context) to TRANSIENT_MAX_AGE_MS,
+        CacheDirs.generated(context) to TRANSIENT_MAX_AGE_MS,
+        CacheDirs.updates(context) to UPDATES_MAX_AGE_MS,
+    )
+
+    /**
+     * 清理 transient 缓存（share / generated / updates 白名单）。
+     * 封面缓存（Coil image_cache）永远不在这里清，见类注释。
      * @param force 跳过"用户正在使用"的空闲判断（手动清理入口用）
      * @return 是否删除过任何文件
      */
@@ -89,11 +106,32 @@ object CacheCleaner {
             return@withContext false
         }
         var freed = 0L
-        freed += prune(CacheDirs.share(context), TRANSIENT_MAX_AGE_MS)
-        freed += prune(CacheDirs.generated(context), TRANSIENT_MAX_AGE_MS)
-        freed += prune(CacheDirs.updates(context), UPDATES_MAX_AGE_MS)
+        transientDirs(context).forEach { (dir, maxAge) -> freed += prune(dir, maxAge) }
         Log.i(TAG, "cleaned ${(freed / 1024).coerceAtLeast(0)} KB transient cache")
         freed > 0
+    }
+
+    /**
+     * 手动清理封面缓存（设置页「数据 → 清理封面缓存」入口）：
+     * 清空 Coil 内存缓存 + 磁盘缓存。自动清理【不会】触碰封面缓存，
+     * 所以清完后离线封面需要重新联网加载一次。
+     * @return 释放的字节数（按清理前磁盘缓存目录大小估算）
+     */
+    suspend fun clearCoverCache(context: Context): Long = withContext(Dispatchers.IO) {
+        val loader = context.imageLoader
+        // diskCache.directory 类型随 Coil 版本在 File / okio.Path 之间摇摆，统一归一化为 File
+        val dir = loader.diskCache?.directory?.let { File(it.toString()) }
+            ?: File(context.cacheDir, "image_cache")
+        val size = dirSize(dir)
+        loader.memoryCache?.clear()
+        loader.diskCache?.clear()
+        Log.i(TAG, "cover cache cleared, freed ~${size / 1024} KB")
+        size
+    }
+
+    private fun dirSize(dir: File): Long {
+        if (!dir.exists() || !dir.isDirectory) return 0L
+        return dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
     }
 
     /** 删除目录下修改时间早于 [maxAgeMs] 的文件（不递归子目录，这些目录都是扁平的）。 */
