@@ -9,13 +9,13 @@ import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.Typeface
 import android.util.Log
+import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.db.entity.ChartEntity
 import com.kira.kiba.core.db.entity.RecordEntity
+import com.kira.kiba.core.utils.CoverFetcher
+import com.kira.kiba.core.utils.CoverSources
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import java.util.concurrent.TimeUnit
 import kotlin.math.floor
 import kotlin.math.roundToInt
 
@@ -91,13 +91,6 @@ object Best50ImageBuilder {
         3 -> "kiba_ui_pfc_ms_info02_mst"
         4 -> "kiba_ui_pfc_ms_info02_mst_re"
         else -> "kiba_ui_pfc_ms_info02_mst"
-    }
-
-    private val http: OkHttpClient by lazy {
-        OkHttpClient.Builder()
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(15, TimeUnit.SECONDS)
-            .build()
     }
 
     /**
@@ -281,7 +274,7 @@ object Best50ImageBuilder {
 
     // ---------- 单格（对应 _drawBestList 的单首绘制）----------
 
-    private fun drawTile(
+    private suspend fun drawTile(
         context: Context,
         canvas: Canvas,
         x: Int,
@@ -293,7 +286,7 @@ object Best50ImageBuilder {
         val tile = newBitmap(ITEM_W, ITEM_H)
         val c = Canvas(tile)
 
-        // 背景封面
+        // 背景封面（走 UI 同款 Coil 候选链 + 磁盘缓存，含自定义图床 / lxns / EasyMai / 镜像）
         val cover = fetchCover(context, r.songId)
         val bg = if (cover != null) {
             val scaled = scaleToWidth(cover, ITEM_W)
@@ -697,29 +690,13 @@ object Best50ImageBuilder {
         }
     }
 
-    /** 封面：水鱼 CDN（与 App 内一致），失败退 noimage。 */
-    private fun fetchCover(context: Context, songId: Int): Bitmap? {
-        val candidates = buildList {
-            add(songId)
-            val m10k = songId % 10000
-            if (m10k != songId) add(m10k)
-            val m100k = songId % 100000
-            if (m100k != songId && m100k != m10k) add(m100k)
-        }
-        for (id in candidates) {
-            val url = "https://www.diving-fish.com/covers/%05d.png".format(id)
-            val bmp = runCatching {
-                http.newCall(Request.Builder().url(url).build()).execute().use { resp ->
-                    if (!resp.isSuccessful) return@use null
-                    val bytes = resp.body?.bytes() ?: return@use null
-                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                        ?.let { it.copy(Bitmap.Config.ARGB_8888, true) }
-                        ?.apply { setDensity(Bitmap.DENSITY_NONE) }
-                }
-            }.getOrNull()
-            if (bmp != null) return bmp
-        }
-        return null
+    /** 封面：按 UI 同款候选链（自定义图床 → 水鱼 → lxns → EasyMai → 镜像）取位图，
+     * 命中 Coil 磁盘缓存即秒回；全部失败退 noimage。 */
+    private suspend fun fetchCover(context: Context, songId: Int): Bitmap? {
+        val imageUrl = runCatching {
+            AppDataBase.getInstance().songDao().getSongById(songId)?.imageUrl.orEmpty()
+        }.getOrDefault("")
+        return CoverFetcher.fetch(context, CoverSources.candidates(songId, imageUrl))
     }
 
     /**

@@ -1,10 +1,13 @@
 package com.kira.kiba.core.agent
 
 import android.content.Context
+import android.net.Uri
 import android.util.Log
+import androidx.core.content.FileProvider
 import com.kira.kiba.core.account.DivingFishAccount
+import com.kira.kiba.core.utils.CacheCleaner
+import com.kira.kiba.core.utils.CacheDirs
 import com.kira.kiba.core.utils.Constants
-import com.kira.kiba.core.best50.ImageSaver
 import com.kira.kiba.core.best50.MemeImageBuilder
 import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.db.entity.ChartEntity
@@ -1105,16 +1108,21 @@ class KibaAgent(private val context: Context) {
         return saveMeme(bmp, "gocho")
     }
 
-    /** 梗图存相册并回传 Uri。 */
+    /** 梗图暂存到缓存（cacheDir/generated）并回传 content URI 供对话内展示。 */
     private fun saveMeme(bmp: android.graphics.Bitmap, tag: String): AgentReply {
+        CacheCleaner.markGenerationActive()
         val bytes = java.io.ByteArrayOutputStream().use { out ->
             bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
             out.toByteArray()
         }
-        val uri = ImageSaver.savePng(context, bytes, "kiba_${tag}_${System.currentTimeMillis()}.png")
+        val dir = CacheDirs.generated(context)
+        val name = "kiba_${tag}_${System.currentTimeMillis()}.png"
+        val file = java.io.File(dir, name)
+        file.writeBytes(bytes)
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
         return AgentReply(
-            if (uri != null) "已生成「$tag」图片并保存到相册。" else "图片已生成，但保存相册失败。",
-            imageUri = uri?.toString().orEmpty(),
+            "已生成「$tag」图片（点开可查看；长期不用会被自动清理）。",
+            imageUri = uri.toString(),
         )
     }
 

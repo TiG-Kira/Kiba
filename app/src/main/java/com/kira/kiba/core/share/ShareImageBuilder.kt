@@ -11,13 +11,11 @@ import android.util.Log
 import com.kira.kiba.core.db.entity.ChartEntity
 import com.kira.kiba.core.db.entity.SongDataEntity
 import com.kira.kiba.core.model.DifficultyType
-import com.kira.kiba.core.network.MaimaiDataClient
 import com.kira.kiba.core.stats.RelativeDifficulty
+import com.kira.kiba.core.utils.CoverFetcher
+import com.kira.kiba.core.utils.CoverSources
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
 
 /**
@@ -49,13 +47,6 @@ object ShareImageBuilder {
     var lastError: String = ""
         private set
 
-    private val http: OkHttpClient by lazy {
-        OkHttpClient.Builder()
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(20, TimeUnit.SECONDS)
-            .build()
-    }
-
     // ---------- 对外入口 ----------
 
     /**
@@ -81,7 +72,7 @@ object ShareImageBuilder {
             val canvas = Canvas(base)
 
             // 封面 600×600 居中裁切铺满顶部
-            val cover = cover600(context, song.id)
+            val cover = cover600(context, song.id, song.imageUrl)
             if (cover != null) {
                 canvas.drawBitmap(cover, 0f, 0f, null)
             }
@@ -151,7 +142,7 @@ object ShareImageBuilder {
             val canvas = Canvas(base)
 
             // 封面 600×600 居中裁切 + 难度角标（角标贴在封面上，再整体铺到底板）
-            val cover = cover600(context, song.id)
+            val cover = cover600(context, song.id, song.imageUrl)
             if (cover != null) {
                 val badge = decode(context, diffAsset(chart.difficultyType))
                 if (badge != null) {
@@ -315,8 +306,8 @@ object ShareImageBuilder {
      * 封面（600×600 居中裁切）：网络封面尺寸不固定，需在铺到底板前裁剪到与封面区
      * 同尺寸，否则会铺不满顶部/错位。沿用 Best50ImageBuilder 的 cropCenter 思路。
      */
-    private fun cover600(context: Context, songId: Int): Bitmap? {
-        val src = fetchCover(context, songId) ?: return null
+    private suspend fun cover600(context: Context, songId: Int, imageUrl: String): Bitmap? {
+        val src = fetchCover(context, songId, imageUrl) ?: return null
         if (src.width == 600 && src.height == 600) return src
         return cropCenter(src, 600, 600)
     }
@@ -342,30 +333,10 @@ object ShareImageBuilder {
         return out
     }
 
-    /** 封面：水鱼 CDN 多种编号形态，失败退 null（底板自带的装饰仍在）。 */
-    private fun fetchCover(context: Context, songId: Int): Bitmap? {
-        val candidates = buildList {
-            add(songId)
-            val m10k = songId % 10000
-            if (m10k != songId) add(m10k)
-            val m100k = songId % 100000
-            if (m100k != songId && m100k != m10k) add(m100k)
-        }
-        for (id in candidates) {
-            val url = MaimaiDataClient.DIVING_FISH_COVER_URL + "%05d".format(id) + ".png"
-            val bmp = runCatching {
-                http.newCall(Request.Builder().url(url).build()).execute().use { resp ->
-                    if (!resp.isSuccessful) return@use null
-                    val bytes = resp.body?.bytes() ?: return@use null
-                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                        ?.let { it.copy(Bitmap.Config.ARGB_8888, true) }
-                        ?.apply { setDensity(Bitmap.DENSITY_NONE) }
-                }
-            }.getOrNull()
-            if (bmp != null) return bmp
-        }
-        return null
-    }
+    /** 封面：按 UI 同款候选链（自定义图床 → 水鱼 → lxns → EasyMai → 镜像）取位图，
+     * 命中 Coil 磁盘缓存即秒回；全部失败退 null（底板自带装饰仍在）。 */
+    private suspend fun fetchCover(context: Context, songId: Int, imageUrl: String): Bitmap? =
+        CoverFetcher.fetch(context, CoverSources.candidates(songId, imageUrl))
 
     private fun toPng(base: Bitmap): ByteArray {
         val out = java.io.ByteArrayOutputStream()

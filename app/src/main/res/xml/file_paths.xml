@@ -1,10 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 应用内更新：FileProvider 只暴露私有 updates/ 目录下的更新包；
-     详情分享图：cacheDir/share/ 下的临时 PNG（保存相册/分享好友用） -->
+<!--
+  应用内更新：更新包改落 cacheDir/updates（下载即装、装完即删，属于可重建的 transient）；
+  Best 50 / 梗图等"生成类图片"暂存于 cacheDir/generated；
+  详情分享图：cacheDir/share 下的临时 PNG（保存相册/分享好友用）。
+  三者均走 cache-path，系统「清除缓存」即可整体清空。
+-->
 <paths>
-    <files-path
+    <cache-path
         name="updates"
         path="updates/" />
+    <cache-path
+        name="generated"
+        path="generated/" />
     <cache-path
         name="share"
         path="share/" />
