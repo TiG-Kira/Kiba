@@ -9,6 +9,7 @@ import com.kira.kiba.core.network.MaimaiDataClient
 import com.kira.kiba.core.state.KibaState
 import com.kira.kiba.core.utils.DeviceGrade
 import com.kira.kiba.core.utils.SpUtil
+import com.kira.kiba.core.utils.CacheCleaner
 
 class KibaApplication : Application(), ImageLoaderFactory {
     override fun onCreate() {
@@ -24,6 +25,8 @@ class KibaApplication : Application(), ImageLoaderFactory {
         }
         // 启动引导：恢复查分器登录态 + 静默同步曲库（内部全部降级，不阻塞启动）
         KibaState.bootstrap(this)
+        // 空闲时定期清理图片类 transient 缓存（分享图 / 生成图 / 更新包），避免长期堆积造成异常占用
+        CacheCleaner.schedule(this)
     }
 
     /**

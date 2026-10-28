@@ -241,6 +241,17 @@ object SpUtil {
 
     fun getLastUpdateChartStats(): Long = versionPrefs.getLong(KEY_LAST_UPDATE_TIME, 0)
 
+    // ================= 缓存清理时间戳 =================
+
+    private const val KEY_LAST_CACHE_CLEAN = "last_cache_clean"
+
+    /** 上次 transient 缓存清理时间（毫秒；从未清理为 0）。 */
+    fun getLastCacheClean(): Long = versionPrefs.getLong(KEY_LAST_CACHE_CLEAN, 0)
+
+    fun setLastCacheClean(timeMs: Long) {
+        versionPrefs.edit { putLong(KEY_LAST_CACHE_CLEAN, timeMs) }
+    }
+
     // ================= SEARCH HISTORY =================
 
     fun saveSearchHistory(query: String) {

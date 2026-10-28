@@ -31,8 +31,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.kira.kiba.core.account.DivingFishAccount
-import com.kira.kiba.core.best50.Best50ImageService
 import com.kira.kiba.core.data.SongDataSync
 import com.kira.kiba.core.share.ShareService
 import com.kira.kiba.core.state.KibaState
@@ -492,17 +490,6 @@ fun KibaMainScreen() {
                               is KibaSubPage.Best50 -> Best50Screen(
                                   scrollBehavior = scrollBehavior,
                                   onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
-                                  onSaveImage = {
-                                      val b50 = DivingFishAccount.best50()
-                                      val account = DivingFishAccount.state.value
-                                      Best50ImageService.generateAndSave(
-                                          context = context,
-                                          old = b50.old,
-                                          new = b50.new,
-                                          nickname = account.nickname.ifBlank { "Kiba" },
-                                          rating = b50.rating,
-                                      )
-                                  },
                               )
                               is KibaSubPage.ScoreQuery -> ScoreQueryScreen(
                                   scrollBehavior = scrollBehavior,

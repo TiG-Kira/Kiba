@@ -95,6 +95,10 @@ object ApkDownloader {
                 withContext(Dispatchers.Main) {
                     if (hasInstallPermission(context)) {
                         installApk(context, apkFile)
+                        // 安装器已接收 intent 并创建安装会话后，延迟删掉 cacheDir 里的更新包，
+                        // 避免「下载即装」的 transient 文件长期占用（兜底由 CacheCleaner 1 天窗口清理）。
+                        android.os.Handler(android.os.Looper.getMainLooper())
+                            .postDelayed({ runCatching { apkFile.delete() } }, 5000)
                     } else {
                         requestInstallPermission(context)
                     }
@@ -179,9 +183,10 @@ object ApkDownloader {
         return File(getUpdateDir(context), getApkFileName(versionName))
     }
 
-    // 内部私有目录：外部应用不可读写，且落在 FileProvider 的 files-path 覆盖范围内。
+    // 更新包是「下载即装、装完即删」的 transient 产物，按 Android 标准落 cacheDir，
+    // 系统「清除缓存」即可清空，不占用持久空间；FileProvider 的 cache-path 已覆盖。
     private fun getUpdateDir(context: Context): File {
-        val dir = File(context.filesDir, UPDATE_DIR)
+        val dir = File(context.cacheDir, UPDATE_DIR)
         if (!dir.exists()) {
             dir.mkdirs()
         }

@@ -85,4 +85,19 @@ object ShareService {
 
     /** 生成默认文件名（歌曲 / 谱面 + 时间戳）。 */
     fun defaultName(tag: String): String = "Kiba_${tag}_${System.currentTimeMillis()}.png"
+
+    /**
+     * 直接分享已落盘的文件（如 cacheDir/generated 下的生成图），经 FileProvider 发出。
+     * 不需要任何存储权限。
+     */
+    fun shareFile(context: Context, file: File, fileName: String): Boolean = runCatching {
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "image/png"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(intent, "分享到"))
+        true
+    }.onFailure { Log.w(TAG, "share file failed", it) }.getOrDefault(false)
 }

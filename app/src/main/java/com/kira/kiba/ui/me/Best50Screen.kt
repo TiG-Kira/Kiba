@@ -48,7 +48,12 @@ import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.db.entity.ChartEntity
 import com.kira.kiba.core.db.entity.RecordEntity
 import com.kira.kiba.core.db.entity.SongDataEntity
+import com.kira.kiba.core.best50.Best50ImageBuilder
+import com.kira.kiba.core.best50.Best50ImageService
+import com.kira.kiba.core.best50.GeneratedImage
 import com.kira.kiba.core.model.DifficultyType
+import com.kira.kiba.core.share.ShareService
+import com.kira.kiba.ui.material.KibaGlassDialog
 import kotlinx.coroutines.launch
 import com.kira.kiba.ui.common.EmptyStateCard
 import com.kira.kiba.ui.common.HGap
@@ -83,7 +88,6 @@ private sealed interface B50UiState {
 fun Best50Screen(
     scrollBehavior: ScrollBehavior,
     onOpenSong: (songId: Int) -> Unit = {},
-    onSaveImage: suspend () -> String? = { null },
 ) {
     val account by DivingFishAccount.state.collectAsState()
 
@@ -121,11 +125,12 @@ fun Best50Screen(
     // ── 一行一首：固定单列，贴图九宫格拉长到整行宽（详见 Best50Tile）──
     val columns = 1
 
-    // ── 保存图片到相册 ──
+    // ── 生成 Best 50 图片（暂存缓存，可显式存相册 / 分享）──
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var saving by remember { mutableStateOf(false) }
     var saveMsg by remember { mutableStateOf<String?>(null) }
+    var pending by remember { mutableStateOf<GeneratedImage?>(null) }
 
     Scaffold(
         modifier = Modifier
@@ -168,7 +173,7 @@ fun Best50Screen(
                                 text = when {
                                     saving -> "正在生成图片…"
                                     saveMsg != null -> saveMsg!!
-                                    else -> "生成 Best 50 图片"
+                                    else -> "生成 Best 50 图片（暂存缓存，可存相册 / 分享）"
                                 },
                                 style = MiuixTheme.textStyles.body2,
                                 color = if (saveMsg?.contains("失败") == true) {
@@ -179,15 +184,27 @@ fun Best50Screen(
                                 modifier = Modifier.weight(1f),
                             )
                             TextButton(
-                                text = if (saving) "生成中" else "保存到相册",
+                                text = if (saving) "生成中" else "生成图片",
                                 enabled = !saving && (old.isNotEmpty() || new.isNotEmpty()),
                                 onClick = {
                                     if (!saving) {
                                         saving = true
                                         saveMsg = null
                                         scope.launch {
-                                            val msg = onSaveImage()
-                                            saveMsg = msg ?: "生成失败：缺少成绩数据"
+                                            val img = Best50ImageService.generate(
+                                                context = context,
+                                                old = b50.old,
+                                                new = b50.new,
+                                                nickname = account.nickname.ifBlank { "Kiba" },
+                                                rating = b50.rating,
+                                            )
+                                            if (img != null) {
+                                                pending = img
+                                            } else {
+                                                saveMsg = "生成失败：${
+                                                    Best50ImageBuilder.lastError.ifBlank { "图片绘制异常" }
+                                                }"
+                                            }
                                             saving = false
                                         }
                                     }
@@ -279,6 +296,35 @@ fun Best50Screen(
         }
     }
 }
+    // ── 生成完成：保存到相册 / 分享 选择弹层 ──
+    val img = pending
+    if (img != null) {
+        KibaGlassDialog(
+            show = true,
+            title = "Best 50 图片",
+            summary = "图片已生成到缓存，选择保存方式：",
+            onDismissRequest = { pending = null },
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextButton(text = "取消", onClick = { pending = null })
+                Spacer(Modifier.width(8.dp))
+                TextButton(text = "保存到相册", onClick = {
+                    val uri = Best50ImageService.saveToGallery(context, img)
+                    saveMsg = if (uri != null) "已保存到相册：Pictures/Kiba/${img.displayName}" else "保存失败：无法写入相册"
+                    pending = null
+                })
+                Spacer(Modifier.width(8.dp))
+                TextButton(text = "分享", onClick = {
+                    val ok = ShareService.shareFile(context, img.file, img.displayName)
+                    if (!ok) saveMsg = "分享失败"
+                    pending = null
+                })
+            }
+        }
+    }
 }
 
 /** 加载态卡片：小旋转环 + 提示文字（Best 50 数据异步加载期间显示）。 */@Composable

@@ -22,6 +22,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.kira.kiba.core.share.ShareImageBuilder
 import com.kira.kiba.core.share.ShareService
+import com.kira.kiba.core.utils.CacheCleaner
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -74,6 +75,7 @@ fun ShareImageAction(
         onClick = {
             if (building) return@GlassIconButton
             building = true
+            CacheCleaner.markGenerationActive()
             buildJob = scope.launch {
                 val bytes = try {
                     withContext(Dispatchers.IO) { build() }
