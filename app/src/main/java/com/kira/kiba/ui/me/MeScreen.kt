@@ -13,28 +13,31 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.kira.kiba.core.account.DivingFishAccount
+import com.kira.kiba.core.data.ChuniRecordSync
 import com.kira.kiba.core.model.GameType
 import com.kira.kiba.core.utils.BrowserJump
 import com.kira.kiba.core.utils.SpUtil
+import com.kira.kiba.ui.common.ChuniRatingTag
 import com.kira.kiba.ui.common.DxRatingTag
 import com.kira.kiba.ui.common.SectionTitle
 import com.kira.kiba.ui.common.pageContentPadding
-import com.kira.kiba.ui.material.KibaGlassDialog
+import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
-import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
 import top.yukonga.miuix.kmp.icon.glass.*
 import top.yukonga.miuix.kmp.preference.ArrowPreference
@@ -74,13 +77,30 @@ fun MeScreen(
     onOpenRatingCalc: () -> Unit,
     onOpenVersionMap: () -> Unit,
     onOpenHotCharts: () -> Unit,
+    onOpenChuniBest: () -> Unit,
 ) {
     val account by DivingFishAccount.state.collectAsState()
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     // 当前游戏（曲目页分段开关写入 SpUtil；进入本页时重新读取，切 Tab 会重组所以总能拿到新值）
     var gameType by remember { mutableStateOf(SpUtil.getGameType()) }
-    var showChuniComingDialog by remember { mutableStateOf(false) }
     val isChunithm = gameType == GameType.CHUNITHM
+
+    // ── 中二成绩同步状态（本地缓存值以同步状态为 key 读取，同步完成后自动刷新展示）──
+    val chuniSyncState by ChuniRecordSync.state.collectAsState()
+    val chuniSyncing = chuniSyncState is ChuniRecordSync.SyncState.Syncing
+    val chuniError = (chuniSyncState as? ChuniRecordSync.SyncState.Failed)?.message
+    val chuniJwtPresent = remember { SpUtil.getDivingFishJwt().isNotBlank() }
+    val chuniRating = remember(chuniSyncState) { ChuniRecordSync.getLocalRating() }
+    val chuniNickname = remember(chuniSyncState) { ChuniRecordSync.getLocalNickname() }
+    val chuniRecordCount = remember(chuniSyncState) { ChuniRecordSync.getLocalRecordCount() }
+
+    // 进中二「我」页自动同步一次（本进程内仅一次；顶栏手动刷新不受限）
+    LaunchedEffect(isChunithm, account.bound) {
+        if (isChunithm && chuniJwtPresent && ChuniRecordSync.shouldAutoRefresh()) {
+            ChuniRecordSync.refresh()
+        }
+    }
 
     Scaffold(
         modifier = Modifier
@@ -95,22 +115,35 @@ fun MeScreen(
             contentPadding = pageContentPadding(),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // ── 置顶：Rating 徽章入口（按游戏切换；中二成绩同步尚未上线，点击弹提示）──
+            // ── 置顶：Rating 徽章入口（按游戏切换；中二走账号密码通道同步成绩）──
             item(key = "rating") {
                 if (isChunithm) {
                     Card(modifier = (Modifier.fillMaxWidth())) {
                         ArrowPreference(
-                            title = if (account.bound) {
-                                account.nickname.ifBlank { "查分器用户" }
+                            title = if (chuniJwtPresent) {
+                                chuniNickname.ifBlank { account.nickname.ifBlank { "查分器用户" } }
                             } else {
                                 "未绑定查分器"
                             },
-                            summary = if (account.bound) {
-                                "中二节奏成绩同步即将上线，敬请期待"
-                            } else {
-                                "账号密码登录后，中二成绩同步即将上线"
+                            summary = when {
+                                !chuniJwtPresent ->
+                                    "水鱼 OAuth 暂不支持中二节奏，请使用账号密码登录"
+                                chuniSyncing -> "正在同步中二成绩…"
+                                chuniError != null -> "$chuniError（点击重试）"
+                                chuniRecordCount > 0 ->
+                                    "成绩 $chuniRecordCount 条 · 点击查看中二 Best 30"
+                                else -> "点击同步中二成绩"
                             },
-                            onClick = { showChuniComingDialog = true },
+                            onClick = {
+                                when {
+                                    !chuniJwtPresent -> onOpenLogin()
+                                    chuniRecordCount > 0 -> onOpenChuniBest()
+                                    else -> scope.launch { ChuniRecordSync.refresh() }
+                                }
+                            },
+                            endActions = {
+                                if (chuniRating > 0) ChuniRatingTag(rating = chuniRating)
+                            },
                             startAction = { PrefIcon(MiuixGlassIcons.Regular.Contacts) },
                         )
                     }
@@ -274,20 +307,6 @@ fun MeScreen(
                         )
                     }
                 }
-            }
-        }
-    }
-
-    // 中二节奏成绩同步预告弹层
-    if (showChuniComingDialog) {
-        KibaGlassDialog(
-            show = true,
-            title = "中二节奏成绩同步",
-            summary = "水鱼查分器的中二节奏成绩同步与 Best 页面将在后续版本推出，敬请期待。",
-            onDismissRequest = { showChuniComingDialog = false },
-        ) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                TextButton(text = "知道了", onClick = { showChuniComingDialog = false })
             }
         }
     }

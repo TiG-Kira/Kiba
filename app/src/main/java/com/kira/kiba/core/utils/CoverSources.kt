@@ -63,11 +63,14 @@ object CoverSources {
     }
 
     /**
-     * 中二节奏封面候选链：水鱼 chunithm 封面（`/covers/chunithm/{id:05d}.jpg`）。
-     * 中二节奏无 lxns / EasyMai 等镜像源，仅水鱼 CDN；全部失败由调用方退化为占位。
+     * 中二节奏封面候选链（2026-10 实测）：
+     * 1. 落雪 lxns `assets2.lxns.net/chunithm/jacket/{id}.png`（id **不补零**）——
+     *    主源，24 首抽样 23 命中，覆盖最稳；
+     * 2. 水鱼 `covers/chunithm/{id:05d}.jpg`——兜底（实测大面积 404，仅保留候选）。
+     * 全部失败由调用方退化为占位。
      */
-    fun chuniCandidates(songId: Int): List<String> {
-        val url = MaimaiDataClient.DIVING_FISH_COVER_URL + "chunithm/" + String.format("%05d", songId) + ".jpg"
-        return listOf(url)
-    }
+    fun chuniCandidates(songId: Int): List<String> = listOf(
+        "https://assets2.lxns.net/chunithm/jacket/$songId.png",
+        MaimaiDataClient.DIVING_FISH_COVER_URL + "chunithm/" + String.format("%05d", songId) + ".jpg",
+    )
 }
