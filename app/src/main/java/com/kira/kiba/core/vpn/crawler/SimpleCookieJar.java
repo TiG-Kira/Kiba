@@ -50,4 +50,30 @@ public class SimpleCookieJar implements CookieJar {
             this.cookieStore.clear();
         }
     }
+
+    /** 取指定 host 的 cookie 列表（副本）。 */
+    public List<Cookie> getCookies(String host) {
+        synchronized (lock) {
+            List<Cookie> cookies = cookieStore.get(host);
+            return cookies != null ? new ArrayList<Cookie>(cookies) : new ArrayList<Cookie>();
+        }
+    }
+
+    /**
+     * 取指定 host 的首个 cookie 值。
+     *
+     * 中二节奏抓取需要先 POST `/record/musicGenre/send{Difficulty}`，表单带 `token` 字段
+     * （官方 proxy 实现取的就是会话首个 cookie 的 value）。会话 cookie 也可能落在
+     * 授权域而非成绩域下，取不到时兜底返回 jar 内任意第一个 cookie。
+     */
+    public String getFirstCookieValue(String host) {
+        List<Cookie> list = getCookies(host);
+        if (!list.isEmpty()) return list.get(0).value();
+        synchronized (lock) {
+            for (List<Cookie> cookies : cookieStore.values()) {
+                if (!cookies.isEmpty()) return cookies.get(0).value();
+            }
+        }
+        return null;
+    }
 }
