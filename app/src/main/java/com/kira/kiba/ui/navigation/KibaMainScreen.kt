@@ -34,6 +34,8 @@ import androidx.compose.ui.unit.dp
 import com.kira.kiba.core.data.SongDataSync
 import com.kira.kiba.core.share.ShareService
 import com.kira.kiba.core.state.KibaState
+import com.kira.kiba.core.model.GameType
+import com.kira.kiba.core.utils.SpUtil
 import com.kira.kiba.core.utils.WeChatJump
 import com.kira.kiba.ui.agent.AgentScreen
 import com.kira.kiba.ui.agent.LlmConfigScreen
@@ -55,6 +57,9 @@ import com.kira.kiba.ui.tools.RatingCalcScreen
 import com.kira.kiba.ui.tools.VersionMapScreen
 import com.kira.kiba.ui.songdetail.SongDetailScreen
 import com.kira.kiba.ui.songdetail.SongDetailTopBarSlot
+import com.kira.kiba.ui.songdetail.ChuniSongDetailTopBarSlot
+import com.kira.kiba.ui.songdetail.ChuniSongDetailScreen
+import com.kira.kiba.ui.songdetail.ChuniChartDetailScreen
 import com.kira.kiba.ui.songs.SongGroupScreen
 import com.kira.kiba.ui.songs.SongsRefreshCard
 import com.kira.kiba.ui.material.LocalAdvancedMaterialEnabled
@@ -132,6 +137,16 @@ sealed interface KibaSubPage {
 
     /** 谱面详情（歌曲详情页点击难度卡进入）。 */
     data class ChartDetail(val songId: Int, val difficultyOrdinal: Int) : KibaSubPage {
+        override val title: String = "谱面详情"
+    }
+
+    /** 中二节奏歌曲详情（中二节奏曲库点击进入；不支持分享）。 */
+    data class ChuniSongDetail(val songId: Int) : KibaSubPage {
+        override val title: String = "歌曲详情"
+    }
+
+    /** 中二节奏谱面详情（中二节奏歌曲详情页点击难度卡进入；不支持分享）。 */
+    data class ChuniChartDetail(val songId: Int, val difficultyOrdinal: Int) : KibaSubPage {
         override val title: String = "谱面详情"
     }
 
@@ -250,6 +265,8 @@ fun KibaMainScreen() {
         is KibaTab -> "tab:${page.name}"
         is KibaSubPage.SongDetail -> "sub:song:${page.songId}"
         is KibaSubPage.ChartDetail -> "sub:chart:${page.songId}:${page.difficultyOrdinal}"
+        is KibaSubPage.ChuniSongDetail -> "sub:chuni:song:${page.songId}"
+        is KibaSubPage.ChuniChartDetail -> "sub:chuni:chart:${page.songId}:${page.difficultyOrdinal}"
         is KibaSubPage.SongGroup -> "sub:group:${page.mode.key}:${page.key}"
         is KibaSubPage -> "sub:${page.javaClass.simpleName}"
         else -> page.toString()
@@ -378,6 +395,13 @@ fun KibaMainScreen() {
                           scrollBehavior = scrollBehavior,
                           onBack = { popPage() },
                       )
+                  } else if (sub is KibaSubPage.ChuniSongDetail) {
+                      // 中二节奏歌曲详情页顶栏：封面背景 + 歌名/艺术家 + 收藏 star（不支持分享）
+                      ChuniSongDetailTopBarSlot(
+                          songId = sub.songId,
+                          scrollBehavior = scrollBehavior,
+                          onBack = { popPage() },
+                      )
                   } else {
                       KibaTopBar(
                           title = sub.title,
@@ -487,6 +511,18 @@ fun KibaMainScreen() {
                                   difficultyOrdinal = target.difficultyOrdinal,
                                   scrollBehavior = scrollBehavior,
                               )
+                              is KibaSubPage.ChuniSongDetail -> ChuniSongDetailScreen(
+                                  songId = target.songId,
+                                  scrollBehavior = scrollBehavior,
+                                  onOpenChart = { songId, difficultyOrdinal ->
+                                      pushPage(KibaSubPage.ChuniChartDetail(songId, difficultyOrdinal))
+                                  },
+                              )
+                              is KibaSubPage.ChuniChartDetail -> ChuniChartDetailScreen(
+                                  songId = target.songId,
+                                  difficultyOrdinal = target.difficultyOrdinal,
+                                  scrollBehavior = scrollBehavior,
+                              )
                               is KibaSubPage.Best50 -> Best50Screen(
                                   scrollBehavior = scrollBehavior,
                                   onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
@@ -531,6 +567,9 @@ fun KibaMainScreen() {
                                   onDismissGroupPicker = { songsShowGroupPicker = false },
                                   onSongClick = { song ->
                                       pushPage(KibaSubPage.SongDetail(song.songData.id))
+                                  },
+                                  onChuniSongClick = { chuni ->
+                                      pushPage(KibaSubPage.ChuniSongDetail(chuni.song.id))
                                   },
                                   onOpenGroup = { mode, key ->
                                       pushPage(KibaSubPage.SongGroup(mode, key))

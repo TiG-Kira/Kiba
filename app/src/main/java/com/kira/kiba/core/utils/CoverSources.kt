@@ -61,4 +61,13 @@ object CoverSources {
         }
         return list
     }
+
+    /**
+     * 中二节奏封面候选链：水鱼 chunithm 封面（`/covers/chunithm/{id:05d}.jpg`）。
+     * 中二节奏无 lxns / EasyMai 等镜像源，仅水鱼 CDN；全部失败由调用方退化为占位。
+     */
+    fun chuniCandidates(songId: Int): List<String> {
+        val url = MaimaiDataClient.DIVING_FISH_COVER_URL + "chunithm/" + String.format("%05d", songId) + ".jpg"
+        return listOf(url)
+    }
 }
