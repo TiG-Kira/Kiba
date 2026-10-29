@@ -6,6 +6,7 @@ import android.content.SharedPreferences
 import androidx.core.content.edit
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import com.kira.kiba.core.model.GameType
 import com.kira.kiba.core.model.SongGroupMode
 import java.util.UUID
 
@@ -199,16 +200,49 @@ object SpUtil {
 
     // ================= SONG INFO =================
 
-    fun isFavorite(id: String): Boolean = songInfoPrefs.getBoolean(id, false)
+    /** 当前游戏类型（舞萌 / 中二节奏），曲目页顶部分段开关的唯一真相来源。 */
+    private const val KEY_GAME_TYPE = "game_type"
 
-    fun setFavorite(id: String, isFav: Boolean) {
-        songInfoPrefs.edit { putBoolean(id, isFav) }
+    fun getGameType(): GameType = GameType.fromKey(gameTypePrefs.getString(KEY_GAME_TYPE, null))
+
+    fun setGameType(type: GameType) {
+        gameTypePrefs.edit { putString(KEY_GAME_TYPE, type.key) }
     }
 
-    fun getFavIds(): List<String> {
+    /** 收藏键：中二节奏加 "chuni:" 前缀，避免两游戏 song id 撞车。 */
+    private fun favKey(gameType: GameType, id: String): String =
+        if (gameType == GameType.MAIMAI) id else "chuni:$id"
+
+    fun isFavorite(id: String): Boolean = isFavorite(GameType.MAIMAI, id)
+
+    fun setFavorite(id: String, isFav: Boolean) = setFavorite(GameType.MAIMAI, id, isFav)
+
+    fun getFavIds(): List<String> = getFavIds(GameType.MAIMAI)
+
+    /** 游戏感知的收藏查询（中二节奏返回去掉前缀的纯 id）。 */
+    fun isFavorite(gameType: GameType, id: String): Boolean =
+        songInfoPrefs.getBoolean(favKey(gameType, id), false)
+
+    fun setFavorite(gameType: GameType, id: String, isFav: Boolean) {
+        songInfoPrefs.edit { putBoolean(favKey(gameType, id), isFav) }
+    }
+
+    fun getFavIds(gameType: GameType): List<String> {
         return songInfoPrefs.all
             .filter { it.value == true }
-            .keys.toList()
+            .keys
+            .mapNotNull { key ->
+                if (gameType == GameType.MAIMAI) {
+                    if (key.startsWith("chuni:")) null else key
+                } else {
+                    key.removePrefix("chuni:").takeIf { it != key }
+                }
+            }
+            .toList()
+    }
+
+    private val gameTypePrefs: SharedPreferences by lazy {
+        getSharedPreferences("gameType")
     }
 
     // ================= AGENT 会话持久化 =================
@@ -233,6 +267,16 @@ object SpUtil {
 
     fun setDataVersion(version: String) {
         versionPrefs.edit { putString(KEY_VERSION, version) }
+    }
+
+    /** 中二节奏曲库最后同步日期（无版本号，用日期串近似；空 = 未同步）。 */
+    private const val KEY_CHUNI_VERSION = "chuni_data_version"
+
+    fun getChuniDataVersion(): String =
+        versionPrefs.getString(KEY_CHUNI_VERSION, "") ?: ""
+
+    fun setChuniDataVersion(version: String) {
+        versionPrefs.edit { putString(KEY_CHUNI_VERSION, version) }
     }
 
     fun saveLastUpdateChartStats(time: Long) {

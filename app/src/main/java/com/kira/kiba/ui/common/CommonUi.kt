@@ -82,7 +82,7 @@ fun pageContentPadding(
 )
 
 /** 流派 → 描边色资源（舞萌特色分类色）。 */
-private fun genreStrokeRes(genre: String): Int = when (genre) {
+internal fun genreStrokeRes(genre: String): Int = when (genre) {
     "流行&动漫" -> R.color.pop_stroke
     "niconico & VOCALOID" -> R.color.vocal_stroke
     "东方Project" -> R.color.touhou_stroke

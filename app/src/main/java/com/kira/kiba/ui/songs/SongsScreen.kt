@@ -11,10 +11,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -42,7 +42,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
@@ -51,13 +50,18 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.asFlow
+import com.kira.kiba.core.data.ChuniSongSync
 import com.kira.kiba.core.data.SongDataSync
 import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.db.entity.ChartEntity
+import com.kira.kiba.core.db.entity.ChuniSongWithCharts
 import com.kira.kiba.core.db.entity.SongWithChartsEntity
+import com.kira.kiba.core.model.GameType
 import com.kira.kiba.core.model.SongGroupMode
+import com.kira.kiba.core.repository.ChuniSongWithChartRepository
 import com.kira.kiba.core.repository.SongWithChartRepository
 import com.kira.kiba.core.state.KibaState
 import com.kira.kiba.core.utils.SpUtil
@@ -78,12 +82,12 @@ import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
+import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
-import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.icon.glass.*
 import com.kira.kiba.ui.material.KibaGlassDialog
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -94,6 +98,9 @@ import top.yukonga.miuix.kmp.utils.PressFeedbackType
  * 否则 LazyColumn 空测量会把恢复出的滚动位置钳回 0（详见 [ListSnapshotCache]）。
  */
 object SongsListCache : ListSnapshotCache<List<SongWithChartsEntity>>(emptyList())
+
+/** 中二节奏曲目列表快照（进程级，同 [SongsListCache]）。 */
+object ChuniSongsListCache : ListSnapshotCache<List<ChuniSongWithCharts>>(emptyList())
 
 /**
  * 曲目页刷新进度卡（进程级，UI 层状态）。
@@ -116,6 +123,10 @@ object SongsRefreshCard {
  *
  * 搜索栏默认隐藏：点顶栏搜索按钮展开，再点收起（搜索逻辑不变）。
  *
+ * 游戏类型开关（[GameType]）：顶部分段开关在「舞萌 / 中二节奏」间切换，切换后列表立即
+ * 切换对应的数据源（舞萌 song_data / 中二节奏 chuni_song）。开关是页面内状态，并持久化到
+ * [SpUtil]（全应用「当前游戏」的唯一真相来源，我页面 / 收藏 / 详情 / Best 都据此切换）。
+ *
  * @param searchTrigger 顶栏搜索按钮每次点击 +1，页面据此切换搜索栏展开 / 收起。
  */
 @Composable
@@ -126,6 +137,7 @@ fun SongsScreen(
     showGroupPicker: Boolean = false,
     onDismissGroupPicker: () -> Unit = {},
     onSongClick: (SongWithChartsEntity) -> Unit = {},
+    onChuniSongClick: (ChuniSongWithCharts) -> Unit = {},
     onOpenGroup: (mode: SongGroupMode, key: String) -> Unit = { _, _ -> },
 ) {
     val context = LocalContext.current
@@ -139,6 +151,11 @@ fun SongsScreen(
     // 列表滚动状态：搜索按钮点击时用它做「回到顶部」动画
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+
+    // 当前游戏类型（分段开关）：rememberSaveable 保证切 Tab / 进程恢复不丢；
+    // 同时写入 SpUtil 作为全应用唯一真相来源。
+    var gameTypeKey by rememberSaveable { mutableStateOf(SpUtil.getGameType().key) }
+    val gameType = GameType.fromKey(gameTypeKey)
 
     LaunchedEffect(searchTrigger) {
         if (searchTrigger > 0 && searchTrigger != lastTrigger) {
@@ -160,6 +177,9 @@ fun SongsScreen(
     val repo = remember {
         SongWithChartRepository.getInstance(AppDataBase.getInstance().songWithChartDao())
     }
+    val chuniRepo = remember {
+        ChuniSongWithChartRepository.getInstance(AppDataBase.getInstance().chuniSongWithChartDao())
+    }
     // Room LiveData → Flow → Compose State（DB 更新后自动发射新列表）
     val songsFlow = remember(query) {
         repo.searchSongsWithCharts(
@@ -177,21 +197,33 @@ fun SongsScreen(
     }
     val songs by songsFlow.collectAsStateCached(SongsListCache)
 
+    // 中二节奏列表（按搜索文本；收藏由收藏页单独承载，这里 isFavor=false）
+    val chuniSongsFlow = remember(query) {
+        chuniRepo.searchChuniSongsWithCharts(searchText = query, isFavor = false).asFlow()
+    }
+    val chuniSongs by chuniSongsFlow.collectAsStateCached(ChuniSongsListCache)
+
     // ── 归类：不归类（默认）/ 按版本 / 按 MASTER 谱师 / 按曲师 ──
+    // 中二节奏暂不支持归类（其 genre/版本语义不同），强制平铺。
     // 搜索进行中强制平铺（搜索结果跨分组，归类入口暂隐），搜索清空后恢复。
+    // 注意：groupMode 必须先于 grouping 声明（Kotlin 局部属性初始化顺序）。
     var groupMode by remember {
         mutableStateOf(SongGroupMode.fromKey(SpUtil.getSongGroupMode()))
     }
-    val grouping = groupMode != SongGroupMode.NONE && query.isBlank()
+    val grouping = gameType == GameType.MAIMAI &&
+        groupMode != SongGroupMode.NONE && query.isBlank()
     val groups = remember(songs, groupMode, grouping) {
         if (grouping) buildSongGroups(songs, groupMode) else emptyList()
     }
 
     val syncState by SongDataSync.state.collectAsState()
+    val chuniSyncState by ChuniSongSync.state.collectAsState()
     val updateAvailable by SongDataSync.updateAvailable.collectAsState()
     val localVersion = remember { SpUtil.getDataVersion() }
+    val chuniLocalVersion = remember { ChuniSongSync.getLocalVersion() }
     val syncing = syncState is SongDataSync.SyncState.Checking ||
         syncState is SongDataSync.SyncState.Downloading
+    val chuniSyncing = chuniSyncState is ChuniSongSync.SyncState.Syncing
     // 刷新进度卡：仅曲目页入口点亮（见 [SongsRefreshCard]）
     val refreshCardVisible by SongsRefreshCard.visible.collectAsState()
 
@@ -268,8 +300,19 @@ fun SongsScreen(
             contentPadding = pageContentPadding(),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            // ── 游戏类型分段开关（顶左，落在 pageContentPadding 的 16dp 区内）──
+            item(key = "game_toggle") {
+                GameTypeToggle(
+                    current = gameType,
+                    onSelect = {
+                        gameTypeKey = it.key
+                        SpUtil.setGameType(it)
+                    },
+                )
+            }
+
             // 刷新进度卡（置顶）：仅曲目页刷新入口触发，完成 / 失败提示后隐藏
-            if (refreshCardVisible) {
+            if (refreshCardVisible && gameType == GameType.MAIMAI) {
                 item(key = "sync_card") {
                     SongsSyncProgressCard(state = syncState)
                 }
@@ -293,57 +336,91 @@ fun SongsScreen(
             // 曲库数据卡与归类方式卡已移到顶栏按钮（刷新 / 归类），
             // 列表直接从搜索栏 / 分组入口 / 歌曲卡片开始。
 
-            if (songs.isEmpty()) {
-                item(key = "state") {
-                    EmptyStateCard(
-                        text = when {
-                            syncing -> "正在同步曲库数据…"
-                            query.isNotBlank() -> "没有找到「$query」相关的歌曲\n可换个关键词，或更新曲库后再试"
-                            else -> "曲库还是空的\n更新曲库数据后即可浏览全部歌曲"
-                        },
-                        action = if (syncing) {
-                            null
-                        } else {
-                            {
-                                Button(
-                                    colors = ButtonDefaults.buttonColorsPrimary(),
-                                    onClick = {
-                                        SongsRefreshCard.visible.value = true
-                                        KibaState.refreshSongData(context)
-                                    },
-                                ) {
-                                    Text(text = "立即更新曲库")
+            if (gameType == GameType.MAIMAI) {
+                // ── 舞萌 ──
+                if (songs.isEmpty()) {
+                    item(key = "state") {
+                        EmptyStateCard(
+                            text = when {
+                                syncing -> "正在同步曲库数据…"
+                                query.isNotBlank() -> "没有找到「$query」相关的歌曲\n可换个关键词，或更新曲库后再试"
+                                else -> "曲库还是空的\n更新曲库数据后即可浏览全部歌曲"
+                            },
+                            action = if (syncing) {
+                                null
+                            } else {
+                                {
+                                    Button(
+                                        colors = ButtonDefaults.buttonColorsPrimary(),
+                                        onClick = {
+                                            SongsRefreshCard.visible.value = true
+                                            KibaState.refreshSongData(context)
+                                        },
+                                    ) {
+                                        Text(text = "立即更新曲库")
+                                    }
                                 }
-                            }
-                        },
-                    )
-                }
-            }
-
-            // 归类视图：分组入口（组名 + 歌曲数），点击进子页面
-            if (grouping) {
-                items(items = groups, key = { it.key }) { group ->
-                    Card(
-                        modifier = (Modifier.fillMaxWidth()),
-                        onClick = { onOpenGroup(groupMode, group.key) },
-                        pressFeedbackType = PressFeedbackType.Sink,
-                    ) {
-                        BasicComponent(
-                            title = group.name,
-                            summary = "${group.count} 首",
-                            endActions = {
-                                Icon(
-                                    MiuixGlassIcons.Regular.ChevronForward,
-                                    contentDescription = null,
-                                    tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                                )
                             },
                         )
                     }
                 }
+
+                // 归类视图：分组入口（组名 + 歌曲数），点击进子页面
+                if (grouping) {
+                    items(items = groups, key = { it.key }) { group ->
+                        Card(
+                            modifier = (Modifier.fillMaxWidth()),
+                            onClick = { onOpenGroup(groupMode, group.key) },
+                            pressFeedbackType = PressFeedbackType.Sink,
+                        ) {
+                            BasicComponent(
+                                title = group.name,
+                                summary = "${group.count} 首",
+                                endActions = {
+                                    Icon(
+                                        MiuixGlassIcons.Regular.ChevronForward,
+                                        contentDescription = null,
+                                        tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                    )
+                                },
+                            )
+                        }
+                    }
+                } else {
+                    items(items = songs, key = { it.songData.id }) { song ->
+                        SongCard(song = song, onClick = { onSongClick(song) })
+                    }
+                }
             } else {
-                items(items = songs, key = { it.songData.id }) { song ->
-                    SongCard(song = song, onClick = { onSongClick(song) })
+                // ── 中二节奏 ──
+                if (chuniSongs.isEmpty()) {
+                    item(key = "chuni_state") {
+                        EmptyStateCard(
+                            text = when {
+                                chuniSyncing -> "正在同步中二节奏曲库…"
+                                query.isNotBlank() -> "没有找到「$query」相关的中二节奏歌曲"
+                                else -> "中二节奏曲库还是空的\n同步后即可浏览全部歌曲"
+                            },
+                            action = if (chuniSyncing) {
+                                null
+                            } else {
+                                {
+                                    Button(
+                                        colors = ButtonDefaults.buttonColorsPrimary(),
+                                        onClick = {
+                                            scope.launch { ChuniSongSync.forceSync(context) }
+                                        },
+                                    ) {
+                                        Text(text = "同步中二节奏曲库")
+                                    }
+                                }
+                            },
+                        )
+                    }
+                } else {
+                    items(items = chuniSongs, key = { it.song.id }) { song ->
+                        ChuniSongCard(song = song, onClick = { onChuniSongClick(song) })
+                    }
                 }
             }
         }
@@ -396,6 +473,53 @@ fun SongsScreen(
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * 游戏类型分段开关：左侧「舞萌」、右侧「中二节奏」，选中项高亮。
+ * 整体落在页面左右 padding 内（作为 LazyColumn 的首个 item，contentPadding 已保证 16dp 边距）。
+ */
+@Composable
+private fun GameTypeToggle(
+    current: GameType,
+    onSelect: (GameType) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val options = listOf(GameType.MAIMAI to "舞萌", GameType.CHUNITHM to "中二节奏")
+    val selectedIndex = options.indexOfFirst { it.first == current }.coerceAtLeast(0)
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(MiuixTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+            .padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        options.forEachIndexed { index, (type, label) ->
+            val selected = index == selectedIndex
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(
+                        if (selected) MiuixTheme.colorScheme.primary else Color.Transparent
+                    )
+                    .clickable { onSelect(type) }
+                    .padding(vertical = 9.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = label,
+                    style = MiuixTheme.textStyles.body1,
+                    color = if (selected) {
+                        MiuixTheme.colorScheme.onPrimary
+                    } else {
+                        MiuixTheme.colorScheme.onSurfaceVariantSummary
+                    },
+                )
             }
         }
     }
