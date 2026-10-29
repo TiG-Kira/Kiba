@@ -1,8 +1,8 @@
 package com.kira.kiba.core.data
 
 import android.util.Log
-import com.google.gson.Gson
-import com.google.gson.annotations.SerializedName
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
 import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.db.entity.ChuniRecordEntity
 import com.kira.kiba.core.utils.SpUtil
@@ -24,11 +24,19 @@ import java.util.concurrent.TimeUnit
  * 两游戏共用同一水鱼账号），再以 `Cookie: jwt_token=...` 调
  * `GET /chunithmprober/player/records`。
  *
- * 响应结构（官方文档口径）：
- * `{username, nickname, rating, records: {best: [...], r10: []}}`；
+ * 响应真实形态（以官方免鉴权联调 `player/test_data` 实测为准）：
+ * `{"rating":0.0,"records":{"best":[],"r10":[]},"username":"DivingFish"}`
+ * - **`rating` 是浮点**（0.0），不是整数；
+ * - 顶层只有 `username`，**没有 `nickname`**（有成绩时才有）；
+ * - `records` 是对象，含 `best` 与 `r10`；账号无中二成绩时 `best` 为空数组 ——
+ *   这是「同步成功但无数据」，**不是错误**，UI 需区分展示。
  * `best[]` 字段：cid(字符串) / ds / fc(fullcombo|alljustice) / level / level_index(0..5，
  * 5 = World's End) / level_label / mid / ra / score(上限 1010000) / title。
- * `r10`（最近游玩）自中二 2026 版本后恒为空数组，Rating 直接采用响应顶层官方值。
+ *
+ * **解析一律走 [JsonParser] 手工取值，不用 Gson 反射（`fromJson` + DTO）**：
+ * 反射实例化在 R8 优化后会翻车（本项目已知坑：Gson 反射可达的类/签名被删或改名，
+ * 实测抛 "Unable to create instance of class ... Registering an InstanceCreator"）；
+ * 且 `rating` 的浮点/整数差异用反射 DTO 无法兼容。手工解析同时容忍缺字段与类型漂移。
  */
 object ChuniRecordSync {
 
@@ -40,7 +48,8 @@ object ChuniRecordSync {
     sealed class SyncState {
         data object Idle : SyncState()
         data object Syncing : SyncState()
-        data class Done(val count: Int, val rating: Int) : SyncState()
+        /** @param empty 同步成功但账号无任何中二成绩（best 为空数组）。 */
+        data class Done(val count: Int, val rating: Int, val empty: Boolean) : SyncState()
         data class Failed(val message: String) : SyncState()
     }
 
@@ -51,8 +60,6 @@ object ChuniRecordSync {
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(120, TimeUnit.SECONDS)
         .build()
-
-    private val gson = Gson()
 
     // ── 本地缓存读取（SpUtil 持久化，进程重启后仍可展示） ──
 
@@ -71,8 +78,11 @@ object ChuniRecordSync {
     fun shouldAutoRefresh(): Boolean = !fetchedThisSession
 
     /**
-     * 拉取中二成绩：jwt Cookie 调 /player/records → 解析 → replaceAllChuniRecord 落库
-     * → rating/nickname/条数写 SpUtil。未登录 jwt 时返回明确的「换登录方式」提示。
+     * 拉取中二成绩：jwt Cookie 调 /player/records → 手工解析 → replaceAllChuniRecord 落库
+     * → rating/昵称/条数写 SpUtil。
+     *
+     * 账号无中二成绩（best 为空）时**按成功处理**（count=0，empty=true），由 UI
+     * 展示「暂无中二节奏成绩数据」；未登录 jwt 返回明确的「换登录方式」提示。
      */
     suspend fun refresh() {
         if (_state.value is SyncState.Syncing) return
@@ -91,6 +101,7 @@ object ChuniRecordSync {
                 val text = client.newCall(request).execute().use { resp ->
                     val body = resp.body?.string().orEmpty()
                     if (!resp.isSuccessful) {
+                        // 401 / 403 等多半是登录态失效，带上响应体片段便于定位
                         throw IllegalStateException("HTTP ${resp.code}: ${body.take(120)}")
                     }
                     body
@@ -110,39 +121,19 @@ object ChuniRecordSync {
             SpUtil.setChuniRecordCount(parsed.records.size)
             fetchedThisSession = true
             Log.i(TAG, "chuni records synced: ${parsed.records.size}, rating=${parsed.rating}")
-            _state.value = SyncState.Done(parsed.records.size, parsed.rating)
+            _state.value = SyncState.Done(
+                count = parsed.records.size,
+                rating = parsed.rating,
+                empty = parsed.records.isEmpty(),
+            )
         }.onFailure { e ->
             Log.w(TAG, "chuni records refresh failed", e)
-            _state.value = SyncState.Failed(e.message ?: "成绩同步失败")
+            val msg = e.message?.takeIf { it.isNotBlank() } ?: "成绩同步失败"
+            _state.value = SyncState.Failed(
+                if (msg.length > 200) msg.take(200) + "…" else msg,
+            )
         }
     }
-
-    // ── 网络响应 DTO（字段可空 + 默认值，容忍服务端增删） ──
-
-    private data class RawChuniRecord(
-        val mid: Int = 0,
-        val cid: String = "",
-        val title: String = "",
-        @SerializedName("level_index") val levelIndex: Int = 0,
-        @SerializedName("level_label") val levelLabel: String = "",
-        val level: String = "",
-        val score: Int = 0,
-        val fc: String = "",
-        val ra: Double = 0.0,
-        val ds: Double = 0.0,
-    )
-
-    private data class ChuniRecordsBox(
-        val best: List<RawChuniRecord>? = null,
-        val r10: List<RawChuniRecord>? = null,
-    )
-
-    private data class ChuniRecordsEnvelope(
-        val username: String? = null,
-        val nickname: String? = null,
-        val rating: Int? = null,
-        val records: ChuniRecordsBox? = null,
-    )
 
     private data class Parsed(
         val rating: Int,
@@ -150,47 +141,81 @@ object ChuniRecordSync {
         val records: List<ChuniRecordEntity>,
     )
 
-    /** 兼容两种返回形态：{records:{best:[...]}} 或 records 直接是数组。 */
+    /**
+     * 手工解析响应：兼容 `records` 为对象（{best, r10}）与扁平数组两种形态。
+     * 取值全部走 [optString]/[optInt]/[optDouble]，缺字段、浮点/整数差异都不会炸。
+     */
     private fun parseRecords(text: String): Parsed {
-        val trimmed = text.trimStart()
-        val best: List<RawChuniRecord>
-        val envelope = if (trimmed.startsWith("{")) {
-            gson.fromJson(trimmed, ChuniRecordsEnvelope::class.java)
-        } else null
-        best = if (envelope?.records != null) {
-            // records 是对象：取 best（r10 自 2026 版本后恒空，一并并入以容错）
-            (envelope.records.best.orEmpty() + envelope.records.r10.orEmpty())
-        } else {
-            // records 是扁平数组（旧版形态）
-            val type = com.google.gson.reflect.TypeToken.getParameterized(
-                List::class.java, RawChuniRecord::class.java,
-            ).type
-            gson.fromJson<List<RawChuniRecord>>(
-                com.google.gson.JsonParser.parseString(trimmed)
-                    .takeIf { it.isJsonObject }
-                    ?.asJsonObject?.get("records")
-                    ?.takeIf { it.isJsonArray }?.toString() ?: "[]",
-                type,
-            )
+        val root = runCatching { JsonParser.parseString(text) }.getOrNull()
+        val obj = root?.takeIf { it.isJsonObject }?.asJsonObject
+            ?: throw IllegalStateException("成绩响应格式异常（非 JSON 对象）")
+
+        // rating 实测为浮点（0.0 / 16.16），按 double 读再取整，避免类型漂移报错
+        val rating = obj.optDouble("rating").toInt()
+        // 无成绩时只有 username，有成绩时才有 nickname
+        val nickname = obj.optString("nickname").ifBlank { obj.optString("username") }
+
+        val bestObjects = mutableListOf<JsonObject>()
+        val recordsNode = obj.get("records")
+        when {
+            recordsNode == null || recordsNode.isJsonNull -> Unit
+            recordsNode.isJsonArray -> {
+                recordsNode.asJsonArray.forEach { elem ->
+                    if (elem.isJsonObject) bestObjects.add(elem.asJsonObject)
+                }
+            }
+            recordsNode.isJsonObject -> {
+                val box = recordsNode.asJsonObject
+                // r10（最近游玩）自 2026 版本后恒空，一并并入以容错
+                listOf("best", "r10").forEach { key ->
+                    box.get(key)
+                        ?.takeIf { it.isJsonArray }
+                        ?.asJsonArray
+                        ?.forEach { elem ->
+                            if (elem.isJsonObject) bestObjects.add(elem.asJsonObject)
+                        }
+                }
+            }
         }
-        val rating = envelope?.rating ?: 0
-        val nickname = envelope?.nickname.orEmpty()
-        val entities = best.map { r ->
-            ChuniRecordEntity(
-                id = 0,
-                songId = r.mid,
-                cid = r.cid.toIntOrNull() ?: 0,
-                title = r.title,
-                levelIndex = r.levelIndex,
-                levelLabel = r.levelLabel,
-                level = r.level,
-                score = r.score,
-                fc = r.fc,
-                ra = r.ra.toInt(),
-                ds = r.ds,
-                isRecent = false,
-            )
-        }.filter { it.songId > 0 }
+
+        val entities = bestObjects.mapNotNull { o ->
+            val mid = o.optInt("mid")
+            if (mid <= 0) {
+                null
+            } else {
+                ChuniRecordEntity(
+                    id = 0,
+                    songId = mid,
+                    cid = o.optString("cid").toIntOrNull() ?: 0,
+                    title = o.optString("title"),
+                    levelIndex = o.optInt("level_index"),
+                    levelLabel = o.optString("level_label"),
+                    level = o.optString("level"),
+                    score = o.optInt("score"),
+                    fc = o.optString("fc"),
+                    ra = o.optDouble("ra").toInt(),
+                    ds = o.optDouble("ds"),
+                    isRecent = false,
+                )
+            }
+        }
         return Parsed(rating = rating, nickname = nickname, records = entities)
+    }
+
+    // ── JsonObject 安全取值 ──
+
+    private fun JsonObject.optString(name: String): String {
+        val el = get(name)?.takeIf { !it.isJsonNull && it.isJsonPrimitive } ?: return ""
+        return runCatching { el.asString }.getOrDefault("")
+    }
+
+    private fun JsonObject.optInt(name: String): Int {
+        val el = get(name)?.takeIf { !it.isJsonNull && it.isJsonPrimitive } ?: return 0
+        return runCatching { el.asInt }.getOrDefault(0)
+    }
+
+    private fun JsonObject.optDouble(name: String): Double {
+        val el = get(name)?.takeIf { !it.isJsonNull && it.isJsonPrimitive } ?: return 0.0
+        return runCatching { el.asDouble }.getOrDefault(0.0)
     }
 }

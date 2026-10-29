@@ -90,6 +90,8 @@ fun MeScreen(
     val chuniSyncState by ChuniRecordSync.state.collectAsState()
     val chuniSyncing = chuniSyncState is ChuniRecordSync.SyncState.Syncing
     val chuniError = (chuniSyncState as? ChuniRecordSync.SyncState.Failed)?.message
+    // 同步成功但账号无任何中二成绩（best 为空数组）——不是错误，需单独文案
+    val chuniNoData = (chuniSyncState as? ChuniRecordSync.SyncState.Done)?.empty == true
     val chuniJwtPresent = remember { SpUtil.getDivingFishJwt().isNotBlank() }
     val chuniRating = remember(chuniSyncState) { ChuniRecordSync.getLocalRating() }
     val chuniNickname = remember(chuniSyncState) { ChuniRecordSync.getLocalNickname() }
@@ -132,6 +134,7 @@ fun MeScreen(
                                 chuniError != null -> "$chuniError（点击重试）"
                                 chuniRecordCount > 0 ->
                                     "成绩 $chuniRecordCount 条 · 点击查看中二 Best 30"
+                                chuniNoData -> "该账号暂无中二节奏成绩数据（点击重试）"
                                 else -> "点击同步中二成绩"
                             },
                             onClick = {
