@@ -92,7 +92,11 @@ object ChuniRecordSync {
             return
         }
         _state.value = SyncState.Syncing
-        val result = withContext(Dispatchers.IO) {
+        // 关键：落库（Room）**必须**和 IO 一起待在 Dispatchers.IO 里。
+        // 之前把 replaceAllChuniRecord 写在 withContext 返回后的 onSuccess 里 —— 那已经在
+        // 主线程，Room 会抛「Cannot access database on the main thread」，
+        // 而该处又在 runCatching 之外 → 未捕获异常直接把「同步中二成绩」打成闪退。
+        val outcome: Result<Parsed> = withContext(Dispatchers.IO) {
             runCatching {
                 val request = Request.Builder()
                     .url(RECORDS_URL)
@@ -106,19 +110,19 @@ object ChuniRecordSync {
                     }
                     body
                 }
-                parseRecords(text)
+                val parsed = parseRecords(text)
+
+                val ok = AppDataBase.getInstance().chuniRecordDao()
+                    .replaceAllChuniRecord(parsed.records)
+                if (!ok) throw IllegalStateException("成绩入库失败")
+
+                SpUtil.setChuniRating(parsed.rating)
+                SpUtil.setChuniNickname(parsed.nickname)
+                SpUtil.setChuniRecordCount(parsed.records.size)
+                parsed
             }
         }
-        result.onSuccess { parsed ->
-            val ok = AppDataBase.getInstance().chuniRecordDao()
-                .replaceAllChuniRecord(parsed.records)
-            if (!ok) {
-                _state.value = SyncState.Failed("成绩入库失败")
-                return
-            }
-            SpUtil.setChuniRating(parsed.rating)
-            SpUtil.setChuniNickname(parsed.nickname)
-            SpUtil.setChuniRecordCount(parsed.records.size)
+        outcome.onSuccess { parsed ->
             fetchedThisSession = true
             Log.i(TAG, "chuni records synced: ${parsed.records.size}, rating=${parsed.rating}")
             _state.value = SyncState.Done(

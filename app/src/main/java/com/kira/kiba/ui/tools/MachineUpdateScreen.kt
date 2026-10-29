@@ -95,7 +95,7 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
                 logs.add("成绩更新完成")
                 // 立刻刷新对应游戏的成绩：防止回到「我」页时还挂着上一次失败的错误提示
                 if (isChunithm) {
-                    scope.launch { ChuniRecordSync.refresh() }
+                    scope.launch { runCatching { ChuniRecordSync.refresh() } }
                 } else {
                     KibaState.refreshRecords()
                 }

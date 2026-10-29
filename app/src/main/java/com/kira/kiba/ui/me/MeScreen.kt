@@ -100,7 +100,8 @@ fun MeScreen(
     // 进中二「我」页自动同步一次（本进程内仅一次；顶栏手动刷新不受限）
     LaunchedEffect(isChunithm, account.bound) {
         if (isChunithm && chuniJwtPresent && ChuniRecordSync.shouldAutoRefresh()) {
-            ChuniRecordSync.refresh()
+            // 兜底：刷新内部已自捕获，这里再包一层，确保任何漏网异常都不会打死 UI 协程
+            runCatching { ChuniRecordSync.refresh() }
         }
     }
 
@@ -141,7 +142,7 @@ fun MeScreen(
                                 when {
                                     !chuniJwtPresent -> onOpenLogin()
                                     chuniRecordCount > 0 -> onOpenChuniBest()
-                                    else -> scope.launch { ChuniRecordSync.refresh() }
+                                    else -> scope.launch { runCatching { ChuniRecordSync.refresh() } }
                                 }
                             },
                             endActions = {
