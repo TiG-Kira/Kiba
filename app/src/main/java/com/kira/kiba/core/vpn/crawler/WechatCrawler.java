@@ -29,6 +29,7 @@ import javax.net.ssl.X509TrustManager;
 
 import okhttp3.Call;
 import okhttp3.ConnectionSpec;
+import okhttp3.FormBody;
 import okhttp3.Headers;
 import okhttp3.Interceptor;
 import okhttp3.MediaType;
@@ -56,9 +57,41 @@ public class WechatCrawler {
 
     private static final MediaType TEXT = MediaType.parse("text/plain");
 
+    private static final MediaType HTML = MediaType.parse("text/html; charset=utf-8");
+
     private static final SimpleCookieJar jar = new SimpleCookieJar();
 
     private static final Map<Integer, String> diffMap = new HashMap<>();
+
+    /** 中二节奏难度名（官方 proxy 口径：0..4 标准难度，5=World's End，6=最近游玩/Rating 详情）。 */
+    private static final Map<Integer, String> chuniDiffMap = new HashMap<>();
+
+    /** 中二节奏国服站点前缀（官方 proxy 实现：`chunithm.wahlap.com/mobile`）。 */
+    private static final String CHUNI_BASE = "https://chunithm.wahlap.com/mobile";
+
+    /** 标准难度需先 POST 的筛选接口（设置会话内的难度筛选）。 */
+    private static final String[] CHUNI_POST_URLS = {
+            "/record/musicGenre/sendBasic",
+            "/record/musicGenre/sendAdvanced",
+            "/record/musicGenre/sendExpert",
+            "/record/musicGenre/sendMaster",
+            "/record/musicGenre/sendUltima",
+    };
+
+    /** 成绩页 GET 地址（含 World's End 列表与最近游玩 Rating 详情）。 */
+    private static final String[] CHUNI_URLS = {
+            "/record/musicGenre/basic",
+            "/record/musicGenre/advanced",
+            "/record/musicGenre/expert",
+            "/record/musicGenre/master",
+            "/record/musicGenre/ultima",
+            "/record/worldsEndList/",
+            "/home/playerData/ratingDetailRecent/",
+    };
+
+    /** 中二成绩上传端点（官方 proxy 用的是 chunithmprober/player/update_records_html）。 */
+    private static final String CHUNI_UPLOAD_URL =
+            "https://www.diving-fish.com/api/chunithmprober/player/update_records_html";
 
     private static OkHttpClient client = null;
 
@@ -68,6 +101,13 @@ public class WechatCrawler {
         diffMap.put(2, "Expert");
         diffMap.put(3, "Master");
         diffMap.put(4, "Re:Master");
+        chuniDiffMap.put(0, "BASIC");
+        chuniDiffMap.put(1, "ADVANCED");
+        chuniDiffMap.put(2, "EXPERT");
+        chuniDiffMap.put(3, "MASTER");
+        chuniDiffMap.put(4, "ULTIMA");
+        chuniDiffMap.put(5, "WORLD'S END");
+        chuniDiffMap.put(6, "最近游玩（Rating 详情）");
         buildHttpClient(false);
     }
 
@@ -139,9 +179,19 @@ public class WechatCrawler {
     }
 
     protected String getWechatAuthUrl() throws IOException {
+        return getWechatAuthUrl("maimai-dx");
+    }
+
+    /**
+     * 取微信授权链接。
+     *
+     * @param game 游戏标识：`maimai-dx`（舞萌）或 `chunithm`（中二节奏）。
+     *             两者共用同一公众号授权域，仅路径末段不同（官方 proxy 实现即如此）。
+     */
+    protected String getWechatAuthUrl(String game) throws IOException {
         this.buildHttpClient(true);
 
-        Request request = new Request.Builder().addHeader("Host", "tgk-wcaime.wahlap.com").addHeader("Upgrade-Insecure-Requests", "1").addHeader("User-Agent", "Mozilla/5.0 (Linux; Android 12; IN2010 Build/RKQ1.211119.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/86.0.4240.99 XWEB/4317 MMWEBSDK/20220903 Mobile Safari/537.36 MMWEBID/363 MicroMessenger/8.0.28.2240(0x28001C57) WeChat/arm64 Weixin NetType/WIFI Language/zh_CN ABI/arm64").addHeader("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/wxpic,image/tpg,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9").addHeader("X-Requested-With", "com.tencent.mm").addHeader("Sec-Fetch-Site", "none").addHeader("Sec-Fetch-Mode", "navigate").addHeader("Sec-Fetch-User", "?1").addHeader("Sec-Fetch-Dest", "document").addHeader("Accept-Encoding", "gzip, deflate").addHeader("Accept-Language", "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7").url("https://tgk-wcaime.wahlap.com/wc_auth/oauth/authorize/maimai-dx").build();
+        Request request = new Request.Builder().addHeader("Host", "tgk-wcaime.wahlap.com").addHeader("Upgrade-Insecure-Requests", "1").addHeader("User-Agent", "Mozilla/5.0 (Linux; Android 12; IN2010 Build/RKQ1.211119.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/86.0.4240.99 XWEB/4317 MMWEBSDK/20220903 Mobile Safari/537.36 MMWEBID/363 MicroMessenger/8.0.28.2240(0x28001C57) WeChat/arm64 Weixin NetType/WIFI Language/zh_CN ABI/arm64").addHeader("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/wxpic,image/tpg,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9").addHeader("X-Requested-With", "com.tencent.mm").addHeader("Sec-Fetch-Site", "none").addHeader("Sec-Fetch-Mode", "navigate").addHeader("Sec-Fetch-User", "?1").addHeader("Sec-Fetch-Dest", "document").addHeader("Accept-Encoding", "gzip, deflate").addHeader("Accept-Language", "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7").url("https://tgk-wcaime.wahlap.com/wc_auth/oauth/authorize/" + game).build();
 
         Call call = client.newCall(request);
         Response response = call.execute();
@@ -241,6 +291,149 @@ public class WechatCrawler {
     private void fetchMaimaiData(String username, String password, Set<Integer> difficulties) throws IOException {
         this.buildHttpClient(false);
         fetchAndUploadData(username, password, difficulties);
+    }
+
+    // ==================== 中二节奏（CHUNITHM） ====================
+    //
+    // 与舞萌的差异（依据水鱼官方 proxy 工具 proxy/cmd/maimaidx-prober-proxy 实现）：
+    // 1. 微信授权：/wc_auth/oauth/authorize/chunithm（舞萌是 maimai-dx）；
+    // 2. 取数：标准难度需**先 POST** /record/musicGenre/send{Difficulty}
+    //    （表单 genre=99 + token=<会话首个 cookie>）**再 GET** 对应成绩页 —— 两步依赖
+    //    服务端会话内的筛选状态，因此各难度必须**串行**执行，不能像舞萌那样并发；
+    // 3. 上传：POST /api/chunithmprober/player/update_records_html，**用水鱼 jwt Cookie 鉴权**，
+    //    不再像舞萌那样用 `<login><u>..</u><p>..</p></login>` 包裹账号密码；
+    //    diff=6（最近游玩）需追加 ?recent=1。
+    //
+    // 注：/api/chunithmprober/page 实测 404 不存在，勿用。
+
+    /**
+     * 中二节奏取数并上传（串行：POST send → GET 成绩页 → POST 上传）。
+     *
+     * @param jwt 水鱼账号密码登录得到的 jwt（Cookie 头），OAuth 通道不支持中二
+     */
+    private void fetchChuniData(String jwt, Set<Integer> difficulties) throws IOException {
+        this.buildHttpClient(false);
+        List<Integer> sorted = new ArrayList<>(difficulties);
+        java.util.Collections.sort(sorted);
+        for (Integer diff : sorted) {
+            if (diff < 0 || diff >= CHUNI_URLS.length) continue;
+            fetchAndUploadChuniData(jwt, diff, 1);
+            // 服务端「send → get」依赖会话内筛选状态，串行 + 间隔，避免并发串味与触发风控
+            try {
+                Thread.sleep(1500);
+            } catch (InterruptedException ignored) {
+            }
+        }
+    }
+
+    private static void fetchAndUploadChuniData(String jwt, Integer diff, Integer retryCount) {
+        writeLog("开始获取中二 " + chuniDiffMap.get(diff) + " 的数据");
+        try {
+            // 1) 标准难度先 POST 筛选接口
+            if (diff < 5) {
+                String token = jar.getFirstCookieValue("chunithm.wahlap.com");
+                FormBody.Builder form = new FormBody.Builder().add("genre", "99");
+                if (token != null && !token.isEmpty()) form.add("token", token);
+                Request post = new Request.Builder()
+                        .url(CHUNI_BASE + CHUNI_POST_URLS[diff])
+                        .post(form.build())
+                        .build();
+                Call call = client.newCall(post);
+                try (Response ignored = call.execute()) {
+                    // 只用于设置会话筛选，响应体无意义
+                }
+            }
+
+            // 2) GET 成绩页
+            Request request = new Request.Builder()
+                    .url(CHUNI_BASE + CHUNI_URLS[diff])
+                    .build();
+            Call call = client.newCall(request);
+            try (Response response = call.execute()) {
+                String data = Objects.requireNonNull(response.body()).string();
+                writeLog("中二 " + chuniDiffMap.get(diff) + " 的数据已获取，正在上传至水鱼查分器");
+                uploadChuniData(jwt, diff, data, 1);
+            }
+        } catch (Exception e) {
+            retryFetchAndUploadChuniData(e, jwt, diff, retryCount);
+        }
+    }
+
+    private static void retryFetchAndUploadChuniData(Exception e, String jwt, Integer diff, Integer currentRetryCount) {
+        writeLog("获取中二 " + chuniDiffMap.get(diff) + " 难度数据时出现错误: " + e);
+        if (currentRetryCount < MAX_RETRY_COUNT) {
+            writeLog("进行第" + currentRetryCount + "次重试");
+            fetchAndUploadChuniData(jwt, diff, currentRetryCount + 1);
+        } else {
+            writeLog("中二 " + chuniDiffMap.get(diff) + " 难度数据更新失败！");
+        }
+    }
+
+    private static void uploadChuniData(String jwt, Integer diff, String data, Integer retryCount) {
+        String url = CHUNI_UPLOAD_URL;
+        // diff=6 是最近游玩（Rating 详情），服务端要求 recent=1
+        if (diff == 6) url += "?recent=1";
+
+        Request request = new Request.Builder()
+                .url(url)
+                .addHeader("content-type", "text/html; charset=utf-8")
+                .addHeader("Cookie", jwt)
+                .post(RequestBody.create(data, HTML))
+                .build();
+
+        Call call = client.newCall(request);
+        try (Response response = call.execute()) {
+            String result = response.body() != null ? response.body().string() : "";
+            writeLog("中二 " + chuniDiffMap.get(diff) + " 难度数据上传状态：" + result + " (HTTP " + response.code() + ")");
+        } catch (Exception e) {
+            retryUploadChuniData(e, jwt, diff, data, retryCount);
+        }
+    }
+
+    private static void retryUploadChuniData(Exception e, String jwt, Integer diff, String data, Integer currentRetryCount) {
+        writeLog("上传中二 " + chuniDiffMap.get(diff) + " 分数数据至水鱼查分器时出现错误: " + e);
+        if (currentRetryCount < MAX_RETRY_COUNT) {
+            writeLog("进行第" + currentRetryCount + "次重试");
+            uploadChuniData(jwt, diff, data, currentRetryCount + 1);
+        } else {
+            writeLog("中二 " + chuniDiffMap.get(diff) + " 难度数据上传失败！");
+        }
+    }
+
+    /**
+     * 中二节奏一条龙：微信登录 → 串行抓取各难度 → 上传水鱼。
+     *
+     * @param jwt 水鱼账号密码登录的 jwt（OAuth 不支持中二，必须走账号密码通道）
+     */
+    public void fetchAndUploadChuniData(String jwt, Set<Integer> difficulties, String wechatAuthUrl) throws IOException {
+        // 仅对明文 http:// 提升为 https://。原来 startsWith("http") 会把已 https:// 的
+        // 授权链接改写成 httpss://，OkHttp 直接抛 IllegalArgumentException。
+        if (wechatAuthUrl.startsWith("http://"))
+            wechatAuthUrl = wechatAuthUrl.replaceFirst("http://", "https://");
+
+        jar.clearCookieStroe();
+
+        // Login wechat
+        try {
+            startAuth();
+            writeLog("开始登录net，请稍后...");
+            this.loginWechat(wechatAuthUrl);
+            writeLog("登陆完成");
+        } catch (Exception error) {
+            writeLog("登陆时出现错误:\n");
+            onError(error);
+            return;
+        }
+
+        // Fetch chunithm data
+        try {
+            this.fetchChuniData(jwt, difficulties);
+            writeLog("中二节奏数据更新完成");
+            finishUpdate();
+        } catch (Exception error) {
+            writeLog("中二节奏数据更新时出现错误:");
+            onError(error);
+        }
     }
 
     private void buildHttpClient(boolean followRedirect) {

@@ -30,6 +30,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.kira.kiba.core.data.ChuniRecordSync
+import com.kira.kiba.core.model.GameType
 import com.kira.kiba.core.utils.SpUtil
 import com.kira.kiba.core.vpn.VpnSettings
 import com.kira.kiba.core.vpn.crawler.CrawlerCaller
@@ -73,6 +75,11 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
     val scope = rememberCoroutineScope()
     var running by remember { mutableStateOf(LocalVpnService.IsRunning) }
     var difficulties by remember { mutableStateOf(VpnSettings.getUpdateDifficulty()) }
+    var chuniDifficulties by remember { mutableStateOf(VpnSettings.getUpdateChuniDifficulty()) }
+    // 当前游戏（跟随曲目页开关）：决定微信授权路径、取数与上传方式、难度项
+    val gameType = remember { SpUtil.getGameType() }
+    val isChunithm = gameType == GameType.CHUNITHM
+    val selectedDifficulties = if (isChunithm) chuniDifficulties else difficulties
 
     DisposableEffect(Unit) {
         val listener = object : WechatCrawlerListener {
@@ -86,9 +93,12 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
 
             override fun onFinishUpdate() {
                 logs.add("成绩更新完成")
-                // 立刻刷新查分器账户态：拉最新成绩/评分，防止回到「我」页时
-                // 账户卡还挂着上一次拉取失败留下的错误提示（如 connection closed）
-                KibaState.refreshRecords()
+                // 立刻刷新对应游戏的成绩：防止回到「我」页时还挂着上一次失败的错误提示
+                if (isChunithm) {
+                    scope.launch { ChuniRecordSync.refresh() }
+                } else {
+                    KibaState.refreshRecords()
+                }
             }
 
             override fun onError(e: Exception) {
@@ -130,13 +140,15 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
         scope.launch {
             try {
                 delay(3000)
-                val authUrl = CrawlerCaller.getWechatAuthUrl()
+                val authUrl = CrawlerCaller.getWechatAuthUrl(
+                    if (isChunithm) CrawlerCaller.GAME_CHUNITHM else CrawlerCaller.GAME_MAIMAI
+                )
                 if (authUrl.isNullOrBlank()) {
                     logs.add("获取微信授权链接失败，请确认手机能访问 tgk-wcaime.wahlap.com")
                     return@launch
                 }
                 logs.add("已获取微信授权，开始抓取机台成绩…")
-                CrawlerCaller.fetchData(authUrl)
+                CrawlerCaller.fetchData(authUrl, gameType)
             } catch (e: Exception) {
                 Log.e(TAG, "抓包失败", e)
                 logs.add("抓包失败：${e.javaClass.simpleName}: ${e.message}")
@@ -210,12 +222,30 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
                                 MiuixTheme.colorScheme.onSurfaceVariantSummary
                             },
                         )
+                        Spacer(Modifier.height(4.dp))
+                        // 中二上传必须走账号密码 jwt 通道（水鱼 OAuth scope 不支持中二）
+                        val chuniNoJwt = isChunithm && SpUtil.getDivingFishJwt().isBlank()
+                        Text(
+                            text = when {
+                                !isChunithm -> "当前游戏：舞萌 DX（在「曲目」页顶部切换游戏）"
+                                chuniNoJwt -> "当前游戏：中二节奏 · 需改用「账号密码」登录（OAuth 不支持中二上传）"
+                                else -> "当前游戏：中二节奏 · 账号密码通道可用"
+                            },
+                            style = MiuixTheme.textStyles.footnote1,
+                            color = if (chuniNoJwt) {
+                                MiuixTheme.colorScheme.primary
+                            } else {
+                                MiuixTheme.colorScheme.onSurfaceVariantSummary
+                            },
+                        )
                     }
                 }
             }
 
-            // ── 更新难度 ──
-            item(key = "diff_title") { SectionTitle("更新难度") }
+            // ── 更新难度（按当前游戏切换：舞萌 5 项 / 中二 7 项）──
+            item(key = "diff_title") {
+                SectionTitle(if (isChunithm) "更新难度（中二节奏）" else "更新难度（舞萌）")
+            }
             item(key = "diff_card") {
                 Card(
                 modifier = (Modifier.fillMaxWidth()),
@@ -223,22 +253,40 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
                     insideMargin = CardDefaults.InsideMargin,
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
-                        listOf(
-                            "BASIC" to 0, "ADVANCED" to 1, "EXPERT" to 2,
-                            "MASTER" to 3, "Re:MASTER" to 4,
-                        ).forEach { (name, idx) ->
+                        val items = if (isChunithm) {
+                            listOf(
+                                "BASIC" to 0, "ADVANCED" to 1, "EXPERT" to 2,
+                                "MASTER" to 3, "ULTIMA" to 4,
+                                "WORLD'S END" to 5, "最近游玩（Rating 详情）" to 6,
+                            )
+                        } else {
+                            listOf(
+                                "BASIC" to 0, "ADVANCED" to 1, "EXPERT" to 2,
+                                "MASTER" to 3, "Re:MASTER" to 4,
+                            )
+                        }
+                        items.forEach { (name, idx) ->
                             CheckboxPreference(
                                 title = name,
-                                checked = idx in difficulties,
+                                checked = idx in selectedDifficulties,
                                 onCheckedChange = { checked ->
-                                    difficulties = if (checked) {
-                                        difficulties + idx
+                                    if (isChunithm) {
+                                        chuniDifficulties = if (checked) {
+                                            chuniDifficulties + idx
+                                        } else {
+                                            chuniDifficulties - idx
+                                        }
+                                        VpnSettings.setUpdateChuniDifficulty(chuniDifficulties)
                                     } else {
-                                        difficulties - idx
+                                        difficulties = if (checked) {
+                                            difficulties + idx
+                                        } else {
+                                            difficulties - idx
+                                        }
+                                        VpnSettings.setUpdateDifficulty(difficulties)
                                     }
-                                    VpnSettings.setUpdateDifficulty(difficulties)
                                 },
-                                summary = "${chartCountHint(idx)}",
+                                summary = diffHint(idx, isChunithm),
                             )
                         }
                     }
@@ -314,6 +362,22 @@ private fun chartCountHint(difficultyIndex: Int): String = when (difficultyIndex
     3 -> "MASTER 大师"
     4 -> "Re:MASTER 宗师"
     else -> ""
+}
+
+/** 难度项说明（按游戏：中二含 WORLD'S END 与最近游玩）。 */
+private fun diffHint(difficultyIndex: Int, isChunithm: Boolean): String = if (isChunithm) {
+    when (difficultyIndex) {
+        0 -> "BASIC 初级"
+        1 -> "ADVANCED 高级"
+        2 -> "EXPERT 专家"
+        3 -> "MASTER 大师"
+        4 -> "ULTIMA 究极"
+        5 -> "WORLD'S END 特殊谱面（无定数）"
+        6 -> "最近游玩记录（服务端按 recent=1 处理）"
+        else -> ""
+    }
+} else {
+    chartCountHint(difficultyIndex)
 }
 
 /** 复制到剪贴板。 */

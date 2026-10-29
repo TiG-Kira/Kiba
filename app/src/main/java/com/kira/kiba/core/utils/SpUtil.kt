@@ -457,6 +457,20 @@ object SpUtil {
         userInfoPrefs.edit { putStringSet(KEY_VPN_DIFFICULTIES, difficulties.map { it.toString() }.toSet()) }
     }
 
+    /** 中二节奏（VPN 方案）要更新的难度索引集合：0..4 标准难度，5=World's End，6=最近游玩。 */
+    private const val KEY_VPN_CHUNI_DIFFICULTIES = "vpn_chuni_difficulties"
+
+    fun getVpnChuniDifficulties(): Set<Int> {
+        val raw = userInfoPrefs.getStringSet(KEY_VPN_CHUNI_DIFFICULTIES, emptySet()) ?: emptySet()
+        return raw.mapNotNull { it.toIntOrNull() }.toSet()
+    }
+
+    fun setVpnChuniDifficulties(difficulties: Set<Int>) {
+        userInfoPrefs.edit {
+            putStringSet(KEY_VPN_CHUNI_DIFFICULTIES, difficulties.map { it.toString() }.toSet())
+        }
+    }
+
     // ================= 封面源 =================
 
     private const val KEY_COVER_SOURCE = "cover_source"

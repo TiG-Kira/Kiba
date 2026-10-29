@@ -26,4 +26,18 @@ object VpnSettings {
     fun setUpdateDifficulty(difficulties: Set<Int>) {
         SpUtil.setVpnDifficulties(difficulties)
     }
+
+    /** 中二节奏难度索引：0=BASIC 1=ADVANCED 2=EXPERT 3=MASTER 4=ULTIMA 5=WORLD'S END 6=最近游玩 */
+    private val DEFAULT_CHUNI_SELECT = setOf(0, 1, 2, 3, 4)
+
+    /** 中二节奏要更新的难度集合。 */
+    fun getUpdateChuniDifficulty(): Set<Int> {
+        val stored = SpUtil.getVpnChuniDifficulties()
+        return if (stored.isEmpty()) DEFAULT_CHUNI_SELECT else stored
+    }
+
+    /** 设置中二节奏要更新的难度集合。 */
+    fun setUpdateChuniDifficulty(difficulties: Set<Int>) {
+        SpUtil.setVpnChuniDifficulties(difficulties)
+    }
 }
