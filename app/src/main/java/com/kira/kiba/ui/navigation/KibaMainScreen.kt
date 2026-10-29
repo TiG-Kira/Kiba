@@ -394,7 +394,7 @@ fun KibaMainScreen() {
                                       // 顶栏刷新按当前游戏分流：中二走 ChuniRecordSync，
                                       // 舞萌走原 KibaState.refreshRecords
                                       if (SpUtil.getGameType() == GameType.CHUNITHM) {
-                                          frameScope.launch { ChuniRecordSync.refresh() }
+                                          frameScope.launch { runCatching { ChuniRecordSync.refresh() } }
                                       } else {
                                           KibaState.refreshRecords()
                                       }

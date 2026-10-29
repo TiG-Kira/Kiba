@@ -41,11 +41,19 @@ android {
         // miuix 0.9.4 各模块（blur/ui/icons/preference）要求 minSdk >= 33
         minSdk = 33
         targetSdk = 37
-        versionCode = 50
-        versionName = "1.7.2"
+        versionCode = 51
+        versionName = "1.7.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
+
+        // ABI：显式钉死包含 32 位 armeabi-v7a（默认虽会带，但依赖变化可能悄悄丢掉）。
+        // 四个 ABI 与依赖实际提供的一致（实测各含 3 个 .so：
+        // libandroidx.graphics.path.so / libimage_processing_util_jni.so / libsurface_util_jni.so），
+        // 保留 x86 / x86_64 供模拟器（AVD）调试安装。
+        ndk {
+            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+        }
         buildConfigField("String", "DIVINGFISH_CLIENT_ID", "\"$dfClientId\"")
         buildConfigField("String", "DIVINGFISH_CLIENT_SECRET", "\"$dfClientSecret\"")
         buildConfigField("String", "QR_GATEWAY_BASE", "\"$qrGatewayBase\"")
