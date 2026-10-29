@@ -86,13 +86,13 @@ fun ChuniCoverPlaceholder(stroke: Color, size: Dp, modifier: Modifier) {
     }
 }
 
-/** 中二节奏难度索引 → 配色（社区惯例：绿 / 橙 / 粉红 / 红 / 紫；World's End 灰）。 */
+/** 中二节奏难度索引 → 配色（社区惯例：绿 / 橙 / 粉红 / **MASTER 紫 / ULTIMA 黑**；World's End 灰）。 */
 fun chuniDifficultyColor(index: Int): Color = when (index) {
     0 -> Color(0xFF4FC26B)
     1 -> Color(0xFFFF8F3C)
     2 -> Color(0xFFF2547C)
-    3 -> Color(0xFFE5344E)
-    4 -> Color(0xFFB452E8)
+    3 -> Color(0xFFB452E8)
+    4 -> Color(0xFF2B2B2B)
     5 -> Color(0xFF757575)
     else -> Color(0xFF9E9E9E)
 }
@@ -122,14 +122,15 @@ fun ChuniMetaChip(text: String, modifier: Modifier = Modifier) {
     }
 }
 
-/** 中二节奏连击（FC）标签缩写 → 友好全称；空串返回 null（无连击）。 */
+/** 中二节奏连击（FC）标签缩写 → 友好全称；空串返回 null（无连击）。
+ *  水鱼 records 的 fc 值为 fullcombo / alljustice（官方口径）。 */
 fun chuniFcDisplay(fc: String): String? {
     val v = fc.trim()
     if (v.isEmpty()) return null
     return when (v.lowercase()) {
-        "fc", "full combo" -> "FULL COMBO"
-        "aj", "all justice" -> "ALL JUSTICE"
-        "ajc", "all justice critical" -> "ALL JUSTICE CRITICAL"
+        "fc", "full combo", "fullcombo" -> "FULL COMBO"
+        "aj", "all justice", "alljustice" -> "ALL JUSTICE"
+        "ajc", "all justice critical", "alljusticecritical" -> "ALL JUSTICE CRITICAL"
         else -> v.uppercase()
     }
 }
@@ -152,3 +153,19 @@ fun ChuniFcBadge(label: String, modifier: Modifier = Modifier) {
 
 /** 中二节奏分数（0–1009000）千分位格式化。 */
 fun chuniScoreText(score: Int): String = String.format("%,d", score)
+
+/** 中二节奏 Rating 徽章（舞萌 DxRatingTag 为官方底板图，不适用中二，这里用主题色胶囊）。 */
+@Composable
+fun ChuniRatingTag(rating: Int, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .background(MiuixTheme.colorScheme.primary.copy(alpha = 0.14f), RoundedCornerShape(6.dp))
+            .padding(horizontal = 10.dp, vertical = 5.dp),
+    ) {
+        Text(
+            text = "RATING ${rating.coerceAtLeast(0)}",
+            style = MiuixTheme.textStyles.footnote1,
+            color = MiuixTheme.colorScheme.primary,
+        )
+    }
+}

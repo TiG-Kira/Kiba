@@ -279,6 +279,31 @@ object SpUtil {
         versionPrefs.edit { putString(KEY_CHUNI_VERSION, version) }
     }
 
+    // ================= 中二节奏成绩（chunithmprober） =================
+
+    /** 最近一次中二成绩同步的官方 Rating（0 = 从未同步）。 */
+    private const val KEY_CHUNI_RATING = "chuni_rating"
+    private const val KEY_CHUNI_NICKNAME = "chuni_nickname"
+    private const val KEY_CHUNI_RECORD_COUNT = "chuni_record_count"
+
+    fun getChuniRating(): Int = userInfoPrefs.getInt(KEY_CHUNI_RATING, 0)
+
+    fun setChuniRating(rating: Int) {
+        userInfoPrefs.edit { putInt(KEY_CHUNI_RATING, rating) }
+    }
+
+    fun getChuniNickname(): String = userInfoPrefs.getString(KEY_CHUNI_NICKNAME, "") ?: ""
+
+    fun setChuniNickname(nickname: String) {
+        userInfoPrefs.edit { putString(KEY_CHUNI_NICKNAME, nickname) }
+    }
+
+    fun getChuniRecordCount(): Int = userInfoPrefs.getInt(KEY_CHUNI_RECORD_COUNT, 0)
+
+    fun setChuniRecordCount(count: Int) {
+        userInfoPrefs.edit { putInt(KEY_CHUNI_RECORD_COUNT, count) }
+    }
+
     fun saveLastUpdateChartStats(time: Long) {
         versionPrefs.edit { putLong(KEY_LAST_UPDATE_TIME, time) }
     }

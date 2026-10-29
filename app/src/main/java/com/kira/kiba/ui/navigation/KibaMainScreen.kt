@@ -31,6 +31,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.kira.kiba.core.data.ChuniRecordSync
 import com.kira.kiba.core.data.SongDataSync
 import com.kira.kiba.core.share.ShareService
 import com.kira.kiba.core.state.KibaState
@@ -40,6 +41,7 @@ import com.kira.kiba.core.utils.WeChatJump
 import com.kira.kiba.ui.agent.AgentScreen
 import com.kira.kiba.ui.agent.LlmConfigScreen
 import com.kira.kiba.ui.me.Best50Screen
+import com.kira.kiba.ui.me.ChuniBestScreen
 import com.kira.kiba.ui.me.FavoritesScreen
 import com.kira.kiba.ui.me.LoginScreen
 import com.kira.kiba.ui.me.EasyMaiAccountScreen
@@ -153,6 +155,11 @@ sealed interface KibaSubPage {
     /** Best 50（官方口径 sd 35 + dx 15）。 */
     data object Best50 : KibaSubPage {
         override val title: String = "Best 50"
+    }
+
+    /** 中二节奏 Best 30（按 ra 排序；不支持分享）。 */
+    data object ChuniBest : KibaSubPage {
+        override val title: String = "中二 Best 30"
     }
 
     /** 成绩查询（EasyMai 式筛选 / 排序 / 网格，替代旧成绩记录 + 版本/等级进度）。 */
@@ -383,7 +390,15 @@ fun KibaMainScreen() {
                                       KibaSortAction { songsShowGroupPicker = true }
                                       KibaSearchAction { songsSearchTrigger++ }
                                   }
-                                  KibaTab.Me -> KibaRefreshAction { KibaState.refreshRecords() }
+                                  KibaTab.Me -> KibaRefreshAction {
+                                      // 顶栏刷新按当前游戏分流：中二走 ChuniRecordSync，
+                                      // 舞萌走原 KibaState.refreshRecords
+                                      if (SpUtil.getGameType() == GameType.CHUNITHM) {
+                                          frameScope.launch { ChuniRecordSync.refresh() }
+                                      } else {
+                                          KibaState.refreshRecords()
+                                      }
+                                  }
                                   else -> Unit
                               }
                           },
@@ -527,6 +542,10 @@ fun KibaMainScreen() {
                                   scrollBehavior = scrollBehavior,
                                   onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
                               )
+                              is KibaSubPage.ChuniBest -> ChuniBestScreen(
+                                  scrollBehavior = scrollBehavior,
+                                  onOpenSong = { songId -> pushPage(KibaSubPage.ChuniSongDetail(songId)) },
+                              )
                               is KibaSubPage.ScoreQuery -> ScoreQueryScreen(
                                   scrollBehavior = scrollBehavior,
                                   onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
@@ -555,6 +574,9 @@ fun KibaMainScreen() {
                               is KibaSubPage.Favorites -> FavoritesScreen(
                                   scrollBehavior = scrollBehavior,
                                   onOpenSong = { song -> pushPage(KibaSubPage.SongDetail(song.songData.id)) },
+                                  onOpenChuniSong = { chuni ->
+                                      pushPage(KibaSubPage.ChuniSongDetail(chuni.song.id))
+                                  },
                               )
                               is KibaSubPage.About -> AboutScreen(scrollBehavior = scrollBehavior)
                           }
@@ -594,6 +616,7 @@ fun KibaMainScreen() {
                                   onOpenRatingCalc = { pushPage(KibaSubPage.RatingCalc) },
                                   onOpenVersionMap = { pushPage(KibaSubPage.VersionMap) },
                                   onOpenHotCharts = { pushPage(KibaSubPage.HotCharts) },
+                                  onOpenChuniBest = { pushPage(KibaSubPage.ChuniBest) },
                               )
                               KibaTab.Settings -> SettingsScreen(
                                   scrollBehavior = scrollBehavior,
