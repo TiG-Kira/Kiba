@@ -87,13 +87,20 @@ object ChuniSongSync {
 
     /**
      * 解析 chunithmprober/music_data JSON 数组。
-     * 每个元素：id / title / ds[5] / level[5] / cids[5] / charts[5]{combo,charter} / basic_info{title,artist,genre,bpm,from}。
+     * 每个元素：id / title / ds[] / level[] / cids[] / charts[]{combo,charter} / basic_info{title,artist,genre,bpm,from}。
+     *
+     * **World's End 谱面**：标题形如 `[X]歌名`（X 为一个字/字母），等级为汉字（如 嘘/狂/止/！/？），
+     * 无定数（ds 0.0）。数据有两种形态：
+     * - 单条：level = ["嘘"]（真谱面在 BASIC 位）；
+     * - 六条：level = ["-","-","-","-","-","狂"]（前五位为 "-" 占位，真谱面在末位）。
+     * 统一处理：跳过 "-" 占位，World's End 谱面全部归入 [ChuniDiffType.WORLD_END] 难度位。
      */
     private fun parseMusicData(json: String): Pair<List<ChuniSongEntity>, List<ChuniChartEntity>> {
         val root = JsonParser.parseString(json)
         val array = if (root is JsonArray) root else JsonArray()
         val songs = mutableListOf<ChuniSongEntity>()
         val charts = mutableListOf<ChuniChartEntity>()
+        val normalLevel = Regex("^\\d+\\+?$")
         for (elem in array) {
             if (elem !is JsonObject) continue
             val id = elem.get("id")?.takeIf { !it.isJsonNull }?.asInt ?: continue
@@ -112,18 +119,24 @@ object ChuniSongSync {
             val dsArr = elem.getAsJsonArray("ds")
             val levelArr = elem.getAsJsonArray("level")
             val chartsArr = elem.getAsJsonArray("charts")
-            val count = minOf(dsArr?.size() ?: 0, levelArr?.size() ?: 0, chartsArr?.size() ?: 0, 5)
+            val levels = levelArr?.mapNotNull { it.takeIf { v -> !v.isJsonNull }?.asString } ?: emptyList()
+            // World's End 判定：存在非数字、非 "-" 占位的等级（如 嘘/狂/止/！/？）
+            val isWorldsEnd = levels.any { it.isNotBlank() && it != "-" && !normalLevel.matches(it) }
+            val count = minOf(dsArr?.size() ?: 0, levelArr?.size() ?: 0, chartsArr?.size() ?: 0)
             for (i in 0 until count) {
                 val ds = dsArr!![i].takeIf { !it.isJsonNull }?.asDouble ?: 0.0
                 val level = levelArr!![i].takeIf { !it.isJsonNull }?.asString ?: ""
+                // "-" 为无谱面占位（World's End 六条形态的前五位），跳过
+                if (level.isBlank() || level == "-") continue
                 val chartObj = chartsArr!![i].takeIf { it is JsonObject } as? JsonObject
                 val combo = chartObj?.get("combo")?.takeIf { !it.isJsonNull }?.asInt ?: 0
                 val charter = chartObj?.get("charter")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                val diffIndex = if (isWorldsEnd) ChuniDiffType.WORLD_END.ordinal else i
                 charts.add(
                     ChuniChartEntity(
                         songId = id,
-                        difficultyIndex = i,
-                        difficulty = ChuniDiffType.fromIndex(i).label,
+                        difficultyIndex = diffIndex,
+                        difficulty = ChuniDiffType.fromIndex(diffIndex).label,
                         level = level,
                         levelLabel = null,
                         ds = ds,

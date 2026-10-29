@@ -116,7 +116,7 @@ fun ChuniChartDetailScreen(
             item(key = "info") {
                 Card(modifier = (Modifier.fillMaxWidth())) {
                     Column(modifier = Modifier.fillMaxWidth()) {
-                        InfoRow("定数", "%.1f".format(currentChart.ds))
+                        InfoRow("定数", if (currentChart.ds > 0.0) "%.1f".format(currentChart.ds) else "-")
                         InfoRow("等级", currentChart.level)
                         InfoRow("谱师", currentChart.charter)
                         InfoRow("最大连击", "${currentChart.combo}")
@@ -139,7 +139,7 @@ private fun ChuniChartHeaderCard(chart: ChuniChartEntity, song: ChuniSongEntity?
                 )
                 HGap()
                 Text(
-                    text = "定数 %.1f".format(chart.ds),
+                    text = if (chart.ds > 0.0) "定数 %.1f".format(chart.ds) else "定数 -",
                     style = MiuixTheme.textStyles.title3,
                     color = MiuixTheme.colorScheme.onSurface,
                 )
