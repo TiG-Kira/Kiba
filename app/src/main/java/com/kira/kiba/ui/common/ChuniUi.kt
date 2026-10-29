@@ -86,13 +86,14 @@ fun ChuniCoverPlaceholder(stroke: Color, size: Dp, modifier: Modifier) {
     }
 }
 
-/** 中二节奏难度索引 → 配色（社区惯例：绿 / 橙 / 粉红 / 红 / 紫）。 */
+/** 中二节奏难度索引 → 配色（社区惯例：绿 / 橙 / 粉红 / 红 / 紫；World's End 灰）。 */
 fun chuniDifficultyColor(index: Int): Color = when (index) {
     0 -> Color(0xFF4FC26B)
     1 -> Color(0xFFFF8F3C)
     2 -> Color(0xFFF2547C)
     3 -> Color(0xFFE5344E)
     4 -> Color(0xFFB452E8)
+    5 -> Color(0xFF757575)
     else -> Color(0xFF9E9E9E)
 }
 

@@ -59,6 +59,7 @@ import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.db.entity.ChartEntity
 import com.kira.kiba.core.db.entity.ChuniSongWithCharts
 import com.kira.kiba.core.db.entity.SongWithChartsEntity
+import com.kira.kiba.core.model.ChuniDiffType
 import com.kira.kiba.core.model.GameType
 import com.kira.kiba.core.model.SongGroupMode
 import com.kira.kiba.core.repository.ChuniSongWithChartRepository
@@ -74,6 +75,7 @@ import com.kira.kiba.ui.common.collectAsStateCached
 import com.kira.kiba.ui.common.difficultyColor
 import com.kira.kiba.ui.common.difficultyLabel
 import com.kira.kiba.ui.common.pageContentPadding
+import com.kira.kiba.ui.common.SectionTitle
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.filter
@@ -202,6 +204,14 @@ fun SongsScreen(
         chuniRepo.searchChuniSongsWithCharts(searchText = query, isFavor = false).asFlow()
     }
     val chuniSongs by chuniSongsFlow.collectAsStateCached(ChuniSongsListCache)
+
+    // World's End 谱面（等级为汉字的特殊谱面，标题形如 [X]歌名）单独归类，不混入常规列表
+    val chuniNormalSongs = remember(chuniSongs) {
+        chuniSongs.filter { s -> s.charts.none { it.difficultyIndex == ChuniDiffType.WORLD_END.ordinal } }
+    }
+    val chuniWeSongs = remember(chuniSongs) {
+        chuniSongs.filter { s -> s.charts.any { it.difficultyIndex == ChuniDiffType.WORLD_END.ordinal } }
+    }
 
     // ── 归类：不归类（默认）/ 按版本 / 按 MASTER 谱师 / 按曲师 ──
     // 中二节奏暂不支持归类（其 genre/版本语义不同），强制平铺。
@@ -392,8 +402,8 @@ fun SongsScreen(
                     }
                 }
             } else {
-                // ── 中二节奏 ──
-                if (chuniSongs.isEmpty()) {
+                // ── 中二节奏（World's End 单独归类在列表尾部）──
+                if (chuniNormalSongs.isEmpty() && chuniWeSongs.isEmpty()) {
                     item(key = "chuni_state") {
                         EmptyStateCard(
                             text = when {
@@ -418,8 +428,16 @@ fun SongsScreen(
                         )
                     }
                 } else {
-                    items(items = chuniSongs, key = { it.song.id }) { song ->
+                    items(items = chuniNormalSongs, key = { it.song.id }) { song ->
                         ChuniSongCard(song = song, onClick = { onChuniSongClick(song) })
+                    }
+                    if (chuniWeSongs.isNotEmpty()) {
+                        item(key = "we_title") {
+                            SectionTitle("World's End（${chuniWeSongs.size}）")
+                        }
+                        items(items = chuniWeSongs, key = { it.song.id }) { song ->
+                            ChuniSongCard(song = song, onClick = { onChuniSongClick(song) })
+                        }
                     }
                 }
             }

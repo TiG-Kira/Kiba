@@ -15,20 +15,26 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.kira.kiba.core.account.DivingFishAccount
+import com.kira.kiba.core.model.GameType
 import com.kira.kiba.core.utils.BrowserJump
+import com.kira.kiba.core.utils.SpUtil
 import com.kira.kiba.ui.common.DxRatingTag
 import com.kira.kiba.ui.common.SectionTitle
 import com.kira.kiba.ui.common.pageContentPadding
+import com.kira.kiba.ui.material.KibaGlassDialog
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
+import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
 import top.yukonga.miuix.kmp.icon.glass.*
 import top.yukonga.miuix.kmp.preference.ArrowPreference
@@ -71,6 +77,10 @@ fun MeScreen(
 ) {
     val account by DivingFishAccount.state.collectAsState()
     val context = LocalContext.current
+    // 当前游戏（曲目页分段开关写入 SpUtil；进入本页时重新读取，切 Tab 会重组所以总能拿到新值）
+    var gameType by remember { mutableStateOf(SpUtil.getGameType()) }
+    var showChuniComingDialog by remember { mutableStateOf(false) }
+    val isChunithm = gameType == GameType.CHUNITHM
 
     Scaffold(
         modifier = Modifier
@@ -85,29 +95,48 @@ fun MeScreen(
             contentPadding = pageContentPadding(),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // ── 置顶：DX Rating 徽章入口（ArrowPreference + 官方段位色 tag）──
+            // ── 置顶：Rating 徽章入口（按游戏切换；中二成绩同步尚未上线，点击弹提示）──
             item(key = "rating") {
-                Card(modifier = (Modifier.fillMaxWidth())) {
-                    ArrowPreference(
-                        title = if (account.bound) {
-                            account.nickname.ifBlank { "查分器用户" }
-                        } else {
-                            "未绑定查分器"
-                        },
-                        summary = when {
-                            !account.bound -> "账号密码登录，解锁 Best 50 / 推分推荐"
-                            account.loading -> "正在获取成绩…"
-                            account.error != null -> "${account.error}（点击查看 Best 50）"
-                            else -> "成绩 ${account.recordCount} 条 · 点击查看 Best 50"
-                        },
-                        onClick = {
-                            if (account.bound) onOpenBest50() else onOpenLogin()
-                        },
-                        endActions = {
-                            DxRatingTag(rating = if (account.bound) account.rating else 0)
-                        },
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Contacts) },
-                    )
+                if (isChunithm) {
+                    Card(modifier = (Modifier.fillMaxWidth())) {
+                        ArrowPreference(
+                            title = if (account.bound) {
+                                account.nickname.ifBlank { "查分器用户" }
+                            } else {
+                                "未绑定查分器"
+                            },
+                            summary = if (account.bound) {
+                                "中二节奏成绩同步即将上线，敬请期待"
+                            } else {
+                                "账号密码登录后，中二成绩同步即将上线"
+                            },
+                            onClick = { showChuniComingDialog = true },
+                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Contacts) },
+                        )
+                    }
+                } else {
+                    Card(modifier = (Modifier.fillMaxWidth())) {
+                        ArrowPreference(
+                            title = if (account.bound) {
+                                account.nickname.ifBlank { "查分器用户" }
+                            } else {
+                                "未绑定查分器"
+                            },
+                            summary = when {
+                                !account.bound -> "账号密码登录，解锁 Best 50 / 推分推荐"
+                                account.loading -> "正在获取成绩…"
+                                account.error != null -> "${account.error}（点击查看 Best 50）"
+                                else -> "成绩 ${account.recordCount} 条 · 点击查看 Best 50"
+                            },
+                            onClick = {
+                                if (account.bound) onOpenBest50() else onOpenLogin()
+                            },
+                            endActions = {
+                                DxRatingTag(rating = if (account.bound) account.rating else 0)
+                            },
+                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Contacts) },
+                        )
+                    }
                 }
             }
 
@@ -125,12 +154,14 @@ fun MeScreen(
                         startAction = { PrefIcon(MiuixGlassIcons.Regular.Lock) },
                         onClick = onOpenLogin,
                     )
-                    ArrowPreference(
-                        title = "成绩查询",
-                        summary = "筛选 / 排序 / 网格视图浏览全量成绩，顶栏刷新可更新",
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Notes) },
-                        onClick = onOpenScoreQuery,
-                    )
+                    if (!isChunithm) {
+                        ArrowPreference(
+                            title = "成绩查询",
+                            summary = "筛选 / 排序 / 网格视图浏览全量成绩，顶栏刷新可更新",
+                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Notes) },
+                            onClick = onOpenScoreQuery,
+                        )
+                    }
                 }
             }
 
@@ -152,23 +183,37 @@ fun MeScreen(
 
             item(key = "toolbox_sites") {
                 Card(modifier = (Modifier.fillMaxWidth())) {
-                    ArrowPreference(
-                        title = "水鱼查分器",
-                        summary = "本应用接口的本家，成绩上传与查询官网",
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Search) },
-                        onClick = {
-                            BrowserJump.openUrl(
-                                context,
-                                "https://www.diving-fish.com/maimaidx/prober/",
-                            )
-                        },
-                    )
-                    ArrowPreference(
-                        title = "DXRating.net",
-                        summary = "包含 ZXZR 曲目信息的查询网站",
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Layers) },
-                        onClick = { BrowserJump.openUrl(context, "https://dxrating.net/search") },
-                    )
+                    if (isChunithm) {
+                        ArrowPreference(
+                            title = "水鱼中二节奏查分器",
+                            summary = "本应用接口的本家，中二节奏成绩查询官网",
+                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Search) },
+                            onClick = {
+                                BrowserJump.openUrl(
+                                    context,
+                                    "https://www.diving-fish.com/chunithm/prober/",
+                                )
+                            },
+                        )
+                    } else {
+                        ArrowPreference(
+                            title = "水鱼查分器",
+                            summary = "本应用接口的本家，成绩上传与查询官网",
+                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Search) },
+                            onClick = {
+                                BrowserJump.openUrl(
+                                    context,
+                                    "https://www.diving-fish.com/maimaidx/prober/",
+                                )
+                            },
+                        )
+                        ArrowPreference(
+                            title = "DXRating.net",
+                            summary = "包含 ZXZR 曲目信息的查询网站",
+                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Layers) },
+                            onClick = { BrowserJump.openUrl(context, "https://dxrating.net/search") },
+                        )
+                    }
                     ArrowPreference(
                         title = "音游地图",
                         summary = "查查你地区的机台",
@@ -180,42 +225,46 @@ fun MeScreen(
 
             item(key = "toolbox_tools") {
                 Card(modifier = (Modifier.fillMaxWidth())) {
-                    ArrowPreference(
-                        title = "单曲 Rating 计算",
-                        summary = "根据定数及达成率算出 Rating（附 RANK 系数表）",
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Tune) },
-                        onClick = onOpenRatingCalc,
-                    )
-                    ArrowPreference(
-                        title = "热门乐曲排行",
-                        summary = "按水鱼游玩样本数排序，看看最火爆的谱面是哪些",
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.TopDownloads) },
-                        onClick = onOpenHotCharts,
-                    )
-                    ArrowPreference(
-                        title = "版本名称对照表",
-                        summary = "版本名称与牌子代号对照，妈妈再也不担心分不清版本",
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Album) },
-                        onClick = onOpenVersionMap,
-                    )
+                    if (!isChunithm) {
+                        ArrowPreference(
+                            title = "单曲 Rating 计算",
+                            summary = "根据定数及达成率算出 Rating（附 RANK 系数表）",
+                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Tune) },
+                            onClick = onOpenRatingCalc,
+                        )
+                        ArrowPreference(
+                            title = "热门乐曲排行",
+                            summary = "按水鱼游玩样本数排序，看看最火爆的谱面是哪些",
+                            startAction = { PrefIcon(MiuixGlassIcons.Regular.TopDownloads) },
+                            onClick = onOpenHotCharts,
+                        )
+                        ArrowPreference(
+                            title = "版本名称对照表",
+                            summary = "版本名称与牌子代号对照，妈妈再也不担心分不清版本",
+                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Album) },
+                            onClick = onOpenVersionMap,
+                        )
+                    }
                     ArrowPreference(
                         title = "登录机台",
                         summary = "打开微信「舞萌 | 中二」公众号，点底部「玩家二维码」菜单即可扫码上机",
                         startAction = { PrefIcon(MiuixGlassIcons.Regular.Phone) },
                         onClick = onOpenMachineLogin,
                     )
-                    ArrowPreference(
-                        title = "接入 Easymai 账号",
-                        summary = "二维码导入成绩的前置账号：登录/注册、手动同步、注销",
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.ContactsBook) },
-                        onClick = onOpenGatewayAccount,
-                    )
-                    ArrowPreference(
-                        title = "达成率计算",
-                        summary = "由判定数量反推达成率与单曲 Rating",
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.ConvertFile) },
-                        onClick = onOpenDxConverter,
-                    )
+                    if (!isChunithm) {
+                        ArrowPreference(
+                            title = "接入 Easymai 账号",
+                            summary = "二维码导入成绩的前置账号：登录/注册、手动同步、注销",
+                            startAction = { PrefIcon(MiuixGlassIcons.Regular.ContactsBook) },
+                            onClick = onOpenGatewayAccount,
+                        )
+                        ArrowPreference(
+                            title = "达成率计算",
+                            summary = "由判定数量反推达成率与单曲 Rating",
+                            startAction = { PrefIcon(MiuixGlassIcons.Regular.ConvertFile) },
+                            onClick = onOpenDxConverter,
+                        )
+                    }
                     if (account.bound) {
                         ArrowPreference(
                             title = "退出登录",
@@ -225,6 +274,20 @@ fun MeScreen(
                         )
                     }
                 }
+            }
+        }
+    }
+
+    // 中二节奏成绩同步预告弹层
+    if (showChuniComingDialog) {
+        KibaGlassDialog(
+            show = true,
+            title = "中二节奏成绩同步",
+            summary = "水鱼查分器的中二节奏成绩同步与 Best 页面将在后续版本推出，敬请期待。",
+            onDismissRequest = { showChuniComingDialog = false },
+        ) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(text = "知道了", onClick = { showChuniComingDialog = false })
             }
         }
     }

@@ -24,18 +24,19 @@ enum class ChuniDiffType {
             EXPERT -> "EXPERT"
             MASTER -> "MASTER"
             ULTIMA -> "ULTIMA"
-            WORLD_END -> "WE"
+            WORLD_END -> "WORLD'S END"
             UNKNOWN -> "?"
         }
 
     companion object {
-        /** 由 level_index（0..4）映射到难度类型。 */
+        /** 由 level_index（0..4 标准难度，5 = World's End）映射到难度类型。 */
         fun fromIndex(index: Int): ChuniDiffType = when (index) {
             0 -> BASIC
             1 -> ADVANCED
             2 -> EXPERT
             3 -> MASTER
             4 -> ULTIMA
+            5 -> WORLD_END
             else -> UNKNOWN
         }
     }

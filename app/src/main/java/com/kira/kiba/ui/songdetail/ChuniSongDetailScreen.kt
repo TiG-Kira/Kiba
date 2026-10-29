@@ -168,7 +168,7 @@ private fun ChuniChartCard(
                 )
                 HGap()
                 Text(
-                    text = "定数 %.1f".format(chart.ds),
+                    text = if (chart.ds > 0.0) "定数 %.1f".format(chart.ds) else "定数 -",
                     style = MiuixTheme.textStyles.subtitle,
                     color = MiuixTheme.colorScheme.onSurface,
                 )
