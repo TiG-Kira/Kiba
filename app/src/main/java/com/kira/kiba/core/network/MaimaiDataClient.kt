@@ -45,7 +45,7 @@ class MaimaiDataClient private constructor() {
             .addCallAdapterFactory(RxJava2CallAdapterFactory.create())
             .baseUrl(url)
             .client(
-                                OkHttpClient.Builder()
+                OkHttpClient.Builder()
                     .retryOnConnectionFailure(true)
                     .connectTimeout(60, TimeUnit.SECONDS)
                     .readTimeout(60, TimeUnit.SECONDS)

@@ -85,22 +85,35 @@ object SpUtil {
             putString(KEY_PASSWORD, password)
             putString(KEY_COOKIE, cookie)
         }
-                saveAccountToHistory(username)
+        saveAccountToHistory(username)
     }
 
-        /** 账号历史只记用户名，密码不再落盘（历史版本曾明文存 Pair 密码，属凭据泄露面）。 */
+    /** 账号历史只记用户名，密码不再落盘（历史版本曾明文存 Pair 密码，属凭据泄露面）。 */
     fun saveAccountToHistory(username: String) {
         val history = getAccountHistory().toMutableList()
         if (history.none { it.first == username }) {
-                        history.add(Pair(username, ""))
+            history.add(Pair(username, ""))
             userInfoPrefs.edit { putString(KEY_ACCOUNT_HISTORY, Gson().toJson(history)) }
         }
     }
 
+    /**
+     * 账号历史（用户名 + 恒为空的密码占位）。
+     * 旧版本曾把明文密码写进这里，而 [saveAccountToHistory] 只在新用户名时写入、
+     * 不会覆盖既有条目——残留密码会一直留在盘上，因此读取时顺手抹掉并回写一次。
+     */
     fun getAccountHistory(): List<Pair<String, String>> {
         val json = userInfoPrefs.getString(KEY_ACCOUNT_HISTORY, "[]") ?: "[]"
         val type = object : TypeToken<List<Pair<String, String>>>() {}.type
-        return Gson().fromJson(json, type)
+        val raw: List<Pair<String, String>>? = runCatching {
+            Gson().fromJson<List<Pair<String, String>>>(json, type)
+        }.getOrNull()
+        val stored = raw ?: emptyList()
+        val cleaned = stored.map { (name, password) -> Pair(name, if (password.isEmpty()) password else "") }
+        if (cleaned != stored) {
+            userInfoPrefs.edit { putString(KEY_ACCOUNT_HISTORY, Gson().toJson(cleaned)) }
+        }
+        return cleaned
     }
 
     fun removeAccount(username: String) {
