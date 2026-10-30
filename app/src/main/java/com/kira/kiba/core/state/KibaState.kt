@@ -4,6 +4,7 @@ import android.content.Context
 import com.kira.kiba.core.account.DivingFishAccount
 import com.kira.kiba.core.data.ChuniSongSync
 import com.kira.kiba.core.data.SongDataSync
+import com.kira.kiba.core.utils.SpUtil
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -71,11 +72,19 @@ object KibaState {
      *
      * 舞萌侧沿用「有可用更新才下载，否则只检查」——songdata.json 有 13 MB，
      * 每次手点都全量下载太浪费；中二侧曲库只有 1 MB，直接全量刷新。
+     *
+     * @param forceMaimaiDownload 无视 [SongDataSync.updateAvailable] 直接下载舞萌曲库。
+     *   更新弹窗的「立即更新」与「曲库还是空的」入口必须传 true：前者在调用前已用
+     *   `dismissUpdatePrompt()` 清空该信号，后者本地根本没有曲库，若依赖它判断就会退化成
+     *   「只检查不下载」——弹窗反复重现、songdata.json 永远不下，空曲库无从初始化。
      */
-    fun refreshAllSongData(context: Context) {
+    fun refreshAllSongData(context: Context, forceMaimaiDownload: Boolean = false) {
         scope.launch {
             runCatching {
-                if (SongDataSync.updateAvailable.value != null) {
+                // 本地从未成功导入过曲库（版本号为空 / "0"）时也必须走下载，兜住漏传参数的调用方
+                val localVersion = SpUtil.getDataVersion()
+                val noLocalData = localVersion.isBlank() || localVersion == "0"
+                if (forceMaimaiDownload || noLocalData || SongDataSync.updateAvailable.value != null) {
                     SongDataSync.forceSync(context)
                 } else {
                     SongDataSync.checkForUpdate()
