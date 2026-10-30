@@ -10,7 +10,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+        <!-- WeChatJump 仅需拉起微信，声明包名查询即可，替代 QUERY_ALL_PACKAGES 全盘可见 -->
+    <queries>
+        <package android:name="com.tencent.mm" />
+    </queries>
     <!-- 应用内更新：下载 GitHub Release 的 APK 并唤起安装器 -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- 机台成绩更新（二维码导入）：摄像头实时扫码（无摄像头设备不强制） -->

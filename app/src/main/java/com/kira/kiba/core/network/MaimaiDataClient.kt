@@ -2,6 +2,7 @@ package com.kira.kiba.core.network
 
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.OkHttpClient
 import okhttp3.Request
 import retrofit2.Retrofit
 import retrofit2.adapter.rxjava2.RxJava2CallAdapterFactory
@@ -44,7 +45,7 @@ class MaimaiDataClient private constructor() {
             .addCallAdapterFactory(RxJava2CallAdapterFactory.create())
             .baseUrl(url)
             .client(
-                UnsafeOkHttpClient.unsafeOkHttpClient
+                                OkHttpClient.Builder()
                     .retryOnConnectionFailure(true)
                     .connectTimeout(60, TimeUnit.SECONDS)
                     .readTimeout(60, TimeUnit.SECONDS)
