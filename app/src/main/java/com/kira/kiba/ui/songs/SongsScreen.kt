@@ -293,7 +293,8 @@ fun SongsScreen(
             onConfirm = {
                 SongDataSync.dismissUpdatePrompt()
                 SongsRefreshCard.visible.value = true
-                KibaState.refreshAllSongData(context)
+                // 弹窗要立刻收起，updateAvailable 已被清空，必须显式要求下载否则只会重新检查
+                KibaState.refreshAllSongData(context, forceMaimaiDownload = true)
             },
         )
     }
@@ -370,7 +371,8 @@ fun SongsScreen(
                                         colors = ButtonDefaults.buttonColorsPrimary(),
                                         onClick = {
                                             SongsRefreshCard.visible.value = true
-                                            KibaState.refreshAllSongData(context)
+                                            // 空曲库必须真下载，不能退化成「只检查」
+                                            KibaState.refreshAllSongData(context, forceMaimaiDownload = true)
                                         },
                                     ) {
                                         Text(text = "立即更新曲库")
