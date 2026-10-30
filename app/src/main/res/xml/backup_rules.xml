@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <full-backup-content>
-    <!-- 查分器登录态等敏感数据不进备份 -->
-    <exclude domain="sharedpref" path="kiba_prober.xml" />
-    <exclude domain="database" path="kiba_room.db" />
+    <!-- 登录凭据 / Token 等敏感数据不进备份：
+         SpUtil 实际文件为 userInfo.xml（密码 / Cookie / jwt / API key），
+         Room 数据库实际名为 maimaidata_db（原 kiba_prober.xml / kiba_room.db 不存在，排除从未生效） -->
+    <exclude domain="sharedpref" path="userInfo.xml" />
+    <exclude domain="database" path="maimaidata_db" />
+    <exclude domain="database" path="maimaidata_db-wal" />
+    <exclude domain="database" path="maimaidata_db-shm" />
 </full-backup-content>

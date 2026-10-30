@@ -1,11 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <data-extraction-rules>
+    <!-- 登录凭据 / Token 等敏感数据不进云备份与设备迁移：
+         SpUtil 实际文件为 userInfo.xml，Room 实际名为 maimaidata_db
+         （原 kiba_prober.xml / kiba_room.db 不存在，排除从未生效） -->
     <cloud-backup>
-        <exclude domain="sharedpref" path="kiba_prober.xml" />
-        <exclude domain="database" path="kiba_room.db" />
+        <exclude domain="sharedpref" path="userInfo.xml" />
+        <exclude domain="database" path="maimaidata_db" />
+        <exclude domain="database" path="maimaidata_db-wal" />
+        <exclude domain="database" path="maimaidata_db-shm" />
     </cloud-backup>
     <device-transfer>
-        <exclude domain="sharedpref" path="kiba_prober.xml" />
-        <exclude domain="database" path="kiba_room.db" />
+        <exclude domain="sharedpref" path="userInfo.xml" />
+        <exclude domain="database" path="maimaidata_db" />
+        <exclude domain="database" path="maimaidata_db-wal" />
+        <exclude domain="database" path="maimaidata_db-shm" />
     </device-transfer>
 </data-extraction-rules>

@@ -85,13 +85,14 @@ object SpUtil {
             putString(KEY_PASSWORD, password)
             putString(KEY_COOKIE, cookie)
         }
-        saveAccountToHistory(username, password)
+                saveAccountToHistory(username)
     }
 
-    fun saveAccountToHistory(username: String, password: String) {
+        /** 账号历史只记用户名，密码不再落盘（历史版本曾明文存 Pair 密码，属凭据泄露面）。 */
+    fun saveAccountToHistory(username: String) {
         val history = getAccountHistory().toMutableList()
         if (history.none { it.first == username }) {
-            history.add(Pair(username, password))
+                        history.add(Pair(username, ""))
             userInfoPrefs.edit { putString(KEY_ACCOUNT_HISTORY, Gson().toJson(history)) }
         }
     }
