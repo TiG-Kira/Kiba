@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil.compose.SubcomposeAsyncImage
 import com.kira.kiba.R
+import java.util.Locale
 import com.kira.kiba.core.model.ChuniDiffType
 import com.kira.kiba.core.utils.CoverSources
 import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
@@ -154,16 +155,33 @@ fun ChuniFcBadge(label: String, modifier: Modifier = Modifier) {
 /** 中二节奏分数（0–1009000）千分位格式化。 */
 fun chuniScoreText(score: Int): String = String.format("%,d", score)
 
+/**
+ * 中二节奏 Rating / 单曲 ra 展示文本：两位小数。
+ *
+ * 官方就是两位小数（机台显示 14.53），Locale 固定 US，避免部分语言环境下
+ * 小数点被格式化成逗号（德语等）导致宽度抖动。
+ */
+fun chuniRatingText(value: Double): String = String.format(Locale.US, "%.2f", value)
+
+/**
+ * 中二谱面满连击（谱面物量）展示文本。
+ *
+ * 水鱼 music_data 的 `combo` 字段**大量缺失**（实测 6657 个谱面里 2244 个为 0，
+ * ULTIMA 更是 83% 缺）—— 那是「曲库没数据」，不是「连击真的是 0」，直接显示 0 会误导。
+ * 缺失统一显示「暂缺」。
+ */
+fun chuniComboText(combo: Int): String = if (combo > 0) "$combo" else "暂缺"
+
 /** 中二节奏 Rating 徽章（舞萌 DxRatingTag 为官方底板图，不适用中二，这里用主题色胶囊）。 */
 @Composable
-fun ChuniRatingTag(rating: Int, modifier: Modifier = Modifier) {
+fun ChuniRatingTag(rating: Double, modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
             .background(MiuixTheme.colorScheme.primary.copy(alpha = 0.14f), RoundedCornerShape(6.dp))
             .padding(horizontal = 10.dp, vertical = 5.dp),
     ) {
         Text(
-            text = "RATING ${rating.coerceAtLeast(0)}",
+            text = "RATING ${chuniRatingText(rating.coerceAtLeast(0.0))}",
             style = MiuixTheme.textStyles.footnote1,
             color = MiuixTheme.colorScheme.primary,
         )

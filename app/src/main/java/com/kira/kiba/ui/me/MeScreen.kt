@@ -146,7 +146,7 @@ fun MeScreen(
                                 }
                             },
                             endActions = {
-                                if (chuniRating > 0) ChuniRatingTag(rating = chuniRating)
+                                if (chuniRating > 0.0) ChuniRatingTag(rating = chuniRating)
                             },
                             startAction = { PrefIcon(MiuixGlassIcons.Regular.Contacts) },
                         )

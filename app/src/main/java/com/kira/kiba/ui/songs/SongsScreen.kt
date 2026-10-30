@@ -244,16 +244,18 @@ fun SongsScreen(
         }
     }
 
-    // 刷新进度卡生命周期：成功立即隐藏；失败短暂展示错误后自动隐藏
-    LaunchedEffect(syncState) {
-        when (syncState) {
-            is SongDataSync.SyncState.Done -> SongsRefreshCard.visible.value = false
-            is SongDataSync.SyncState.Failed -> {
-                delay(3000)
-                SongsRefreshCard.visible.value = false
-            }
-            else -> Unit
-        }
+    // 刷新进度卡生命周期：两边都结束才隐藏；任一边失败则短暂展示错误后自动隐藏。
+    // 两边是并行协程，先结束的那张卡不能立刻收掉另一张还在跑的。
+    LaunchedEffect(syncState, chuniSyncState) {
+        val maimaiFinished = syncState is SongDataSync.SyncState.Done ||
+            syncState is SongDataSync.SyncState.Failed
+        val chuniFinished = chuniSyncState is ChuniSongSync.SyncState.Done ||
+            chuniSyncState is ChuniSongSync.SyncState.Failed
+        if (!maimaiFinished || !chuniFinished) return@LaunchedEffect
+        val failed = syncState is SongDataSync.SyncState.Failed ||
+            chuniSyncState is ChuniSongSync.SyncState.Failed
+        if (failed) delay(3000)
+        SongsRefreshCard.visible.value = false
     }
     // 卡片出现时：列表立刻重置到顶 + 顶栏动画恢复展开。
     // 用 snapshotFlow 而非以 visible 为 key 的 LaunchedEffect：
@@ -291,7 +293,7 @@ fun SongsScreen(
             onConfirm = {
                 SongDataSync.dismissUpdatePrompt()
                 SongsRefreshCard.visible.value = true
-                KibaState.refreshSongData(context)
+                KibaState.refreshAllSongData(context)
             },
         )
     }
@@ -321,10 +323,14 @@ fun SongsScreen(
                 )
             }
 
-            // 刷新进度卡（置顶）：仅曲目页刷新入口触发，完成 / 失败提示后隐藏
-            if (refreshCardVisible && gameType == GameType.MAIMAI) {
-                item(key = "sync_card") {
+            // 刷新进度卡（置顶）：曲目页刷新会**同时刷新舞萌与中二两边**，
+            // 这里两张卡各展示一边的进度（与当前分段开关选中的游戏无关）。
+            if (refreshCardVisible) {
+                item(key = "sync_card_maimai") {
                     SongsSyncProgressCard(state = syncState)
+                }
+                item(key = "sync_card_chuni") {
+                    ChuniSongsSyncProgressCard(state = chuniSyncState)
                 }
             }
 
@@ -364,7 +370,7 @@ fun SongsScreen(
                                         colors = ButtonDefaults.buttonColorsPrimary(),
                                         onClick = {
                                             SongsRefreshCard.visible.value = true
-                                            KibaState.refreshSongData(context)
+                                            KibaState.refreshAllSongData(context)
                                         },
                                     ) {
                                         Text(text = "立即更新曲库")
@@ -418,7 +424,8 @@ fun SongsScreen(
                                     Button(
                                         colors = ButtonDefaults.buttonColorsPrimary(),
                                         onClick = {
-                                            scope.launch { ChuniSongSync.forceSync(context) }
+                                            SongsRefreshCard.visible.value = true
+                                            KibaState.refreshAllSongData(context)
                                         },
                                     ) {
                                         Text(text = "同步中二节奏曲库")
@@ -574,7 +581,7 @@ private fun SongDataUpdateDialog(
 }
 
 /**
- * 曲库刷新进度卡（曲目页置顶）：
+ * 舞萌曲库刷新进度卡（曲目页置顶）：
  * - Checking → 不定态动画条「正在检查曲库更新」；
  * - Downloading → 真实进度条（received/total，total 未知时退化为动画条）「正在下载最新曲目库」；
  * - Failed → 红色错误提示（外层 3 秒后自动隐藏卡片）；
@@ -636,6 +643,67 @@ private fun SongsSyncProgressCard(state: SongDataSync.SyncState) {
                 }
             }
         }
+    }
+}
+
+/**
+ * 中二节奏曲库刷新进度卡（与舞萌 [SongsSyncProgressCard] 并列展示，曲目页刷新时两边同时跑）。
+ *
+ * 三个阶段各有一条文案，下载阶段拿到字节数就走定态进度条，
+ * 入库 / 补物量阶段（无总量可算）走不定态动画条。
+ */
+@Composable
+private fun ChuniSongsSyncProgressCard(state: ChuniSongSync.SyncState) {
+    Card(modifier = (Modifier.fillMaxWidth())) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+            val syncing = state as? ChuniSongSync.SyncState.Syncing
+            Text(
+                text = when {
+                    syncing != null -> chuniStageText(syncing)
+                    state is ChuniSongSync.SyncState.Failed -> "中二节奏曲库刷新失败"
+                    else -> "中二节奏曲库 等待同步…"
+                },
+                style = MiuixTheme.textStyles.body1,
+                color = if (state is ChuniSongSync.SyncState.Failed) {
+                    MiuixTheme.colorScheme.primary
+                } else {
+                    MiuixTheme.colorScheme.onSurface
+                },
+            )
+            if (state is ChuniSongSync.SyncState.Failed) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = state.message,
+                    style = MiuixTheme.textStyles.footnote1,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                )
+            } else if (syncing != null) {
+                Spacer(Modifier.height(10.dp))
+                SyncProgressBar(
+                    progress = syncing
+                        .takeIf { it.stage == ChuniSongSync.STAGE_DOWNLOAD && it.total > 0 }
+                        ?.let { it.received.toFloat() / it.total },
+                )
+            }
+        }
+    }
+}
+
+/** 中二曲库同步各阶段的展示文案。 */
+private fun chuniStageText(state: ChuniSongSync.SyncState.Syncing): String {
+    if (state.stage != ChuniSongSync.STAGE_DOWNLOAD) {
+        return when (state.stage) {
+            ChuniSongSync.STAGE_IMPORT -> "正在写入中二节奏曲库…"
+            ChuniSongSync.STAGE_NOTES -> "正在补齐中二谱面物量…"
+            else -> "正在同步中二节奏曲库…"
+        }
+    }
+    val receivedMb = state.received / (1024f * 1024f)
+    val totalMb = state.total / (1024f * 1024f)
+    return if (state.total > 0) {
+        "正在下载中二节奏曲库  %.1f / %.1f MB".format(receivedMb, totalMb)
+    } else {
+        "正在下载中二节奏曲库  %.1f MB".format(receivedMb)
     }
 }
 

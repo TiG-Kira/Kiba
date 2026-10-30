@@ -36,7 +36,9 @@ import com.kira.kiba.ui.common.SectionTitle
 import com.kira.kiba.ui.common.VGap
 import com.kira.kiba.ui.common.chuniDifficultyColor
 import com.kira.kiba.ui.common.chuniDifficultyLabel
+import com.kira.kiba.ui.common.chuniComboText
 import com.kira.kiba.ui.common.chuniFcDisplay
+import com.kira.kiba.ui.common.chuniRatingText
 import com.kira.kiba.ui.common.chuniScoreText
 import com.kira.kiba.ui.common.pageContentPadding
 import top.yukonga.miuix.kmp.basic.Card
@@ -51,8 +53,9 @@ import top.yukonga.miuix.kmp.utils.PressFeedbackType
  *
  * 内容：
  * - 信息列表：ID / BPM / 流派 / 版本（中二节奏无 SD/DX 区分、无 catcode）；
- * - 各难度谱面卡（可点击进谱面详情）：定数 / 谱师 / 连击（替代舞萌的 notes 构成）/
- *   本地成绩（分数 / 连击 / 本谱面 Rating 贡献）；
+ * - 各难度谱面卡（可点击进谱面详情）：定数 / 谱师 / 历史游玩最大连击（替代舞萌的
+ *   notes 构成；**只有玩家打过的谱面才显示数值，未打过显示「暂未游玩」**）/
+ *   本地成绩（分数 / FC 徽章 / 本谱面 Rating 贡献）；
  * - 中二节奏不支持分享，由 MainScreen 顶栏逻辑统一控制（详情顶栏不提供分享入口）。
  */
 @Composable
@@ -184,13 +187,21 @@ private fun ChuniChartCard(
             )
             VGap(8.dp)
 
-            // 等级 / 连击
+            // 等级 / 历史游玩最大连击
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 ChuniMetaChip("等级 ${chart.level}")
-                ChuniMetaChip("连击 ${chart.combo}")
+                // 连击只在玩家真打过该谱面时展示。数值是**谱面满连击**（查分器曲目页
+                // 显示的那个）：查分器不记录玩家单次游玩的实际连击，
+                // 玩家 FC 时该值才等于自己的最大连击，否则它只是该谱面的理论上限。
+                // 曲库缺 combo 时不显示 0，明确写「连击数据暂缺」。
+                when {
+                    record == null -> ChuniMetaChip("暂未游玩")
+                    chart.combo > 0 -> ChuniMetaChip("历史游玩最大连击 ${chuniComboText(chart.combo)}")
+                    else -> ChuniMetaChip("连击数据暂缺")
+                }
             }
 
             // 本地成绩
@@ -212,7 +223,7 @@ private fun ChuniChartCard(
                     }
                     Spacer(Modifier.weight(1f))
                     Text(
-                        text = "Rating ${r.ra}",
+                        text = "Rating ${chuniRatingText(r.ra)}",
                         style = MiuixTheme.textStyles.subtitle,
                         color = MiuixTheme.colorScheme.primary,
                     )

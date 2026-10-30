@@ -49,7 +49,7 @@ abstract class AppDataBase : RoomDatabase() {
 
 
     companion object {
-        const val DATABASE_VERSION = 2
+        const val DATABASE_VERSION = 4
         const val DATABASE_NAME = "maimaidata_db"
 
         /** 1 → 2：新增中二节奏三张平行表（chuni_song / chuni_chart / chuni_record），不动舞萌原有表。 */
@@ -100,6 +100,67 @@ abstract class AppDataBase : RoomDatabase() {
             }
         }
 
+        /**
+         * 2 → 3：chuni_record.ra 由 INTEGER 改为 REAL。
+         *
+         * 中二单曲 ra 是浮点（14.53），之前落库被截断成整数，玩家 Rating 累加后整体偏低
+         * （机台 14 多的号在 App 里只显示 7）。SQLite 无法直接改列类型，按官方推荐做法
+         * 「建新表 → 搬数据 → 删旧表 → 改名」重建；只有中二表受影响，舞萌表不动。
+         */
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // 中二谱面表本次一并补上落雪的物量细分列（chuni_chart 是空表风险低，
+                // 但仍按官方 addColumn 套路走，避免破坏已有数据）
+                db.execSQL("ALTER TABLE `chuni_chart` ADD COLUMN `notes_tap` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `chuni_chart` ADD COLUMN `notes_hold` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `chuni_chart` ADD COLUMN `notes_slide` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `chuni_chart` ADD COLUMN `notes_air` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `chuni_chart` ADD COLUMN `notes_flick` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL(
+                    """CREATE TABLE IF NOT EXISTS `chuni_record_new` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `song_id` INTEGER NOT NULL,
+                        `cid` INTEGER NOT NULL,
+                        `title` TEXT NOT NULL,
+                        `level_index` INTEGER NOT NULL,
+                        `level_label` TEXT NOT NULL,
+                        `level` TEXT NOT NULL,
+                        `score` INTEGER NOT NULL,
+                        `fc` TEXT NOT NULL,
+                        `ra` REAL NOT NULL,
+                        `ds` REAL NOT NULL,
+                        `is_recent` INTEGER NOT NULL DEFAULT 0)"""
+                )
+                db.execSQL(
+                    """INSERT INTO `chuni_record_new`
+                       (`id`,`song_id`,`cid`,`title`,`level_index`,`level_label`,`level`,`score`,`fc`,`ra`,`ds`,`is_recent`)
+                       SELECT `id`,`song_id`,`cid`,`title`,`level_index`,`level_label`,`level`,`score`,`fc`,
+                              CAST(`ra` AS REAL),`ds`,`is_recent`
+                       FROM `chuni_record`"""
+                )
+                db.execSQL("DROP TABLE IF EXISTS `chuni_record`")
+                db.execSQL("ALTER TABLE `chuni_record_new` RENAME TO `chuni_record`")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_chuni_record_song_id` ON `chuni_record`(`song_id`)"
+                )
+            }
+        }
+
+        /**
+         * 3 → 4：chuni_chart 新增 version 列（谱面版本编码）。
+         *
+         * 该列用于官方 Rating 公式（VERSE 起）区分「当前版本 / 非当前版本」谱面。
+         * 落雪 lxns 提供版本编码（24000 = X-VERSE 档，含 X-VERSE-X 新曲），曲库同步时补打标。
+         * 用 ALTER ADD COLUMN 追加，仅中二表受影响，舞萌表与已有数据不动。
+         */
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `chuni_chart` ADD COLUMN `version` INTEGER NOT NULL DEFAULT 0"
+                )
+            }
+        }
+
         @Volatile
         private lateinit var instance: AppDataBase
 
@@ -118,7 +179,7 @@ abstract class AppDataBase : RoomDatabase() {
                 DATABASE_NAME
             )
                 .fallbackToDestructiveMigration(BuildConfig.DEBUG)
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .addCallback(object : Callback() {
                     override fun onDestructiveMigration(connection: SQLiteConnection) {
                         SpUtil.setDataVersion("0")

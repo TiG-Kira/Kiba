@@ -2,6 +2,8 @@ package com.kira.kiba.ui.songdetail
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -31,9 +33,11 @@ import com.kira.kiba.ui.common.HGap
 import com.kira.kiba.ui.common.InfoRow
 import com.kira.kiba.ui.common.SectionTitle
 import com.kira.kiba.ui.common.VGap
+import com.kira.kiba.ui.common.chuniComboText
 import com.kira.kiba.ui.common.chuniDifficultyColor
 import com.kira.kiba.ui.common.chuniDifficultyLabel
 import com.kira.kiba.ui.common.chuniFcDisplay
+import com.kira.kiba.ui.common.chuniRatingText
 import com.kira.kiba.ui.common.chuniScoreText
 import com.kira.kiba.ui.common.pageContentPadding
 import top.yukonga.miuix.kmp.basic.Card
@@ -44,13 +48,19 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
  * 中二节奏谱面详情页（精简版，对标舞萌 [ChartDetailScreen] 但仅保留中二节奏关心的信息）：
- * - 谱面头：难度 / 定数 / 歌曲名 / 谱师 / 最大连击；
- * - 我的成绩（若有）：分数（0–1009000）/ 连击 / 本谱面 Rating 贡献；
- * - 谱面信息：定数 / 等级 / 谱师 / 最大连击。
+ * - 谱面头：难度 / 定数 / 歌曲名 / 谱师 / 谱面满连击（曲库缺数据时显示「暂缺」）；
+ * - 我的成绩（若有）：分数（0–1009000）/ FC 徽章 / 本谱面 Rating 贡献；
+ * - 谱面信息：定数 / 等级 / 谱师 / 谱面满连击。
  *
- * 中二节奏 music_data 不提供 notes 细分，故不展示音符构成 / 失分表 / 单曲 Rating 档位表。
+ * 注意：「满连击」是**谱面物量**（所有人一样），不是玩家自己的连击 ——
+ * 查分器（水鱼 / 落雪）的成绩结构里都没有玩家连击字段，中二体系本身不记录。
+ * 水鱼曲库约 1/3 谱面缺 combo（ULTIMA 达 83%），一律显示「暂缺」而不是 0。
+ *
+ * 中二节奏 music_data 不提供 notes 细分，音符构成由落雪 lxns 补齐后才展示；
+ * 同样不展示失分表（中二无 BREAK 扣分机制）。
  * 中二节奏不支持分享，本页不提供分享入口（由 MainScreen 顶栏逻辑统一控制）。
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ChuniChartDetailScreen(
     songId: Int,
@@ -119,7 +129,24 @@ fun ChuniChartDetailScreen(
                         InfoRow("定数", if (currentChart.ds > 0.0) "%.1f".format(currentChart.ds) else "-")
                         InfoRow("等级", currentChart.level)
                         InfoRow("谱师", currentChart.charter)
-                        InfoRow("最大连击", "${currentChart.combo}")
+                        InfoRow("谱面满连击", chuniComboText(currentChart.combo))
+                        // 音符构成：水鱼曲库完全没有，只有落雪 lxns 补过才有
+                        if (currentChart.hasNotesBreakdown) {
+                            FlowRow(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp)
+                                    .padding(bottom = 12.dp),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                ChuniMetaChip("TAP ${currentChart.notesTap}")
+                                ChuniMetaChip("HOLD ${currentChart.notesHold}")
+                                ChuniMetaChip("SLIDE ${currentChart.notesSlide}")
+                                ChuniMetaChip("AIR ${currentChart.notesAir}")
+                                ChuniMetaChip("FLICK ${currentChart.notesFlick}")
+                            }
+                        }
                     }
                 }
             }
@@ -160,7 +187,7 @@ private fun ChuniChartHeaderCard(chart: ChuniChartEntity, song: ChuniSongEntity?
             )
             VGap(2.dp)
             Text(
-                text = "最大连击：${chart.combo}",
+                text = "谱面满连击：${chuniComboText(chart.combo)}",
                 style = MiuixTheme.textStyles.body2,
                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
             )
@@ -189,14 +216,14 @@ private fun ChuniRecordCard(chart: ChuniChartEntity, record: ChuniRecordEntity) 
                 }
                 Spacer(Modifier.weight(1f))
                 Text(
-                    text = "Rating ${record.ra}",
+                    text = "Rating ${chuniRatingText(record.ra)}",
                     style = MiuixTheme.textStyles.subtitle,
                     color = MiuixTheme.colorScheme.primary,
                 )
             }
             VGap(4.dp)
             Text(
-                text = "本谱面 Rating 贡献 ${record.ra}　定数 %.1f".format(chart.ds),
+                text = "本谱面 Rating 贡献 ${chuniRatingText(record.ra)}　定数 %.1f".format(chart.ds),
                 style = MiuixTheme.textStyles.body2,
                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
             )

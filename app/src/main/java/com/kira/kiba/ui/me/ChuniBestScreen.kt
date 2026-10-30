@@ -23,6 +23,8 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.kira.kiba.core.data.ChuniRating
+import com.kira.kiba.core.model.ChuniDiffType
 import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.db.entity.ChuniRecordEntity
 import com.kira.kiba.core.utils.SpUtil
@@ -30,6 +32,7 @@ import com.kira.kiba.ui.common.ChuniCoverFrame
 import com.kira.kiba.ui.common.ChuniDifficultyChip
 import com.kira.kiba.ui.common.ChuniFcBadge
 import com.kira.kiba.ui.common.EmptyStateCard
+import com.kira.kiba.ui.common.chuniRatingText
 import com.kira.kiba.ui.common.HGap
 import com.kira.kiba.ui.common.SectionTitle
 import com.kira.kiba.ui.common.VGap
@@ -46,11 +49,14 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.utils.PressFeedbackType
 
 /**
- * 中二节奏 Best 页（按单曲 ra 降序取前 30；**不支持分享**）。
+ * 中二节奏 Best 页（按官方 VERSE 起口径：非当前版本 TOP30 + 当前版本 TOP20，分母 50；**不支持分享**）。
  *
  * 数据源：本地 chuni_record（由 [com.kira.kiba.core.data.ChuniRecordSync] 从水鱼
- * chunithmprober/player/records 拉取）。头部卡展示官方 Rating / 昵称 / 成绩条数。
- * 中二 2026 版本后 r10（最近游玩）为空数组，Rating 由服务端官方口径给出，本地不再自行计算。
+ * chunithmprober/player/records 拉取，谱面版本来自曲库同步时的落雪打标）。头部卡展示 Rating / 昵称 / 成绩条数。
+ *
+ * **Rating 由本地按官方 VERSE 起公式自算**（[ChuniRating]）：(非当前 TOP30 之和 + 当前 TOP20 之和) / 50，
+ * 两位小数截断。水鱼服务端 rating 把 r10 当 0 会整体腰斩（机台 14.x 只给 7.x），故不取服务端值；
+ * 曲库未同步落雪（无 version）时退化为 best30 均值托底。
  */
 @Composable
 fun ChuniBestScreen(
@@ -64,8 +70,18 @@ fun ChuniBestScreen(
     }
     val rating = remember { SpUtil.getChuniRating() }
     val nickname = remember { SpUtil.getChuniNickname() }
-    val sorted = remember(records) { records.sortedByDescending { it.ra } }
-    val best30 = remember(sorted) { sorted.take(30) }
+    val recentCount = remember { SpUtil.getChuniRecentCount() }
+    val nonCurrentAvg = remember { SpUtil.getChuniNonCurrentAvg() }
+    val currentAvg = remember { SpUtil.getChuniCurrentAvg() }
+    // Best 枠与 Recent 枠在库里用 is_recent 区分：列表只展示历史最佳（Best），
+    // 否则最近一次手滑的低分会混进 Best。水鱼 2026 后 r10 恒空 → 全量即 Best。
+    // World's End 不参与官方 Rating，列表与头部数字保持一致一并排除。
+    val pool = remember(records) {
+        val best = records.filter { !it.isRecent && it.levelIndex != ChuniDiffType.WORLD_END.ordinal }
+        if (best.isNotEmpty()) best else records.filter { it.levelIndex != ChuniDiffType.WORLD_END.ordinal }
+    }
+    val sorted = remember(pool) { pool.sortedByDescending { it.ra } }
+    val best50 = remember(sorted) { sorted.take(50) }
 
     Scaffold(
         modifier = Modifier
@@ -84,7 +100,7 @@ fun ChuniBestScreen(
                 Card(modifier = (Modifier.fillMaxWidth())) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text(
-                            text = "$rating",
+                            text = chuniRatingText(rating),
                             style = MiuixTheme.textStyles.title1,
                             color = MiuixTheme.colorScheme.primary,
                         )
@@ -95,24 +111,31 @@ fun ChuniBestScreen(
                                     append(nickname)
                                     append(" · ")
                                 }
-                                append("官方 Rating · 本地成绩 ${records.size} 条")
+                                append("官方 Rating 口径 · 本地成绩 ${pool.size} 条")
                             },
                             style = MiuixTheme.textStyles.body2,
+                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        )
+                        VGap(4.dp)
+                        Text(
+                            text = "非当前 TOP30 均值 ${chuniRatingText(nonCurrentAvg)}" +
+                                " · 当前 TOP20 均值 ${chuniRatingText(currentAvg)}",
+                            style = MiuixTheme.textStyles.footnote1,
                             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                         )
                     }
                 }
             }
 
-            if (best30.isEmpty()) {
+            if (best50.isEmpty()) {
                 item(key = "empty") {
                     EmptyStateCard(
                         text = "还没有中二成绩数据\n请在「我」页面同步中二成绩后重试",
                     )
                 }
             } else {
-                item(key = "title") { SectionTitle("Best 30 · 点击查看歌曲详情") }
-                best30.forEachIndexed { index, record ->
+                item(key = "title") { SectionTitle("Best 50 · 官方口径 TOP50（非当前30 + 当前20）") }
+                best50.forEachIndexed { index, record ->
                     item(key = "best_${record.songId}_${record.levelIndex}") {
                         ChuniBestRow(
                             rank = index + 1,
@@ -125,7 +148,7 @@ fun ChuniBestScreen(
 
             item(key = "footer") {
                 Text(
-                    text = "Rating 取自水鱼官方口径（chunithmprober）",
+                    text = "Rating 按官方 VERSE 起口径本地计算：非当前 TOP30 + 当前 TOP20，分母 50",
                     style = MiuixTheme.textStyles.footnote2,
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                     modifier = Modifier
@@ -203,7 +226,7 @@ private fun ChuniBestRow(
                         .padding(horizontal = 6.dp, vertical = 1.dp),
                 ) {
                     Text(
-                        text = "ra ${record.ra}",
+                        text = "ra ${chuniRatingText(record.ra)}",
                         style = MiuixTheme.textStyles.footnote2,
                         color = MiuixTheme.colorScheme.primary,
                     )

@@ -281,15 +281,50 @@ object SpUtil {
 
     // ================= 中二节奏成绩（chunithmprober） =================
 
-    /** 最近一次中二成绩同步的官方 Rating（0 = 从未同步）。 */
-    private const val KEY_CHUNI_RATING = "chuni_rating"
+    /**
+     * 最近一次中二成绩同步的 Rating（两位小数，0 = 从未同步）。
+     *
+     * 早期版本用 Int 键 `chuni_rating` 存截断整数，与机台差了一半（14.x → 7），
+     * 现改为浮点并**换成新键**：SharedPreferences 里老值是 Int，同键 getFloat 会抛
+     * ClassCastException 直接崩 App，故必须换 key。
+     */
+    private const val KEY_CHUNI_RATING = "chuni_rating_v2"
+    /** Recent 枠条目数（0 = 数据源缺失 r10，Rating 按 Best 30 口径兜底）。 */
+    private const val KEY_CHUNI_RECENT_COUNT = "chuni_recent_count"
     private const val KEY_CHUNI_NICKNAME = "chuni_nickname"
     private const val KEY_CHUNI_RECORD_COUNT = "chuni_record_count"
 
-    fun getChuniRating(): Int = userInfoPrefs.getInt(KEY_CHUNI_RATING, 0)
+    fun getChuniRating(): Double =
+        runCatching { userInfoPrefs.getFloat(KEY_CHUNI_RATING, 0f).toDouble() }.getOrDefault(0.0)
 
-    fun setChuniRating(rating: Int) {
-        userInfoPrefs.edit { putInt(KEY_CHUNI_RATING, rating) }
+    fun setChuniRating(rating: Double) {
+        userInfoPrefs.edit { putFloat(KEY_CHUNI_RATING, rating.toFloat()) }
+    }
+
+    /** 非当前版本 TOP30 均值（官方 VERSE 起公式，两位小数），用于 Best 页展示。 */
+    private const val KEY_CHUNI_NONCURRENT_AVG = "chuni_noncurrent_avg_v2"
+
+    /** 当前版本 TOP20 均值（官方 VERSE 起公式，两位小数），用于 Best 页展示。 */
+    private const val KEY_CHUNI_CURRENT_AVG = "chuni_current_avg_v2"
+
+    fun getChuniNonCurrentAvg(): Double =
+        runCatching { userInfoPrefs.getFloat(KEY_CHUNI_NONCURRENT_AVG, 0f).toDouble() }.getOrDefault(0.0)
+
+    fun setChuniNonCurrentAvg(value: Double) {
+        userInfoPrefs.edit { putFloat(KEY_CHUNI_NONCURRENT_AVG, value.toFloat()) }
+    }
+
+    fun getChuniCurrentAvg(): Double =
+        runCatching { userInfoPrefs.getFloat(KEY_CHUNI_CURRENT_AVG, 0f).toDouble() }.getOrDefault(0.0)
+
+    fun setChuniCurrentAvg(value: Double) {
+        userInfoPrefs.edit { putFloat(KEY_CHUNI_CURRENT_AVG, value.toFloat()) }
+    }
+
+    fun getChuniRecentCount(): Int = userInfoPrefs.getInt(KEY_CHUNI_RECENT_COUNT, 0)
+
+    fun setChuniRecentCount(count: Int) {
+        userInfoPrefs.edit { putInt(KEY_CHUNI_RECENT_COUNT, count) }
     }
 
     fun getChuniNickname(): String = userInfoPrefs.getString(KEY_CHUNI_NICKNAME, "") ?: ""

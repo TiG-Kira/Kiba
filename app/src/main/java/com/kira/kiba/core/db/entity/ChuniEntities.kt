@@ -82,11 +82,48 @@ data class ChuniChartEntity(
     /** 谱师。 */
     val charter: String,
 
-    /** 最大连击数（music_data 提供，替代舞萌的 notesTotal）。 */
+    /**
+     * 最大连击数（谱面满连击 = 谱面物量）。
+     *
+     * 水鱼 music_data 的 combo **约 1/3 缺失**（ULTIMA 达 83%），缺失时由落雪 lxns
+     * 的 `notes.total` 补齐（实测两者口径完全一致，4210 个谱面比对 100% 相等）。
+     * 0 = 曲库确实没数据，UI 必须显示「暂缺」而不是 0。
+     */
     val combo: Int,
+
+    /** 谱面物量细分（落雪 lxns 提供，0 = 无数据）：TAP。 */
+    @androidx.room.ColumnInfo(name = "notes_tap", defaultValue = "0")
+    val notesTap: Int = 0,
+
+    /** 谱面物量细分：HOLD。 */
+    @androidx.room.ColumnInfo(name = "notes_hold", defaultValue = "0")
+    val notesHold: Int = 0,
+
+    /** 谱面物量细分：SLIDE。 */
+    @androidx.room.ColumnInfo(name = "notes_slide", defaultValue = "0")
+    val notesSlide: Int = 0,
+
+    /** 谱面物量细分：AIR。 */
+    @androidx.room.ColumnInfo(name = "notes_air", defaultValue = "0")
+    val notesAir: Int = 0,
+
+    /** 谱面物量细分：FLICK。 */
+    @androidx.room.ColumnInfo(name = "notes_flick", defaultValue = "0")
+    val notesFlick: Int = 0,
+
+    /**
+     * 谱面所属版本编码（落雪 lxns 提供，如 24000 = X-VERSE 档，含 X-VERSE-X 新曲）。
+     * 0 = 曲库未打标（落雪未收录该曲）。用于官方 Rating 公式区分「当前版本 / 非当前版本」谱面：
+     * 查分器将临近两版都归为「最新曲」，故当前版本统一取曲库里最大的有效 version。
+     */
+    @androidx.room.ColumnInfo(name = "version", defaultValue = "0")
+    val version: Int = 0,
 ) : Parcelable {
     /** 难度类型枚举（UI 配色 / 标签用）。 */
     val diffType: ChuniDiffType get() = ChuniDiffType.fromIndex(difficultyIndex)
+
+    /** 物量细分是否可用（细分数据来自落雪，水鱼没有）。 */
+    val hasNotesBreakdown: Boolean get() = notesTap + notesHold + notesSlide + notesAir + notesFlick > 0
 }
 
 /**
@@ -124,12 +161,24 @@ data class ChuniRecordEntity(
 
     val fc: String,
 
-    /** 该谱面获得的 Rating 贡献值。 */
-    val ra: Int,
+    /**
+     * 该谱面获得的 Rating 贡献值（ra）。
+     *
+     * 水鱼返回的是**浮点**（如 14.53），早期这里截断成 Int，导致 Best 30 排序并列误判、
+     * 玩家 Rating 累加后整体偏低（实测 14.x 被算成 7.x）。Rating 要显示两位小数，
+     * 故列类型必须是 REAL。
+     */
+    val ra: Double,
 
     val ds: Double,
 
-    /** 是否为「最近游玩」成绩（中二 Rating = (best30 + recent10) / 40）。 */
+    /**
+     * 是否为「最近游玩」成绩。
+     *
+     * 当前官方 VERSE 起公式已**不依赖** Recent 枠：水鱼 2026 后 `records.r10` 恒为空数组，
+     * 本地 Rating 改按 (非当前版本 TOP30 之和 + 当前版本 TOP20 之和) / 50 计算。
+     * 此标记只用于把 Recent 枠成绩从 Best 列表里剔除，避免最近一次手滑的低分污染历史最佳。
+     */
     @androidx.room.ColumnInfo(name = "is_recent", defaultValue = "0")
     val isRecent: Boolean = false,
 ) : Parcelable

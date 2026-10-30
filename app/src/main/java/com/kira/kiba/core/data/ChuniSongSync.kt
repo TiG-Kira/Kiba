@@ -34,9 +34,31 @@ object ChuniSongSync {
     private const val MUSIC_DATA_URL =
         "https://www.diving-fish.com/api/chunithmprober/music_data"
 
+    /** 常规浏览器 UA：部分站点会拒绝 OkHttp 默认 UA（okhttp/x.y）。 */
+    private const val UA =
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+
+    /** 阶段：正在下载曲库 JSON。 */
+    const val STAGE_DOWNLOAD = 0
+
+    /** 阶段：正在解析入库（Room 事务整体替换）。 */
+    const val STAGE_IMPORT = 1
+
+    /** 阶段：正在用落雪 lxns 补齐谱面物量。 */
+    const val STAGE_NOTES = 2
+
     sealed class SyncState {
         data object Idle : SyncState()
-        data object Syncing : SyncState()
+
+        /**
+         * @param stage 阶段，取 [STAGE_DOWNLOAD] / [STAGE_IMPORT] / [STAGE_NOTES]。
+         * @param received 已下载字节（仅下载阶段有意义）。
+         * @param total 总字节；<= 0 表示服务端没给长度（gzip 场景常见），UI 退化成不定态进度条。
+         */
+        data class Syncing(val stage: Int, val received: Long = 0L, val total: Long = 0L) :
+            SyncState()
+
         data class Done(val count: Int) : SyncState()
         data class Failed(val message: String) : SyncState()
     }
@@ -56,17 +78,14 @@ object ChuniSongSync {
 
     fun isEmpty(): Boolean = SpUtil.getChuniDataVersion().isBlank()
 
-    /** 立即同步：下载 music_data → 解析 → 入库。重复调用由 [SyncState] 守门。 */
+    /** 立即同步：下载 music_data → 解析入库 → 补落雪物量。重复调用由 [SyncState] 守门。 */
     suspend fun forceSync(context: Context) {
         if (_state.value is SyncState.Syncing) return
-        _state.value = SyncState.Syncing
+        _state.value = SyncState.Syncing(STAGE_DOWNLOAD)
         val result = withContext(Dispatchers.IO) {
             runCatching {
-                val request = Request.Builder().url(MUSIC_DATA_URL).build()
-                val json = client.newCall(request).execute().use { resp ->
-                    if (!resp.isSuccessful) throw IllegalStateException("HTTP ${resp.code}")
-                    resp.body?.string().orEmpty()
-                }
+                val json = downloadMusicData()
+                _state.value = SyncState.Syncing(STAGE_IMPORT)
                 val (songs, charts) = parseMusicData(json)
                 if (songs.isEmpty()) throw IllegalStateException("曲库数据为空或解析失败")
                 val ok = ChuniSongWithChartRepository.getInstance(
@@ -75,6 +94,10 @@ object ChuniSongSync {
                 if (!ok) throw IllegalStateException("曲库入库失败")
                 val version = java.time.LocalDate.now().toString()
                 SpUtil.setChuniDataVersion(version)
+                // 落雪物量是**增强项**：水鱼约 1/3 谱面缺 combo，用它补齐满连击与
+                // 音符构成。失败不影响曲库同步本身（内部已吞掉异常）。
+                _state.value = SyncState.Syncing(STAGE_NOTES)
+                ChuniNotesSync.sync()
                 songs.size
             }.getOrElse { e ->
                 Log.w(TAG, "forceSync failed", e)
@@ -83,6 +106,37 @@ object ChuniSongSync {
             }
         }
         if (result >= 0) _state.value = SyncState.Done(result)
+    }
+
+    /**
+     * 流式下载 music_data 并上报字节进度。
+     *
+     * 用 ByteArrayOutputStream 攒字符串（曲库约 1 MB）；gzip 场景下
+     * contentLength 为 -1，此时 [SyncState.Syncing.total] 传 -1，UI 退化成不定态进度条。
+     */
+    private suspend fun downloadMusicData(): String = withContext(Dispatchers.IO) {
+        val request = Request.Builder()
+            .url(MUSIC_DATA_URL)
+            .header("User-Agent", UA)
+            .build()
+        client.newCall(request).execute().use { resp ->
+            if (!resp.isSuccessful) throw IllegalStateException("HTTP ${resp.code}")
+            val body = resp.body ?: throw IllegalStateException("空响应")
+            val total = body.contentLength()
+            val buffer = ByteArray(64 * 1024)
+            val out = java.io.ByteArrayOutputStream()
+            var received = 0L
+            body.byteStream().use { input ->
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read <= 0) break
+                    out.write(buffer, 0, read)
+                    received += read
+                    _state.value = SyncState.Syncing(STAGE_DOWNLOAD, received, total)
+                }
+            }
+            out.toString("UTF-8")
+        }
     }
 
     /**
@@ -104,12 +158,12 @@ object ChuniSongSync {
         for (elem in array) {
             if (elem !is JsonObject) continue
             val id = elem.get("id")?.takeIf { !it.isJsonNull }?.asInt ?: continue
-            val basic = elem.getAsJsonObject("basic_info")
-            val title = basic?.get("title")?.takeIf { !it.isJsonNull }?.asString ?: continue
-            val artist = basic?.get("artist")?.takeIf { !it.isJsonNull }?.asString ?: ""
-            val genre = basic?.get("genre")?.takeIf { !it.isJsonNull }?.asString ?: ""
-            val bpm = basic?.get("bpm")?.takeIf { !it.isJsonNull }?.asInt ?: 0
-            val from = basic?.get("from")?.takeIf { !it.isJsonNull }?.asString ?: ""
+            val basic = elem.getAsJsonObject("basic_info") ?: continue
+            val title = basic.get("title")?.takeIf { !it.isJsonNull }?.asString ?: continue
+            val artist = basic.get("artist")?.takeIf { !it.isJsonNull }?.asString ?: ""
+            val genre = basic.get("genre")?.takeIf { !it.isJsonNull }?.asString ?: ""
+            val bpm = basic.get("bpm")?.takeIf { !it.isJsonNull }?.asInt ?: 0
+            val from = basic.get("from")?.takeIf { !it.isJsonNull }?.asString ?: ""
             songs.add(
                 ChuniSongEntity(
                     id = id, title = title, titleKana = "",

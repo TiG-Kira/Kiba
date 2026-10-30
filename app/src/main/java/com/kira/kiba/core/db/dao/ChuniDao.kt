@@ -6,11 +6,13 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.Query
 import androidx.room.Transaction
+import androidx.room.Update
 import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.db.entity.ChuniChartEntity
 import com.kira.kiba.core.db.entity.ChuniRecordEntity
 import com.kira.kiba.core.db.entity.ChuniSongEntity
 import com.kira.kiba.core.db.entity.ChuniSongWithCharts
+import androidx.room.ColumnInfo
 
 @Dao
 interface ChuniSongDao {
@@ -32,12 +34,33 @@ interface ChuniChartDao {
     @Insert
     fun insertAllChuniCharts(list: List<ChuniChartEntity>)
 
+    @Update
+    fun updateChuniCharts(list: List<ChuniChartEntity>)
+
     @Query("DELETE FROM chuni_chart")
     fun clearChuniChart()
 
     @Query("SELECT * FROM chuni_chart WHERE song_id = :songId")
     suspend fun getChuniChartsBySongId(songId: Int): List<ChuniChartEntity>
+
+    /** 全量谱面（落雪物量合并时用来挑出需要补齐的谱面）。 */
+    @Query("SELECT * FROM chuni_chart")
+    suspend fun getAllChuniChartsList(): List<ChuniChartEntity>
+
+    /**
+     * 轻量查询：返回所有谱面的版本编码（song_id, difficulty_index, version）。
+     * 用于成绩同步时把每条记录的谱面 version 关联出来，喂给官方 Rating 公式。
+     */
+    @Query("SELECT song_id, difficulty_index, version FROM chuni_chart")
+    suspend fun getChartVersions(): List<ChartVersionRow>
 }
+
+/** 谱面版本编码行（见 [ChuniChartDao.getChartVersions]）。 */
+data class ChartVersionRow(
+    @ColumnInfo(name = "song_id") val songId: Int,
+    @ColumnInfo(name = "difficulty_index") val difficultyIndex: Int,
+    @ColumnInfo(name = "version") val version: Int,
+)
 
 @Dao
 interface ChuniRecordDao {

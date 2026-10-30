@@ -2,6 +2,7 @@ package com.kira.kiba.core.state
 
 import android.content.Context
 import com.kira.kiba.core.account.DivingFishAccount
+import com.kira.kiba.core.data.ChuniSongSync
 import com.kira.kiba.core.data.SongDataSync
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -60,6 +61,28 @@ object KibaState {
     /** 用户手动触发：立即更新曲库（下载 + 入库 + 写版本号）。 */
     fun refreshSongData(context: Context) {
         scope.launch { runCatching { SongDataSync.forceSync(context) } }
+    }
+
+    /**
+     * 用户手动触发：**同时刷新舞萌与中二节奏两边的曲库**。
+     *
+     * 两个游戏各自维护 [SongDataSync.state] / [ChuniSongSync.state]，因此这里并行发起
+     * 两条协程，UI 侧（曲目页）据此显示两张独立的进度卡。
+     *
+     * 舞萌侧沿用「有可用更新才下载，否则只检查」——songdata.json 有 13 MB，
+     * 每次手点都全量下载太浪费；中二侧曲库只有 1 MB，直接全量刷新。
+     */
+    fun refreshAllSongData(context: Context) {
+        scope.launch {
+            runCatching {
+                if (SongDataSync.updateAvailable.value != null) {
+                    SongDataSync.forceSync(context)
+                } else {
+                    SongDataSync.checkForUpdate()
+                }
+            }
+        }
+        scope.launch { runCatching { ChuniSongSync.forceSync(context) } }
     }
 
     /** 用户手动触发：刷新成绩。 */
