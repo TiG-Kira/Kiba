@@ -88,9 +88,27 @@ object ChuniSongSync {
                 _state.value = SyncState.Syncing(STAGE_IMPORT)
                 val (songs, charts) = parseMusicData(json)
                 if (songs.isEmpty()) throw IllegalStateException("曲库数据为空或解析失败")
-                val ok = ChuniSongWithChartRepository.getInstance(
-                    AppDataBase.getInstance().chuniSongWithChartDao()
-                ).updateDatabase(songs, charts)
+                val dao = AppDataBase.getInstance().chuniSongWithChartDao()
+                // 谱面版本编码（当前 / 非当前版本的判定依据）只有落雪提供，水鱼 music_data 里没有。
+                // 全量替换会清空 chuni_chart，若此时落雪物量同步又失败，版本标记就全丢了 →
+                // Rating 滑回 best30 均值口径、Best 页「当前 TOP20」永远是 0.00。
+                // 故入库前先把上一轮的版本捞出来，随新数据一起写回去。
+                val previousVersions = dao.getChartVersions()
+                    .associate { ChuniRating.chartKey(it.songId, it.difficultyIndex) to it.version }
+                val chartsWithVersion = if (previousVersions.isEmpty()) {
+                    charts
+                } else {
+                    charts.map { chart ->
+                        val keep = previousVersions[ChuniRating.chartKey(chart.songId, chart.difficultyIndex)]
+                        if (chart.version <= 0 && keep != null && keep > 0) {
+                            chart.copy(version = keep)
+                        } else {
+                            chart
+                        }
+                    }
+                }
+                val ok = ChuniSongWithChartRepository.getInstance(dao)
+                    .updateDatabase(songs, chartsWithVersion)
                 if (!ok) throw IllegalStateException("曲库入库失败")
                 val version = java.time.LocalDate.now().toString()
                 SpUtil.setChuniDataVersion(version)
@@ -98,6 +116,10 @@ object ChuniSongSync {
                 // 音符构成。失败不影响曲库同步本身（内部已吞掉异常）。
                 _state.value = SyncState.Syncing(STAGE_NOTES)
                 ChuniNotesSync.sync()
+                // 版本标记补齐后重算 Rating / 两个枠：成绩往往早于曲库入库，
+                // 同步时算好的缓存值会因为「当时还没有 version」而失真（当前 TOP20 均值 0.00）。
+                runCatching { ChuniStats.computeAndPersist() }
+                    .onFailure { Log.w(TAG, "recompute chuni rating failed", it) }
                 songs.size
             }.getOrElse { e ->
                 Log.w(TAG, "forceSync failed", e)

@@ -63,7 +63,6 @@ import com.kira.kiba.ui.songdetail.ChuniSongDetailTopBarSlot
 import com.kira.kiba.ui.songdetail.ChuniSongDetailScreen
 import com.kira.kiba.ui.songdetail.ChuniChartDetailScreen
 import com.kira.kiba.ui.songs.SongGroupScreen
-import com.kira.kiba.ui.songs.SongsRefreshCard
 import com.kira.kiba.ui.material.LocalAdvancedMaterialEnabled
 import com.kira.kiba.ui.songs.SongsScreen
 import kotlinx.coroutines.launch
@@ -157,9 +156,9 @@ sealed interface KibaSubPage {
         override val title: String = "Best 50"
     }
 
-    /** 中二节奏 Best 30（按 ra 排序；不支持分享）。 */
+    /** 中二节奏 Best 50（官方口径：非当前版本 TOP30 + 当前版本 TOP20；不支持分享）。 */
     data object ChuniBest : KibaSubPage {
-        override val title: String = "中二 Best 30"
+        override val title: String = "中二节奏 Best 50"
     }
 
     /** 成绩查询（EasyMai 式筛选 / 排序 / 网格，替代旧成绩记录 + 版本/等级进度）。 */
@@ -378,12 +377,13 @@ fun KibaMainScreen() {
                                       // 曲库检查更新 / 立即更新（原曲目页「曲库数据」卡迁入顶栏）
                                       KibaRefreshAction {
                                           if (songSyncing) return@KibaRefreshAction
-                                          // 仅曲目页刷新点亮置顶进度卡（设置页刷新不触发）
-                                          SongsRefreshCard.visible.value = true
+                                          // 仅曲目页刷新点亮置顶进度卡（设置页刷新不触发）。
+                                          // 注意：这里只会启动舞萌一侧的同步，进度卡的收起由
+                                          // SongRefreshSession 的任务计数决定，与中二侧是否参与无关。
                                           if (songUpdateAvailable != null) {
-                                              KibaState.refreshSongData(context)
+                                              KibaState.refreshSongData(context, showProgress = true)
                                           } else {
-                                              KibaState.checkSongUpdate()
+                                              KibaState.checkSongUpdate(showProgress = true)
                                           }
                                       }
                                       // 归类方式（原曲目页「归类方式」卡迁入顶栏）

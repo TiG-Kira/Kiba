@@ -55,16 +55,68 @@ object ChuniRating {
         if (currentVersion <= 0) {
             return bestAverage(entries.filter { !it.isWorldEnd }.map { it.ra })
         }
-        val nonCurrent = entries
-            .filter { !it.isWorldEnd && it.version < currentVersion }
-            .sortedByDescending { it.ra }
+        val split = split(
+            items = entries,
+            currentVersion = currentVersion,
+            raOf = { it.ra },
+            versionOf = { it.version },
+            isWorldEndOf = { it.isWorldEnd },
+        )
+        return calculate(split.nonCurrent, split.current)
+    }
+
+    /** 官方 /50 公式本体：(非当前 TOP30 之和 + 当前 TOP20 之和) / 50，两位小数截断。 */
+    fun calculate(nonCurrent: List<Entry>, current: List<Entry>): Double =
+        ratingOf(nonCurrent.map { it.ra }, current.map { it.ra })
+
+    /** 同上，直接吃两个枠的 ra 列表（Best 页 / 统计页只需要 ra，不必构造 [Entry]）。 */
+    fun ratingOf(nonCurrentRa: List<Double>, currentRa: List<Double>): Double =
+        truncate2((nonCurrentRa.sum() + currentRa.sum()) / DENOMINATOR)
+
+    /**
+     * 官方口径分池：非当前版本 TOP30 与当前版本 TOP20。
+     *
+     * 与 [calculate] 用的是同一套判定，Best 页据此分组展示，避免「页面分组」与
+     * 「头部 Rating」各算一套导致对不上。
+     *
+     * @param currentVersion 当前版本编码；<= 0（曲库无版本标记）时无法区分当前 / 非当前，
+     *   全部按非当前枠处理（取 ra 最高 30），此时 [Split.current] 为空——UI 需据此提示
+     *   「暂缺版本信息」而不是把空池的 0.00 当成真实均值展示。
+     */
+    fun <T> split(
+        items: List<T>,
+        currentVersion: Int,
+        raOf: (T) -> Double,
+        versionOf: (T) -> Int,
+        isWorldEndOf: (T) -> Boolean,
+    ): Split<T> {
+        val usable = items.filter { !isWorldEndOf(it) }
+        if (currentVersion <= 0) {
+            return Split(usable.sortedByDescending(raOf).take(NON_CURRENT_SIZE), emptyList())
+        }
+        val nonCurrent = usable
+            .filter { versionOf(it) < currentVersion }
+            .sortedByDescending(raOf)
             .take(NON_CURRENT_SIZE)
-        val current = entries
-            .filter { !it.isWorldEnd && it.version == currentVersion }
-            .sortedByDescending { it.ra }
+        val current = usable
+            .filter { versionOf(it) == currentVersion }
+            .sortedByDescending(raOf)
             .take(CURRENT_SIZE)
-        val sum = nonCurrent.sumOf { it.ra } + current.sumOf { it.ra }
-        return truncate2(sum / DENOMINATOR)
+        return Split(nonCurrent, current)
+    }
+
+    /** 一组单曲 ra 的均值（空集返回 0.0），两位小数截断。 */
+    fun averageOf(values: List<Double>): Double =
+        if (values.isEmpty()) 0.0 else truncate2(values.average())
+
+    /**
+     * 分池结果。
+     * @param nonCurrent 非当前版本 TOP30（ra 降序）。
+     * @param current 当前版本 TOP20（ra 降序）。
+     */
+    data class Split<T>(val nonCurrent: List<T>, val current: List<T>) {
+        val isEmpty: Boolean get() = nonCurrent.isEmpty() && current.isEmpty()
+        val size: Int get() = nonCurrent.size + current.size
     }
 
     /** 非当前版本 TOP30 均值（Best 页展示用，两位小数截断）。 */
@@ -98,4 +150,13 @@ object ChuniRating {
 
     /** 官方口径两位小数截断（不是四舍五入）。 */
     fun truncate2(value: Double): Double = floor(value * 100 + 1e-9) / 100
+
+    /**
+     * 谱面复合键（歌曲 id + 难度索引）：成绩表与谱面表靠它关联版本。
+     *
+     * 用 Long 打包而不用 `kotlin.Pair` —— 后者在 R8 优化下有被裁掉的风险（本项目已知坑），
+     * 且 `songId * 10 + levelIndex` 这种乘法拼接在 id 变大后不够直观。
+     */
+    fun chartKey(songId: Int, difficultyIndex: Int): Long =
+        (songId.toLong() shl 8) or (difficultyIndex.toLong() and 0xFF)
 }
