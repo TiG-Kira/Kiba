@@ -134,7 +134,7 @@ fun MeScreen(
                                 chuniSyncing -> "正在同步中二成绩…"
                                 chuniError != null -> "$chuniError（点击重试）"
                                 chuniRecordCount > 0 ->
-                                    "成绩 $chuniRecordCount 条 · 点击查看中二 Best 30"
+                                    "成绩 $chuniRecordCount 条 · 点击查看中二节奏 Best 50"
                                 chuniNoData -> "该账号暂无中二节奏成绩数据（点击重试）"
                                 else -> "点击同步中二成绩"
                             },

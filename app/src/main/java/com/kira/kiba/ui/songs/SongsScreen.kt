@@ -65,6 +65,7 @@ import com.kira.kiba.core.model.SongGroupMode
 import com.kira.kiba.core.repository.ChuniSongWithChartRepository
 import com.kira.kiba.core.repository.SongWithChartRepository
 import com.kira.kiba.core.state.KibaState
+import com.kira.kiba.core.state.SongRefreshSession
 import com.kira.kiba.core.utils.SpUtil
 import com.kira.kiba.ui.common.ChartTypeChip
 import com.kira.kiba.ui.common.CoverFrame
@@ -76,8 +77,6 @@ import com.kira.kiba.ui.common.difficultyColor
 import com.kira.kiba.ui.common.difficultyLabel
 import com.kira.kiba.ui.common.pageContentPadding
 import com.kira.kiba.ui.common.SectionTitle
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.BasicComponent
@@ -104,15 +103,15 @@ object SongsListCache : ListSnapshotCache<List<SongWithChartsEntity>>(emptyList(
 /** 中二节奏曲目列表快照（进程级，同 [SongsListCache]）。 */
 object ChuniSongsListCache : ListSnapshotCache<List<ChuniSongWithCharts>>(emptyList())
 
-/**
- * 曲目页刷新进度卡（进程级，UI 层状态）。
+/*
+ * 曲目页刷新进度卡的会话生命周期由 [SongRefreshSession] 的**任务计数**管理：
+ * 谁发起刷新、发起几个任务，就登记几个待完成数，全部结束才收卡——不再依赖
+ * 「舞萌与中二两边都进终态」，因为顶栏刷新在无更新时只跑舞萌一侧检查、中二侧永远
+ * 停在 Idle，旧写法会让一张空卡片 + 一张「中二节奏曲库 等待同步…」长期挂在列表顶部。
  *
- * 只有曲目页的刷新入口（顶栏刷新按钮 / 更新对话框「立即更新」/ 空列表兜底按钮）会点亮，
- * 设置页的曲库更新选项不触发；刷新结束（成功即隐，失败短暂提示后自动隐藏）。
+ * 只有曲目页的刷新入口（顶栏刷新按钮 / 更新对话框「立即更新」/ 空列表兜底按钮）传
+ * `showProgress = true`；设置页的曲库更新选项不点亮。
  */
-object SongsRefreshCard {
-    val visible = MutableStateFlow(false)
-}
 
 /**
  * 曲目页：真实曲库数据（SongWithChartRepository → Room → LiveData 响应式刷新）。
@@ -234,29 +233,23 @@ fun SongsScreen(
     val syncing = syncState is SongDataSync.SyncState.Checking ||
         syncState is SongDataSync.SyncState.Downloading
     val chuniSyncing = chuniSyncState is ChuniSongSync.SyncState.Syncing
-    // 刷新进度卡：仅曲目页入口点亮（见 [SongsRefreshCard]）
-    val refreshCardVisible by SongsRefreshCard.visible.collectAsState()
+    // 刷新进度卡：是否处于刷新会话中（见 [SongRefreshSession]）
+    val refreshCardVisible by SongRefreshSession.visible.collectAsState()
 
     // 冷启动兜底：bootstrap 未跑（异常进程恢复等）时补一次检查
+    // （后台检查不点亮进度卡，避免一进页面就闪一张「正在检查曲库更新」）
     LaunchedEffect(Unit) {
         if (SongDataSync.state.value is SongDataSync.SyncState.Idle) {
             KibaState.checkSongUpdate()
         }
     }
 
-    // 刷新进度卡生命周期：两边都结束才隐藏；任一边失败则短暂展示错误后自动隐藏。
-    // 两边是并行协程，先结束的那张卡不能立刻收掉另一张还在跑的。
-    LaunchedEffect(syncState, chuniSyncState) {
-        val maimaiFinished = syncState is SongDataSync.SyncState.Done ||
-            syncState is SongDataSync.SyncState.Failed
-        val chuniFinished = chuniSyncState is ChuniSongSync.SyncState.Done ||
-            chuniSyncState is ChuniSongSync.SyncState.Failed
-        if (!maimaiFinished || !chuniFinished) return@LaunchedEffect
-        val failed = syncState is SongDataSync.SyncState.Failed ||
-            chuniSyncState is ChuniSongSync.SyncState.Failed
-        if (failed) delay(3000)
-        SongsRefreshCard.visible.value = false
-    }
+    // 每张进度卡只在自己的状态确实在跑（或刚失败）时渲染：
+    // Done / Idle 一律不画——否则 Done 会渲染成一张空卡片、
+    // 中二 Done 会渲染成「中二节奏曲库 等待同步…」，看着像卡死。
+    val maimaiCardVisible = refreshCardVisible && syncState.isProgressCardState()
+    val chuniCardVisible = refreshCardVisible && chuniSyncState.isProgressCardState()
+
     // 卡片出现时：列表立刻重置到顶 + 顶栏动画恢复展开。
     // 用 snapshotFlow 而非以 visible 为 key 的 LaunchedEffect：
     // 检查完成卡片消失会重启 effect 并打断滚动。列表用瞬移而非 animateScrollToItem——
@@ -292,9 +285,12 @@ fun SongsScreen(
             onDismiss = { SongDataSync.dismissUpdatePrompt() },
             onConfirm = {
                 SongDataSync.dismissUpdatePrompt()
-                SongsRefreshCard.visible.value = true
                 // 弹窗要立刻收起，updateAvailable 已被清空，必须显式要求下载否则只会重新检查
-                KibaState.refreshAllSongData(context, forceMaimaiDownload = true)
+                KibaState.refreshAllSongData(
+                    context,
+                    forceMaimaiDownload = true,
+                    showProgress = true,
+                )
             },
         )
     }
@@ -324,12 +320,15 @@ fun SongsScreen(
                 )
             }
 
-            // 刷新进度卡（置顶）：曲目页刷新会**同时刷新舞萌与中二两边**，
-            // 这里两张卡各展示一边的进度（与当前分段开关选中的游戏无关）。
-            if (refreshCardVisible) {
+            // 刷新进度卡（置顶）：按各自状态独立渲染。
+            // 曲目页刷新会**同时刷新舞萌与中二两边**，两张卡各展示一边的进度；
+            // 只刷新一边（顶栏「无更新时」仅检查舞萌）时就只有一张卡。
+            if (maimaiCardVisible) {
                 item(key = "sync_card_maimai") {
                     SongsSyncProgressCard(state = syncState)
                 }
+            }
+            if (chuniCardVisible) {
                 item(key = "sync_card_chuni") {
                     ChuniSongsSyncProgressCard(state = chuniSyncState)
                 }
@@ -370,9 +369,12 @@ fun SongsScreen(
                                     Button(
                                         colors = ButtonDefaults.buttonColorsPrimary(),
                                         onClick = {
-                                            SongsRefreshCard.visible.value = true
                                             // 空曲库必须真下载，不能退化成「只检查」
-                                            KibaState.refreshAllSongData(context, forceMaimaiDownload = true)
+                                            KibaState.refreshAllSongData(
+                                                context,
+                                                forceMaimaiDownload = true,
+                                                showProgress = true,
+                                            )
                                         },
                                     ) {
                                         Text(text = "立即更新曲库")
@@ -426,8 +428,7 @@ fun SongsScreen(
                                     Button(
                                         colors = ButtonDefaults.buttonColorsPrimary(),
                                         onClick = {
-                                            SongsRefreshCard.visible.value = true
-                                            KibaState.refreshAllSongData(context)
+                                            KibaState.refreshAllSongData(context, showProgress = true)
                                         },
                                     ) {
                                         Text(text = "同步中二节奏曲库")
@@ -580,6 +581,26 @@ private fun SongDataUpdateDialog(
             }
         }
     }
+}
+
+/**
+ * 舞萌侧进度卡是否该出现：只有「进行中」与「刚失败」两种状态有内容可画。
+ * `Done` 画出来是一张空卡片、`Idle` 什么都没有——这两种都不渲染。
+ */
+private fun SongDataSync.SyncState.isProgressCardState(): Boolean = when (this) {
+    is SongDataSync.SyncState.Checking,
+    is SongDataSync.SyncState.Downloading,
+    is SongDataSync.SyncState.Failed,
+    -> true
+    else -> false
+}
+
+/** 中二侧进度卡是否该出现（同上：`Done` / `Idle` 不渲染，避免「等待同步…」常驻）。 */
+private fun ChuniSongSync.SyncState.isProgressCardState(): Boolean = when (this) {
+    is ChuniSongSync.SyncState.Syncing,
+    is ChuniSongSync.SyncState.Failed,
+    -> true
+    else -> false
 }
 
 /**

@@ -15,7 +15,6 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
-import com.kira.kiba.core.model.ChuniDiffType
 
 /**
  * 中二节奏成绩同步（水鱼 chunithmprober，**账号密码 jwt 通道**）。
@@ -138,27 +137,16 @@ object ChuniRecordSync {
                     .replaceAllChuniRecord(parsed.records)
                 if (!ok) throw IllegalStateException("成绩入库失败")
 
-                // 按谱面 version 组装官方 VERSE 起 /50 公式输入：
-                // version 来自 chuni_chart（曲库同步时已用落雪打标），无版本信息时退化为 best30 均值。
-                val chartVersionMap = AppDataBase.getInstance()
-                    .chuniSongWithChartDao().getChartVersions()
-                    .associate { (it.songId to it.difficultyIndex) to it.version }
-                val currentVersion = chartVersionMap.values.maxOrNull() ?: 0
-                val entries = parsed.records.filter { !it.isRecent }.map { r ->
-                    ChuniRating.Entry(
-                        ra = r.ra,
-                        version = chartVersionMap[r.songId to r.levelIndex] ?: 0,
-                        isWorldEnd = r.levelIndex == ChuniDiffType.WORLD_END.ordinal,
-                    )
+                // Rating / 两个枠统一由 [ChuniStats] 从库里现算（成绩刚入库，版本标记来自 chuni_chart），
+                // 不再在这里各算一套 —— 之前「当前 TOP20 均值 0.00」就是同步时算好后写死进
+                // SharedPreferences，曲库补齐版本标记后也没人重算导致的。
+                val stats = ChuniStats.compute()
+                ChuniStats.persist(stats)
+                // 本地算不出（账号无成绩 / 曲库无版本标记）时才退用服务端 rating 兜底
+                if (stats.rating <= 0.0 && parsed.serverRating > 0.0) {
+                    SpUtil.setChuniRating(ChuniRating.truncate2(parsed.serverRating))
                 }
-                val computedRating = ChuniRating.calculate(entries, currentVersion)
-                    .takeIf { it > 0.0 } ?: ChuniRating.truncate2(parsed.serverRating)
-                val nonCurAvg = ChuniRating.nonCurrentAverage(entries, currentVersion)
-                val curAvg = ChuniRating.currentAverage(entries, currentVersion)
 
-                SpUtil.setChuniRating(computedRating)
-                SpUtil.setChuniNonCurrentAvg(nonCurAvg)
-                SpUtil.setChuniCurrentAvg(curAvg)
                 SpUtil.setChuniRecentCount(parsed.recentCount)
                 SpUtil.setChuniNickname(parsed.nickname)
                 SpUtil.setChuniRecordCount(parsed.records.size)
