@@ -19,9 +19,13 @@ import kotlinx.coroutines.flow.asStateFlow
  *
  * ## Key 怎么拿（UI 里的引导文案与这里保持一致，改一处要改两处）
  * 1. 打开 https://maimai.lxns.net/register 注册落雪账号（已有账号直接跳过）；
- * 2. 登录后进「个人设置」；
- * 3. 找到「API Token / 开发者」一栏，生成并复制一串 Key；
+ * 2. 登录后点右上角头像进「账号详情」（`/user/profile`）；
+ * 3. 在「个人 API 密钥」一栏点「重置 API 密钥」旁的复制按钮拿到 Key；
  * 4. 回到本 App 粘贴保存。
+ *
+ * ## 请求头（1.8.4 纠正）
+ * 个人 API 必须用 **`X-User-Token`**；`Authorization` 是开发者 API 用的，
+ * 拿个人密钥去 `Authorization` 只会得到 401（1.8.3 的「密钥无法识别」即此因）。
  *
  * Key 等价于「可读写该账号成绩」的凭据，只存本机私有 SP，用户可在落雪站内随时撤销；
  * 撤销后所有请求统一 401，由 [state] 的 [State.error] 提示重新绑定。
@@ -36,14 +40,23 @@ object LxnsAccount {
     /** 登录页。 */
     const val LOGIN_URL = "https://maimai.lxns.net/login"
 
-    /** 个人设置页（API Token 在这一页；需登录后访问）。 */
-    const val API_KEY_URL = "https://maimai.lxns.net/user/settings"
+    /** 账号详情页 —— 「个人 API 密钥」在这一页（需登录后访问）。 */
+    const val API_KEY_URL = "https://maimai.lxns.net/user/profile"
 
     data class State(
         val bound: Boolean = false,
         val name: String = "",
         val loading: Boolean = false,
         val error: String? = null,
+        /**
+         * 落雪账号里是否已经绑定了玩家（好友码）。
+         *
+         * 落雪的数据是按「玩家」存的：新注册的账号在**落雪网页/同步器同步过一次之前**
+         * 只有账号没有玩家，所有成绩接口都返回 `404 player not found` ——
+         * 这不是 Key 错，也不是 App 错，必须先在落雪那边同步一次把玩家绑上。
+         * false 时 UI 要明确写出来，否则用户会以为 Key 失效。
+         */
+        val playerFound: Boolean = false,
     )
 
     private val _state = MutableStateFlow(
@@ -71,10 +84,10 @@ object LxnsAccount {
         val previous = SpUtil.getLxnsApiKey()
         SpUtil.saveLxnsApiKey(key)
         try {
-            val name = probeName()
-            SpUtil.saveLxnsName(name)
-            _state.value = State(bound = true, name = name)
-            Log.i(TAG, "lxns api key bound")
+            val probe = probe()
+            SpUtil.saveLxnsName(probe.name)
+            _state.value = State(bound = true, name = probe.name, playerFound = probe.playerFound)
+            Log.i(TAG, "lxns api key bound, playerFound=${probe.playerFound}")
             Unit
         } catch (e: Exception) {
             // 关键：验证没过就别把错的 Key 留在本地，否则每次同步都 401
@@ -107,10 +120,14 @@ object LxnsAccount {
             return
         }
         _state.value = _state.value.copy(bound = true, loading = true, error = null)
-        runCatching { probeName() }
-            .onSuccess { name ->
-                if (name.isNotBlank()) SpUtil.saveLxnsName(name)
-                _state.value = State(bound = true, name = name.ifBlank { SpUtil.getLxnsName() })
+        runCatching { probe() }
+            .onSuccess { probe ->
+                if (probe.name.isNotBlank()) SpUtil.saveLxnsName(probe.name)
+                _state.value = State(
+                    bound = true,
+                    name = probe.name.ifBlank { SpUtil.getLxnsName() },
+                    playerFound = probe.playerFound,
+                )
             }
             .onFailure { e ->
                 Log.w(TAG, "lxns restore failed", e)
@@ -122,27 +139,33 @@ object LxnsAccount {
             }
     }
 
+    private data class Probe(val name: String, val playerFound: Boolean)
+
     /**
-     * 探昵称：先舞萌后中二，只有 401/403 才判 Key 无效。
-     * 两个游戏都 404 时返回缓存名（或占位），视为「Key 有效但账号暂无成绩」。
+     * 探昵称 + 玩家是否已绑定：先舞萌后中二，只有 401/403 才判 Key 无效。
+     * 两个游戏都 404（`player not found`）时返回缓存名（或占位），并标记 playerFound=false。
      */
-    private suspend fun probeName(): String {
+    private suspend fun probe(): Probe {
         var authError: LxnsApi.LxnsException? = null
         for (path in PROBE_PATHS) {
             try {
                 val obj = LxnsApi.getObject(path)
-                obj.stringOrEmpty("name").takeIf { it.isNotBlank() }?.let { return it }
-                return SpUtil.getLxnsName().ifBlank { "落雪玩家" }
+                val name = obj.stringOrEmpty("name").takeIf { it.isNotBlank() }
+                    ?: SpUtil.getLxnsName().ifBlank { "落雪玩家" }
+                return Probe(name, playerFound = true)
             } catch (e: LxnsApi.LxnsException) {
                 if (e.isAuthError) {
                     authError = e
                     break
                 }
-                // 404 等继续试下一个游戏
+                // 404（player not found）等继续试下一个游戏
             }
         }
         authError?.let { throw it }
-        return SpUtil.getLxnsName().ifBlank { "落雪玩家" }
+        return Probe(
+            name = SpUtil.getLxnsName().ifBlank { "落雪玩家" },
+            playerFound = false,
+        )
     }
 
     /** 去掉用户可能一起粘进来的前缀 / 换行 / 引号。 */

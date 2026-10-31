@@ -79,19 +79,14 @@ object ChuniLxnsSync {
         val nickname = player?.str("name").orEmpty()
         val serverRating = player?.dbl("rating") ?: 0.0
 
-        // 2) 官方分池：bests + new_bests。
-        //    优先个人 API（/user/...）；404 时退回**开发者 API** 的 friend_code 版本 ——
-        //    落雪文档只列举了个人 API 的一部分，个人 Key 同时也是该账号的开发者凭据，
-        //    这条备用路径拿到的是同一份数据。两条都失败就交给版本推断（不阻断同步）。
-        val friendCode = player?.int("friend_code") ?: 0
+        // 2) 官方分池：bests + new_bests（个人 API）。
+        //    1.8.4 去掉了原来「退回开发者 API /chunithm/player/{fc}/bests」的兜底：
+        //    落雪明确要求**个人密钥不能用于开发者 API**，那条路径只会拿到 401，
+        //    属于无效重试。真的拿不到分池时交给 [com.kira.kiba.core.data.ChuniStats]
+        //    按曲库 version 推断（hasOfficialSplit=false），不影响成绩入库。
         val bestsRoot = runCatching { LxnsApi.getObject(PATH_BESTS) }
             .onFailure { Log.i(TAG, "lxns personal bests unavailable: ${it.message}") }
             .getOrNull()
-            ?: friendCode.takeIf { it > 0 }?.let { code ->
-                runCatching { LxnsApi.getObject("/chunithm/player/$code/bests") }
-                    .onFailure { Log.i(TAG, "lxns developer bests fallback failed: ${it.message}") }
-                    .getOrNull()
-            }
         val currentKeys = mutableSetOf<Int>()
         val poolScores = mutableListOf<LxnsScore>()
         if (bestsRoot != null) {

@@ -136,7 +136,9 @@ fun QrImportScreen(scrollBehavior: ScrollBehavior) {
                         Column(modifier = Modifier.padding(16.dp)) {
                             Text(
                                 text = "⚠ 使用前请先到「我」页「接入 Easymai 账号」完成登录或注册" +
-                                    "（第三方解析服务的自有账号，与水鱼账号无关，登录一次即可长期使用）。",
+                                    "（第三方解析服务的自有账号，与水鱼账号无关，登录一次即可长期使用）。" +
+                                    "\n本页是「水鱼专用」通道；成绩源选的是落雪时，请改用「机台成绩更新（VPN）」页" +
+                                    "——落雪由官方服务端解析机台页面，不需要导入令牌。",
                                 style = MiuixTheme.textStyles.footnote1,
                                 color = MiuixTheme.colorScheme.error,
                             )

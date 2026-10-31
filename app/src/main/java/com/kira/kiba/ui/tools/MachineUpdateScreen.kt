@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -30,8 +31,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.kira.kiba.core.account.LxnsAccount
 import com.kira.kiba.core.data.ChuniRecordSync
 import com.kira.kiba.core.model.GameType
+import com.kira.kiba.core.model.ScoreSource
 import com.kira.kiba.core.utils.SpUtil
 import com.kira.kiba.core.vpn.VpnSettings
 import com.kira.kiba.core.vpn.crawler.CrawlerCaller
@@ -80,6 +83,10 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
     val gameType = remember { SpUtil.getGameType() }
     val isChunithm = gameType == GameType.CHUNITHM
     val selectedDifficulties = if (isChunithm) chuniDifficulties else difficulties
+    // 上传目标跟随该游戏在设置页选的数据源（两游戏各自独立）
+    val source = remember { SpUtil.getScoreSource(gameType) }
+    val useLxns = source == ScoreSource.LXNS
+    val lxnsState by LxnsAccount.state.collectAsState()
 
     DisposableEffect(Unit) {
         val listener = object : WechatCrawlerListener {
@@ -194,40 +201,62 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
                         )
                         Spacer(Modifier.height(6.dp))
                         Text(
-                            text = "在机台 WiFi 下开启本地 VPN 抓取成绩并上传水鱼：" +
+                            text = "在机台 WiFi 下开启本地 VPN 抓取机台页面并上传到${source.label}：" +
                                 "点「开始抓包」授权 VPN → 链接会自动复制 → 切到微信把链接粘贴打开，" +
-                                "等待抓包完成即可更新成绩。免 VPN 的替代方案请用「二维码导入成绩」页。",
+                                "等待抓包完成即可更新成绩。",
                             style = MiuixTheme.textStyles.footnote1,
                             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                         )
                         Spacer(Modifier.height(8.dp))
-                        // 登录状态以 isDivingFishLoggedIn 为准（OAuth 绑定或原版 jwt 任一即可），
-                        // 不能只看 getUserName——OAuth 设备码登录不落地用户名，
-                        // 否则实际已登录却显示"未登录"。
-                        val dfLoggedIn = SpUtil.isDivingFishLoggedIn()
-                        val dfDisplayName = SpUtil.getUserName()
-                            .ifBlank { SpUtil.getDivingFishOAuthNickname() }
-                            .ifBlank { "已登录" }
-                        val dfHint = when {
-                            !dfLoggedIn -> "未登录（无法上传成绩）"
-                            SpUtil.getUserName().isBlank() -> "$dfDisplayName（OAuth 授权）"
-                            else -> dfDisplayName
+                        if (useLxns) {
+                            // 落雪：只要绑定了个人 API 密钥就能上传，不需要账密 / jwt
+                            val keyBound = lxnsState.bound || SpUtil.isLxnsLoggedIn()
+                            Text(
+                                text = when {
+                                    !keyBound -> "落雪账号：未绑定 API Key（无法上传成绩）"
+                                    !lxnsState.playerFound ->
+                                        "落雪账号：${lxnsState.name.ifBlank { "已绑定" }}" +
+                                            " · 尚未绑定玩家，请先在落雪网页同步一次"
+                                    else -> "落雪账号：${lxnsState.name.ifBlank { "已绑定" }}"
+                                },
+                                style = MiuixTheme.textStyles.footnote1,
+                                color = if (!keyBound || !lxnsState.playerFound) {
+                                    MiuixTheme.colorScheme.primary
+                                } else {
+                                    MiuixTheme.colorScheme.onSurfaceVariantSummary
+                                },
+                            )
+                        } else {
+                            // 登录状态以 isDivingFishLoggedIn 为准（OAuth 绑定或原版 jwt 任一即可），
+                            // 不能只看 getUserName——OAuth 设备码登录不落地用户名，
+                            // 否则实际已登录却显示"未登录"。
+                            val dfLoggedIn = SpUtil.isDivingFishLoggedIn()
+                            val dfDisplayName = SpUtil.getUserName()
+                                .ifBlank { SpUtil.getDivingFishOAuthNickname() }
+                                .ifBlank { "已登录" }
+                            val dfHint = when {
+                                !dfLoggedIn -> "未登录（无法上传成绩）"
+                                SpUtil.getUserName().isBlank() -> "$dfDisplayName（OAuth 授权）"
+                                else -> dfDisplayName
+                            }
+                            Text(
+                                text = "水鱼账号：$dfHint",
+                                style = MiuixTheme.textStyles.footnote1,
+                                color = if (!dfLoggedIn) {
+                                    MiuixTheme.colorScheme.primary
+                                } else {
+                                    MiuixTheme.colorScheme.onSurfaceVariantSummary
+                                },
+                            )
                         }
-                        Text(
-                            text = "水鱼账号：$dfHint",
-                            style = MiuixTheme.textStyles.footnote1,
-                            color = if (!dfLoggedIn) {
-                                MiuixTheme.colorScheme.primary
-                            } else {
-                                MiuixTheme.colorScheme.onSurfaceVariantSummary
-                            },
-                        )
                         Spacer(Modifier.height(4.dp))
-                        // 中二上传必须走账号密码 jwt 通道（水鱼 OAuth scope 不支持中二）
-                        val chuniNoJwt = isChunithm && SpUtil.getDivingFishJwt().isBlank()
+                        // 水鱼中二上传必须走账号密码 jwt 通道（OAuth scope 不支持中二）；
+                        // 落雪没有这个限制，别把水鱼的约束错挂到落雪上。
+                        val chuniNoJwt = isChunithm && !useLxns && SpUtil.getDivingFishJwt().isBlank()
                         Text(
                             text = when {
                                 !isChunithm -> "当前游戏：舞萌 DX（在「曲目」页顶部切换游戏）"
+                                useLxns -> "当前游戏：中二节奏 · 落雪通道"
                                 chuniNoJwt -> "当前游戏：中二节奏 · 需改用「账号密码」登录（OAuth 不支持中二上传）"
                                 else -> "当前游戏：中二节奏 · 账号密码通道可用"
                             },
@@ -257,7 +286,7 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
                             listOf(
                                 "BASIC" to 0, "ADVANCED" to 1, "EXPERT" to 2,
                                 "MASTER" to 3, "ULTIMA" to 4,
-                                "WORLD'S END" to 5, "最近游玩（Rating 详情）" to 6,
+                                "WORLD'S END" to 5, "最近游玩（Rating 详情，仅水鱼）" to 6,
                             )
                         } else {
                             listOf(

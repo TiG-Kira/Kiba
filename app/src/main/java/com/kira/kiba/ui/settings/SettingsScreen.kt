@@ -260,7 +260,7 @@ fun SettingsScreen(
                         items = ScoreSource.entries.map { DropdownItem(text = it.label) },
                         selectedIndex = maimaiSource.ordinal,
                         title = "舞萌成绩源",
-                        summary = scoreSourceSummary(maimaiSource, lxnsState.bound),
+                        summary = scoreSourceSummary(maimaiSource, lxnsState.bound, GameType.MAIMAI),
                         startAction = { PrefIcon(MiuixGlassIcons.Regular.CloudFill) },
                         onSelectedIndexChange = { index ->
                             ScoreSource.entries.getOrNull(index)?.let { picked ->
@@ -275,7 +275,7 @@ fun SettingsScreen(
                         items = ScoreSource.entries.map { DropdownItem(text = it.label) },
                         selectedIndex = chuniSource.ordinal,
                         title = "中二成绩源",
-                        summary = scoreSourceSummary(chuniSource, lxnsState.bound),
+                        summary = scoreSourceSummary(chuniSource, lxnsState.bound, GameType.CHUNITHM),
                         startAction = { PrefIcon(MiuixGlassIcons.Regular.CloudFill) },
                         onSelectedIndexChange = { index ->
                             ScoreSource.entries.getOrNull(index)?.let { picked ->
@@ -303,7 +303,7 @@ fun SettingsScreen(
                 Card(modifier = (Modifier.fillMaxWidth())) {
                     ArrowPreference(
                         title = "机台成绩更新（VPN）",
-                        summary = "在机台 WiFi 下抓包，把成绩同步到水鱼",
+                        summary = "在机台 WiFi 下抓包，按各游戏当前选的数据源上传（水鱼 / 落雪）",
                         startAction = { PrefIcon(MiuixGlassIcons.Regular.Update) },
                         onClick = onOpenMachineUpdate,
                     )
@@ -442,13 +442,28 @@ fun SettingsScreen(
     }
 }
 
-/** 数据源说明文案（设置页下拉副标题）。 */
-private fun scoreSourceSummary(source: ScoreSource, lxnsBound: Boolean): String = when (source) {
-    ScoreSource.WATER_FISH ->
-        "水鱼 · 只回 Top30，当前版本新曲可能缺失（B20 常空即此因）"
-    ScoreSource.LXNS ->
-        if (lxnsBound) "落雪 · 全量成绩 + 官方当前版本 B20"
-        else "落雪 · 尚未绑定 API Key，请先点下方「绑定落雪 API Key」"
+/**
+ * 数据源说明文案（设置页下拉副标题）。
+ *
+ * **必须按游戏区分**：水鱼「只回 Best 30、当前版本 B20 会缺」是**中二专有**的限制，
+ * 舞萌侧水鱼给的是完整成绩、而且是机台更新最成熟的通道。1.8.3 把这段文案共用给了
+ * 两个下拉，导致舞萌用户看到莫名其妙的中二问题描述。
+ */
+private fun scoreSourceSummary(
+    source: ScoreSource,
+    lxnsBound: Boolean,
+    game: GameType,
+): String = when (source) {
+    ScoreSource.WATER_FISH -> if (game == GameType.CHUNITHM) {
+        "水鱼 · 中二只有账号密码通道，且只回 Best 30（当前版本 B20 会缺）"
+    } else {
+        "水鱼 · 完整成绩，机台更新链路最成熟（推荐）"
+    }
+    ScoreSource.LXNS -> when {
+        !lxnsBound -> "落雪 · 尚未绑定 API Key，请先点下方「绑定落雪 API Key」"
+        game == GameType.CHUNITHM -> "落雪 · 全量成绩 + 官方当前版本 B20"
+        else -> "落雪 · 全量成绩（需先在落雪同步过一次，账号才会绑定玩家）"
+    }
 }
 
 /**
@@ -479,7 +494,7 @@ private fun LxnsKeyDialog(
         summary = if (bound) {
             "${name.ifBlank { "已绑定" }} · 两个游戏的成绩同步共用这把 Key"
         } else {
-            "落雪没有账号密码登录接口，需要用个人 API Key 授权。四步即可拿到："
+            "落雪没有账号密码登录接口，需要用「个人 API 密钥」授权。四步即可拿到："
         },
         onDismissRequest = onDismiss,
     ) {
@@ -518,11 +533,11 @@ private fun LxnsKeyDialog(
             )
             GuideStep(
                 index = "2",
-                text = "进入「个人设置 → API Token / 开发者」一栏",
+                text = "点右上角头像进「账号详情」（maimai.lxns.net/user/profile）",
             )
             GuideStep(
                 index = "3",
-                text = "点「生成 / 新建 Token」，复制生成的那串字符",
+                text = "找到「个人 API 密钥」一栏，点右侧复制按钮（没有就点「重置 API 密钥」生成）",
             )
             GuideStep(
                 index = "4",
@@ -539,7 +554,7 @@ private fun LxnsKeyDialog(
                     onClick = { BrowserJump.openUrl(context, LxnsAccount.REGISTER_URL) },
                 )
                 TextButton(
-                    text = "打开我的设置页",
+                    text = "打开账号详情",
                     onClick = { BrowserJump.openUrl(context, LxnsAccount.API_KEY_URL) },
                 )
             }
@@ -569,9 +584,9 @@ private fun LxnsKeyDialog(
 
             Spacer(Modifier.height(8.dp))
             Text(
-                text = "找不到 Token 入口？登录落雪后打开 www.maimai.lxns.net 的个人设置页，" +
-                    "向下滚动到「开发者 / API」一节。Key 等同账号凭据，只保存在本机，" +
-                    "可随时在落雪站内撤销。",
+                text = "要点：这里要的是「个人 API 密钥」（账号详情页），" +
+                    "不是开发者面板的「开发者 API 密钥」——两者不能混用。" +
+                    "Key 等同账号凭据，只保存在本机，可随时在落雪站内重置。",
                 style = MiuixTheme.textStyles.footnote1,
                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
             )
