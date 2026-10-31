@@ -43,6 +43,15 @@ object LxnsAccount {
     /** 账号详情页 —— 「个人 API 密钥」在这一页（需登录后访问）。 */
     const val API_KEY_URL = "https://maimai.lxns.net/user/profile"
 
+    /**
+     * 官方「同步游戏数据」页（代理同步）。
+     *
+     * 落雪官方的同步方式是**让落雪服务器代抓**：把系统 WLAN 代理指向
+     * `proxy.maimai.lxns.net:8080`，网页会实时检测代理是否生效。它和本 App 的
+     * 本地 VPN 抓包**只能二选一**（都抢网络接管），所以只能作为备选路径引导用户。
+     */
+    const val SYNC_URL = "https://maimai.lxns.net/user/sync"
+
     data class State(
         val bound: Boolean = false,
         val name: String = "",

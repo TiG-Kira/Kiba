@@ -295,6 +295,18 @@ fun SettingsScreen(
                         startAction = { PrefIcon(MiuixGlassIcons.Regular.Contacts) },
                         onClick = { showLxnsKeyDialog = true },
                     )
+                    if (maimaiSource == ScoreSource.LXNS || chuniSource == ScoreSource.LXNS) {
+                        // 落雪官方的同步方式是「代理同步」：把 WLAN 代理指向他们的服务器，
+                        // 由落雪代抓。它和本 App 的本地 VPN 抢同一块网络接管，只能二选一，
+                        // 所以这里只做备选入口 —— App 内抓包走不通时用户还有路可走。
+                        ArrowPreference(
+                            title = "落雪官方同步（备选）",
+                            summary = "App 内抓包走不通时用这条：把 WLAN 代理设为 proxy.maimai.lxns.net:8080，" +
+                                "由落雪服务器代抓（与 App 的 VPN 不能同时开）",
+                            startAction = { PrefIcon(MiuixGlassIcons.Regular.CloudFill) },
+                            onClick = { BrowserJump.openUrl(context, LxnsAccount.SYNC_URL) },
+                        )
+                    }
                 }
             }
 

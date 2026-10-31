@@ -275,7 +275,7 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
                         Text(
                             text = when {
                                 !isChunithm -> "当前游戏：舞萌 DX（在「曲目」页顶部切换游戏）"
-                                useLxns -> "当前游戏：中二节奏 · 落雪通道"
+                                useLxns -> "当前游戏：中二节奏 · 落雪通道（本地解析页面后按成绩接口上传）"
                                 chuniNoJwt -> "当前游戏：中二节奏 · 需改用「账号密码」登录（OAuth 不支持中二上传）"
                                 else -> "当前游戏：中二节奏 · 账号密码通道可用"
                             },
@@ -286,6 +286,17 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
                                 MiuixTheme.colorScheme.onSurfaceVariantSummary
                             },
                         )
+                        if (useLxns) {
+                            Spacer(Modifier.height(4.dp))
+                            // 两条通路都写清楚，避免用户以为只有一种办法
+                            Text(
+                                text = "抓包成功后会在本地把页面解析成成绩再传给落雪。若这条通道走不通，" +
+                                    "可到「设置 → 查分器数据源」用落雪官方同步（WLAN 代理 proxy.maimai.lxns.net:8080，" +
+                                    "由落雪服务器代抓，与本页的 VPN 不能同时开）。",
+                                style = MiuixTheme.textStyles.footnote1,
+                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            )
+                        }
                     }
                 }
             }

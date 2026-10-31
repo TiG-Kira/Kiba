@@ -96,8 +96,10 @@ object CrawlerCaller {
      * - 水鱼：舞萌把账密包裹进 HTML 头部 → `pageparser/page`；中二走账号密码 jwt 通道
      *   （水鱼 OAuth scope 不支持中二），取数是「POST send → GET」两步串行，上传走
      *   `chunithmprober/player/update_records_html`；
-     * - 落雪：抓到的 NET 页面**原样** `POST /api/v0/user/{game}/player/html`（X-User-Token），
-     *   既不用账密也不用 jwt —— 落雪由服务端解析页面，口径与水鱼 pageparser 同源。
+     * - 落雪：本地把 NET 页面解析成成绩（[com.kira.kiba.core.data.NetHtmlParser]），
+     *   再 `POST /api/v0/user/{game}/player/scores`（X-User-Token）。既不用账密也不用 jwt。
+     *   **不能**直传 HTML：落雪的 HTML 直传端点是开发者 API（要审核 + 好友码），
+     *   个人密钥打过去只会拿到 550 / 404。
      */
     @JvmOverloads
     fun fetchData(authUrl: String, gameType: GameType = SpUtil.getGameType()) {
@@ -122,6 +124,11 @@ object CrawlerCaller {
             }
             writeLog("上传目标：${source.shortLabel}查分器")
             WechatCrawler.setLxnsMode(useLxns)
+            if (useLxns) {
+                // 落雪通道要靠曲名换曲目 ID，先把曲名索引刷掉：
+                // 用户可能是刚更新完曲库就来做机台上分，缓存里的旧曲名会导致新曲匹配不上
+                com.kira.kiba.core.data.LxnsScoreMapper.invalidate()
+            }
             try {
                 if (gameType == GameType.CHUNITHM) {
                     // 落雪不需要水鱼 jwt；水鱼中二必须走账号密码通道（OAuth 不支持中二）
