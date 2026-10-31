@@ -143,19 +143,20 @@ object NetHtmlParser {
         if (title.isEmpty()) return null
 
         val scoreBlocks = form.select(".music_score_block")
-        // 达成率形如 "100.5000%"，DX 分形如 "1,234/1,500"
-        val achievements = scoreBlocks.getOrNull(0)?.text()?.trim()
-            ?.removeSuffix("%")
-            ?.let { runCatching { it.trim().toDouble() }.getOrNull() } ?: 0.0
+        // 达成率形如 "100.5000%"，DX 分形如 "1,234/1,500"。
+        // NET 这两个块的文本里常夹换行/全角空格，不清干净会 toInt 失败 ——
+        // 而 DX 满分是 Link 同名曲的唯一区分依据，不能容忍这种静默归零。
+        fun digitsOf(raw: String?): String =
+            raw.orEmpty().filter { it.isDigit() }
 
-        val dxFull = scoreBlocks.getOrNull(1)?.text()
-            ?.substringAfter("/", "")
-            ?.replace(",", "")?.replace(" ", "")?.trim()
-            ?.let { runCatching { it.toInt() }.getOrNull() } ?: 0
-        val dxScore = scoreBlocks.getOrNull(1)?.text()
-            ?.substringBefore("/", "")
-            ?.replace(",", "")?.replace(" ", "")?.trim()
-            ?.let { runCatching { it.toInt() }.getOrNull() } ?: 0
+        val achievements = scoreBlocks.getOrNull(0)?.text()
+            ?.let { raw -> raw.filter { it.isDigit() || it == '.' } }
+            ?.let { runCatching { it.toDouble() }.getOrNull() } ?: 0.0
+
+        val dxFull = digitsOf(scoreBlocks.getOrNull(1)?.text()?.substringAfter("/", ""))
+            .let { runCatching { it.toInt() }.getOrNull() } ?: 0
+        val dxScore = digitsOf(scoreBlocks.getOrNull(1)?.text()?.substringBefore("/", ""))
+            .let { runCatching { it.toInt() }.getOrNull() } ?: 0
 
         // FS / FC / 评级三张图标按文档顺序出现
         val icons = form.select("img[src*=music_icon]")
