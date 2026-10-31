@@ -26,6 +26,8 @@ import androidx.compose.ui.unit.dp
 import com.kira.kiba.core.data.ChuniRecordSync
 import com.kira.kiba.core.data.ChuniStats
 import com.kira.kiba.core.db.entity.ChuniRecordEntity
+import com.kira.kiba.core.model.GameType
+import com.kira.kiba.core.model.ScoreSource
 import com.kira.kiba.core.utils.SpUtil
 import com.kira.kiba.ui.common.ChuniCoverFrame
 import com.kira.kiba.ui.common.ChuniDifficultyChip
@@ -179,7 +181,18 @@ fun ChuniBestScreen(
                 } else if (stats.hasVersionInfo) {
                     item(key = "current_hint") {
                         EmptyStateCard(
-                            text = "当前版本还没有成绩\n新版本曲目打出成绩后会自动进入这一枠（20 个名额）",
+                            // 水鱼源下这一枠空是**数据源上限**，不是本地算错：它只回 Top30，
+                            // 没挤进 Top30 的当前版本新曲在接口里根本不存在。必须把原因说透，
+                            // 否则用户会一直以为是 App 算错了（1.8.2 的反馈就是这样）。
+                            text = if (SpUtil.getScoreSource(GameType.CHUNITHM) == ScoreSource.WATER_FISH) {
+                                "当前版本 TOP20 还是空的\n" +
+                                    "水鱼查分器只返回历史 Best 30，没挤进 Top30 的当前版本新曲" +
+                                    "不会出现在接口里 —— 这不是算错，是数据源缺数据。\n" +
+                                    "到「设置 → 查分器数据源」把中二源切成落雪（需绑定 API Key），" +
+                                    "即可拿到官方当前版本 B20。"
+                            } else {
+                                "当前版本还没有成绩\n新版本曲目打出成绩后会自动进入这一枠（20 个名额）"
+                            },
                         )
                     }
                 }

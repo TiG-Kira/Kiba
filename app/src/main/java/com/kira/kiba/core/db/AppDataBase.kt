@@ -49,7 +49,7 @@ abstract class AppDataBase : RoomDatabase() {
 
 
     companion object {
-        const val DATABASE_VERSION = 4
+        const val DATABASE_VERSION = 5
         const val DATABASE_NAME = "maimaidata_db"
 
         /** 1 → 2：新增中二节奏三张平行表（chuni_song / chuni_chart / chuni_record），不动舞萌原有表。 */
@@ -161,6 +161,21 @@ abstract class AppDataBase : RoomDatabase() {
             }
         }
 
+        /**
+         * 4 → 5：chuni_record 新增 is_current_version 列（当前版本枠标记）。
+         *
+         * 落雪源的 `player/bests` 直接给官方分池（new_bests = 当前版本 B20），比按
+         * `chuni_chart.version` 猜更权威；水鱼源没有这份数据，全列保持 0 走版本推断。
+         * 追加列不影响已有成绩，老用户升级后 Best 页仍按原口径展示，只是多了一个可用信号。
+         */
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `chuni_record` ADD COLUMN `is_current_version` INTEGER NOT NULL DEFAULT 0"
+                )
+            }
+        }
+
         @Volatile
         private lateinit var instance: AppDataBase
 
@@ -179,7 +194,7 @@ abstract class AppDataBase : RoomDatabase() {
                 DATABASE_NAME
             )
                 .fallbackToDestructiveMigration(BuildConfig.DEBUG)
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                 .addCallback(object : Callback() {
                     override fun onDestructiveMigration(connection: SQLiteConnection) {
                         SpUtil.setDataVersion("0")

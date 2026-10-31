@@ -7,6 +7,7 @@ import androidx.core.content.edit
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.kira.kiba.core.model.GameType
+import com.kira.kiba.core.model.ScoreSource
 import com.kira.kiba.core.model.SongGroupMode
 import java.util.UUID
 
@@ -291,6 +292,60 @@ object SpUtil {
 
     fun setChuniDataVersion(version: String) {
         versionPrefs.edit { putString(KEY_CHUNI_VERSION, version) }
+    }
+
+    // ================= 成绩数据源（舞萌 / 中二 各自独立） =================
+
+    /**
+     * 舞萌成绩源。**新键**：老用户没有这个键 → [ScoreSource.fromKey] 回落水鱼，升级后行为不变。
+     */
+    private const val KEY_MAIMAI_SOURCE = "score_source_maimai"
+
+    /** 中二成绩源。与舞萌分开存，两者可任意组合。 */
+    private const val KEY_CHUNI_SOURCE = "score_source_chuni"
+
+    fun getScoreSource(gameType: GameType): ScoreSource = ScoreSource.fromKey(
+        userInfoPrefs.getString(
+            if (gameType == GameType.MAIMAI) KEY_MAIMAI_SOURCE else KEY_CHUNI_SOURCE,
+            null,
+        ),
+    )
+
+    fun setScoreSource(gameType: GameType, source: ScoreSource) {
+        userInfoPrefs.edit {
+            putString(
+                if (gameType == GameType.MAIMAI) KEY_MAIMAI_SOURCE else KEY_CHUNI_SOURCE,
+                source.key,
+            )
+        }
+    }
+
+    // ================= 落雪 LXNS 账号（个人 API Key） =================
+
+    /**
+     * 落雪个人 API Key（在落雪「个人设置 → API Token」生成）。
+     *
+     * 与用户的落雪账号密码等价（可读写该账号成绩），只存本机私有 SharedPreferences，
+     * 随请求以 `Authorization: <key>` 头发送（**不是** Bearer，落雪个人 API 就这么认）。
+     * 用户可在落雪站内随时撤销，撤销后本地请求统一 401，UI 提示重新绑定。
+     */
+    private const val KEY_LXNS_API_KEY = "lxns_api_key"
+
+    fun getLxnsApiKey(): String = userInfoPrefs.getString(KEY_LXNS_API_KEY, "") ?: ""
+
+    fun saveLxnsApiKey(key: String) {
+        userInfoPrefs.edit { putString(KEY_LXNS_API_KEY, key.trim()) }
+    }
+
+    fun isLxnsLoggedIn(): Boolean = getLxnsApiKey().isNotBlank()
+
+    /** 落雪玩家名（验证 Key 时顺手缓存，避免每次进设置页都打接口）。 */
+    private const val KEY_LXNS_NAME = "lxns_player_name"
+
+    fun getLxnsName(): String = userInfoPrefs.getString(KEY_LXNS_NAME, "") ?: ""
+
+    fun saveLxnsName(name: String) {
+        userInfoPrefs.edit { putString(KEY_LXNS_NAME, name) }
     }
 
     // ================= 中二节奏成绩（chunithmprober） =================

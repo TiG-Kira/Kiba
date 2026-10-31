@@ -24,9 +24,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import android.widget.Toast
 import com.kira.kiba.core.account.DivingFishAccount
+import com.kira.kiba.core.account.LxnsAccount
 import com.kira.kiba.core.data.ChuniRecordSync
 import com.kira.kiba.core.model.GameType
+import com.kira.kiba.core.model.ScoreSource
 import com.kira.kiba.core.utils.BrowserJump
 import com.kira.kiba.core.utils.SpUtil
 import com.kira.kiba.ui.common.ChuniRatingTag
@@ -93,13 +96,19 @@ fun MeScreen(
     // 同步成功但账号无任何中二成绩（best 为空数组）——不是错误，需单独文案
     val chuniNoData = (chuniSyncState as? ChuniRecordSync.SyncState.Done)?.empty == true
     val chuniJwtPresent = remember { SpUtil.getDivingFishJwt().isNotBlank() }
+    // 数据源就绪判定：落雪看 API Key，水鱼看各自凭据
+    val maimaiSource = remember { SpUtil.getScoreSource(GameType.MAIMAI) }
+    val chuniSource = remember { SpUtil.getScoreSource(GameType.CHUNITHM) }
+    val chuniReady = remember(chuniSource, chuniJwtPresent) {
+        if (chuniSource == ScoreSource.LXNS) LxnsAccount.isBound() else chuniJwtPresent
+    }
     val chuniRating = remember(chuniSyncState) { ChuniRecordSync.getLocalRating() }
     val chuniNickname = remember(chuniSyncState) { ChuniRecordSync.getLocalNickname() }
     val chuniRecordCount = remember(chuniSyncState) { ChuniRecordSync.getLocalRecordCount() }
 
     // 进中二「我」页自动同步一次（本进程内仅一次；顶栏手动刷新不受限）
-    LaunchedEffect(isChunithm, account.bound) {
-        if (isChunithm && chuniJwtPresent && ChuniRecordSync.shouldAutoRefresh()) {
+    LaunchedEffect(isChunithm, account.bound, chuniReady) {
+        if (isChunithm && chuniReady && ChuniRecordSync.shouldAutoRefresh()) {
             // 兜底：刷新内部已自捕获，这里再包一层，确保任何漏网异常都不会打死 UI 协程
             runCatching { ChuniRecordSync.refresh() }
         }
@@ -123,24 +132,32 @@ fun MeScreen(
                 if (isChunithm) {
                     Card(modifier = (Modifier.fillMaxWidth())) {
                         ArrowPreference(
-                            title = if (chuniJwtPresent) {
+                            title = if (chuniReady) {
                                 chuniNickname.ifBlank { account.nickname.ifBlank { "查分器用户" } }
                             } else {
                                 "未绑定查分器"
                             },
                             summary = when {
-                                !chuniJwtPresent ->
+                                !chuniReady && chuniSource == ScoreSource.LXNS ->
+                                    "落雪源需要 API Key：设置 → 查分器数据源 → 绑定落雪 API Key"
+                                !chuniReady ->
                                     "水鱼 OAuth 暂不支持中二节奏，请使用账号密码登录"
                                 chuniSyncing -> "正在同步中二成绩…"
                                 chuniError != null -> "$chuniError（点击重试）"
                                 chuniRecordCount > 0 ->
-                                    "成绩 $chuniRecordCount 条 · 点击查看中二节奏 Best 50"
+                                    "${chuniSource.shortLabel}源 · 成绩 $chuniRecordCount 条" +
+                                        " · 点击查看中二节奏 Best 50"
                                 chuniNoData -> "该账号暂无中二节奏成绩数据（点击重试）"
                                 else -> "点击同步中二成绩"
                             },
                             onClick = {
                                 when {
-                                    !chuniJwtPresent -> onOpenLogin()
+                                    !chuniReady && chuniSource == ScoreSource.LXNS -> Toast.makeText(
+                                        context,
+                                        "请到「设置 → 查分器数据源」绑定落雪 API Key",
+                                        Toast.LENGTH_LONG,
+                                    ).show()
+                                    !chuniReady -> onOpenLogin()
                                     chuniRecordCount > 0 -> onOpenChuniBest()
                                     else -> scope.launch { runCatching { ChuniRecordSync.refresh() } }
                                 }
@@ -160,13 +177,26 @@ fun MeScreen(
                                 "未绑定查分器"
                             },
                             summary = when {
+                                // 舞萌侧选了落雪但没绑 Key：别再把人往水鱼登录页带
+                                !account.bound && maimaiSource == ScoreSource.LXNS ->
+                                    "落雪源需要 API Key：设置 → 查分器数据源 → 绑定落雪 API Key"
                                 !account.bound -> "账号密码登录，解锁 Best 50 / 推分推荐"
                                 account.loading -> "正在获取成绩…"
                                 account.error != null -> "${account.error}（点击查看 Best 50）"
-                                else -> "成绩 ${account.recordCount} 条 · 点击查看 Best 50"
+                                else ->
+                                    "${maimaiSource.shortLabel}源 · 成绩 ${account.recordCount} 条" +
+                                        " · 点击查看 Best 50"
                             },
                             onClick = {
-                                if (account.bound) onOpenBest50() else onOpenLogin()
+                                when {
+                                    account.bound -> onOpenBest50()
+                                    maimaiSource == ScoreSource.LXNS -> Toast.makeText(
+                                        context,
+                                        "请到「设置 → 查分器数据源」绑定落雪 API Key",
+                                        Toast.LENGTH_LONG,
+                                    ).show()
+                                    else -> onOpenLogin()
+                                }
                             },
                             endActions = {
                                 DxRatingTag(rating = if (account.bound) account.rating else 0)
@@ -182,11 +212,17 @@ fun MeScreen(
             item(key = "checker_card") {
                 Card(modifier = (Modifier.fillMaxWidth())) {
                     ArrowPreference(
-                        title = if (account.bound) "重新登录 / 切换账户" else "登录查分器账户",
-                        summary = if (account.bound) {
-                            "当前：${account.nickname.ifBlank { "查分器用户" }}（Rating ${account.rating}）"
-                        } else {
-                            "支持水鱼账号密码登录（OAuth 授权已暂时停用）"
+                        title = when {
+                            maimaiSource == ScoreSource.LXNS -> "落雪账户（在设置页管理）"
+                            account.bound -> "重新登录 / 切换账户"
+                            else -> "登录查分器账户"
+                        },
+                        summary = when {
+                            maimaiSource == ScoreSource.LXNS ->
+                                "舞萌当前用落雪源 · 两个游戏的 Key 一把通用，可在「设置 → 查分器数据源」切换"
+                            account.bound ->
+                                "当前：${account.nickname.ifBlank { "查分器用户" }}（Rating ${account.rating}）"
+                            else -> "支持水鱼账号密码登录（OAuth 授权已暂时停用）"
                         },
                         startAction = { PrefIcon(MiuixGlassIcons.Regular.Lock) },
                         onClick = onOpenLogin,

@@ -40,9 +40,16 @@ object ChuniStats {
         val current: List<ChuniRecordEntity>,
         val currentVersion: Int,
         val recordCount: Int,
+        /**
+         * 当前版本枠是否来自**数据源的官方分池**（落雪 `new_bests`）。
+         *
+         * true = 分池由落雪权威给出，不依赖曲库版本标记，也不受「曲库未打标」影响；
+         * false = 本地按 `chuni_chart.version` 推断，水鱼源只能走到这一步。
+         */
+        val hasOfficialSplit: Boolean = false,
     ) {
         /** 曲库是否带版本标记（否则「当前 / 非当前」无从区分，不能拿 0.00 当均值展示）。 */
-        val hasVersionInfo: Boolean get() = currentVersion > 0
+        val hasVersionInfo: Boolean get() = currentVersion > 0 || hasOfficialSplit
 
         val nonCurrentAverage: Double get() = ChuniRating.averageOf(nonCurrent.map { it.ra })
 
@@ -77,22 +84,36 @@ object ChuniStats {
         val versionMap = versions.associate { ChuniRating.chartKey(it.songId, it.difficultyIndex) to it.version }
         val currentVersion = versions.maxOfOrNull { it.version } ?: 0
 
-        val split = ChuniRating.split(
-            items = best,
-            currentVersion = currentVersion,
-            raOf = { it.ra },
-            versionOf = { versionMap[ChuniRating.chartKey(it.songId, it.levelIndex)] ?: 0 },
-            isWorldEndOf = { it.levelIndex == worldEnd },
-        )
-
-        val rating = if (currentVersion <= 0) {
-            // 无版本信息：官方 30 + 20 无从分池，退回 best30 均值兜底（不把 Rating 砍没）
-            ChuniRating.bestAverage(best.map { it.ra })
-        } else {
-            ChuniRating.ratingOf(
-                split.nonCurrent.map { it.ra },
-                split.current.map { it.ra },
+        // 落雪源会把官方 new_bests 的谱面标成 isCurrentVersion —— 这比按版本号猜权威得多，
+        // 且不依赖曲库是否打过 version（水鱼成绩 + 未打标曲库也能正确分池）。
+        // 水鱼源该列恒为 false，自动退回版本推断。
+        val hasOfficialSplit = best.any { it.isCurrentVersion }
+        val split: ChuniRating.Split<ChuniRecordEntity> = if (hasOfficialSplit) {
+            ChuniRating.Split(
+                nonCurrent = best
+                    .filter { !it.isCurrentVersion }
+                    .sortedByDescending { it.ra }
+                    .take(ChuniRating.NON_CURRENT_SIZE),
+                current = best
+                    .filter { it.isCurrentVersion }
+                    .sortedByDescending { it.ra }
+                    .take(ChuniRating.CURRENT_SIZE),
             )
+        } else {
+            ChuniRating.split(
+                items = best,
+                currentVersion = currentVersion,
+                raOf = { it.ra },
+                versionOf = { versionMap[ChuniRating.chartKey(it.songId, it.levelIndex)] ?: 0 },
+                isWorldEndOf = { it.levelIndex == worldEnd },
+            )
+        }
+
+        val rating = when {
+            hasOfficialSplit || currentVersion > 0 ->
+                ChuniRating.ratingOf(split.nonCurrent.map { it.ra }, split.current.map { it.ra })
+            // 无任何版本信息：官方 30 + 20 无从分池，退回 best30 均值兜底（不把 Rating 砍没）
+            else -> ChuniRating.bestAverage(best.map { it.ra })
         }
 
         return Result(
@@ -101,6 +122,7 @@ object ChuniStats {
             current = split.current,
             currentVersion = currentVersion,
             recordCount = best.size,
+            hasOfficialSplit = hasOfficialSplit,
         )
     }
 

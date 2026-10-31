@@ -77,4 +77,20 @@ class ChuniRatingTest {
         assertEquals(0.0, ChuniRating.currentAverage(emptyList(), CURRENT), 1e-9)
         assertEquals(0.0, ChuniRating.bestAverage(emptyList()), 1e-9)
     }
+    @Test
+    fun `官方分数表反推单曲ra`() {
+        val ds = 14.0
+        // 接口没给 rating 时的兜底（落雪 player/scores 可能是 SimpleScore）
+        assertEquals(16.15, ChuniRating.raOf(1_009_000, ds), 1e-9)
+        // 1007500 段：ds + 2.0 + (score-1007500)/10000*0.15 → 500/10000*0.15 = 0.0075
+        assertEquals(16.0075, ChuniRating.raOf(1_008_000, ds), 1e-9)
+        assertEquals(15.50, ChuniRating.raOf(1_005_000, ds), 1e-9)
+        assertEquals(15.00, ChuniRating.raOf(1_000_000, ds), 1e-9)
+        assertEquals(14.60, ChuniRating.raOf(990_000, ds), 1e-9)
+        assertEquals(14.00, ChuniRating.raOf(950_000, ds), 1e-9)
+        assertEquals(0.0, ChuniRating.raOf(900_000, ds), 1e-9)
+        assertEquals(0.0, ChuniRating.raOf(800_000, ds), 1e-9)
+        // 定数未知时不瞎算，交给上层显示 0
+        assertEquals(0.0, ChuniRating.raOf(1_009_000, 0.0), 1e-9)
+    }
 }

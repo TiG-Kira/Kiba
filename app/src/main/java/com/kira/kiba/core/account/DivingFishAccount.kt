@@ -6,6 +6,9 @@ import com.google.gson.annotations.SerializedName
 import com.kira.kiba.BuildConfig
 import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.db.entity.RecordEntity
+import com.kira.kiba.core.data.MaimaiLxnsSync
+import com.kira.kiba.core.model.GameType
+import com.kira.kiba.core.model.ScoreSource
 import com.kira.kiba.core.repository.RecordRepository
 import com.kira.kiba.core.utils.SpUtil
 import kotlinx.coroutines.CoroutineScope
@@ -235,6 +238,20 @@ object DivingFishAccount {
 
     /** 启动恢复：已登录（OAuth 绑定或原版 jwt）则静默拉一次成绩；否则展示未登录引导。 */
     suspend fun restore() {
+        // 舞萌侧选了落雪：绑定状态与成绩都走落雪，不碰水鱼凭据
+        if (SpUtil.getScoreSource(GameType.MAIMAI) == ScoreSource.LXNS) {
+            if (LxnsAccount.isBound()) {
+                _state.value = AccountState(
+                    bound = true,
+                    nickname = SpUtil.getLxnsName(),
+                    loading = true,
+                )
+                refreshRecords()
+            } else {
+                _state.value = AccountState()
+            }
+            return
+        }
         if (SpUtil.isDivingFishLoggedIn()) {
             _state.value = AccountState(
                 bound = true,
@@ -441,6 +458,12 @@ object DivingFishAccount {
      * 双通道：原版 jwt 走 www.diving-fish.com + Cookie；OAuth 走 maimai.diving-fish.com + Bearer。
      */
     suspend fun refreshRecords() {
+        // 数据源分发：舞萌侧选的是落雪就直接走落雪（与本类的水鱼凭据无关），
+        // 两游戏的数据源各自独立，互不影响。
+        if (SpUtil.getScoreSource(GameType.MAIMAI) == ScoreSource.LXNS) {
+            refreshFromLxns()
+            return
+        }
         if (!SpUtil.isDivingFishLoggedIn()) {
             _state.value = _state.value.copy(loading = false, error = "尚未登录查分器账户")
             return
@@ -509,6 +532,64 @@ object DivingFishAccount {
             _state.value = _state.value.copy(
                 loading = false,
                 error = "成绩获取失败：${e.message}（将展示本地缓存）",
+            )
+        }
+    }
+
+    /**
+     * 落雪源成绩刷新：拉全量 → 落库 → 本地按官方口径算 B50（旧 35 + 新 15）。
+     *
+     * 与水鱼通道完全独立：不读 jwt / OAuth 凭据，只认「设置里绑定的落雪 API Key」。
+     * 这样「舞萌落雪 + 中二水鱼」这种混搭也能正常工作。
+     */
+    private suspend fun refreshFromLxns() {
+        if (!LxnsAccount.isBound()) {
+            _state.value = _state.value.copy(
+                loading = false,
+                error = "尚未绑定落雪 API Key（设置 → 查分器数据源）",
+            )
+            return
+        }
+        _state.value = _state.value.copy(loading = true, error = null)
+
+        val outcome = withContext(Dispatchers.IO) {
+            runCatching {
+                val result = MaimaiLxnsSync.fetch()
+                RecordRepository.getInstance(AppDataBase.getInstance().recordDao())
+                    .replaceAllRecord(result.records)
+                result
+            }
+        }
+
+        outcome.onSuccess { result ->
+            recordsCache = result.records
+            // B50 计算需要曲库的 isNew 标记；曲库没同步时全部当旧曲，Rating 会偏低但不会崩
+            val isNewBySongId = withContext(Dispatchers.IO) {
+                runCatching {
+                    AppDataBase.getInstance().songDao().getAllSongsList()
+                        .associate { it.id to it.isNew }
+                }.getOrDefault(emptyMap())
+            }
+            val sorted = result.records.sortedByDescending { it.ra }
+            best50Cache = Best50(
+                old = sorted.filter { isNewBySongId[it.songId] != true }.take(35),
+                new = sorted.filter { isNewBySongId[it.songId] == true }.take(15),
+            )
+            if (result.nickname.isNotBlank()) SpUtil.saveLxnsName(result.nickname)
+            _state.value = AccountState(
+                bound = true,
+                nickname = result.nickname.ifBlank { SpUtil.getLxnsName() },
+                rating = best50Cache.rating,
+                additionalRating = 0,
+                recordCount = result.records.size,
+                loading = false,
+                error = null,
+            )
+        }.onFailure { e ->
+            Log.w(TAG, "lxns maimai refresh failed", e)
+            _state.value = _state.value.copy(
+                loading = false,
+                error = "落雪成绩获取失败：${e.message}（将展示本地缓存）",
             )
         }
     }
