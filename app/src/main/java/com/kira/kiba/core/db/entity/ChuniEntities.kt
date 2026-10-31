@@ -181,6 +181,23 @@ data class ChuniRecordEntity(
      */
     @androidx.room.ColumnInfo(name = "is_recent", defaultValue = "0")
     val isRecent: Boolean = false,
+
+    /**
+     * 该成绩是否属于**当前版本枠**（官方 B20 的成员）。
+     *
+     * 只有落雪源能给准：`GET /user/chunithm/player/bests` 直接返回官方分池
+     * `bests`（旧版本 B30）/ `selections` / `new_bests`（当前版本 B20），
+     * 我们把 `new_bests` 里的谱面标 true。
+     *
+     * 水鱼源没有这份数据（`player/records` 只回约 30 条去重 Best），
+     * 此时全部为 false，[com.kira.kiba.core.data.ChuniStats] 退回按
+     * `chuni_chart.version` 推断「当前 / 非当前」。
+     *
+     * 为什么要独立一列：单纯靠 version 推断在水鱼源下永远填不满 B20（数据源根本没返回新曲），
+     * 而落雪的官方分池比我们自己按版本猜更权威 —— 它连「临近两版都算最新曲」的口径都替我们处理了。
+     */
+    @androidx.room.ColumnInfo(name = "is_current_version", defaultValue = "0")
+    val isCurrentVersion: Boolean = false,
 ) : Parcelable
 
 /** 中二节奏歌曲 + 谱面联表（对标 SongWithChartsEntity，用于列表 / 详情渲染）。 */

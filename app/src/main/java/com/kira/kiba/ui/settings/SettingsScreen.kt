@@ -27,8 +27,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.kira.kiba.BuildConfig
 import com.kira.kiba.core.account.DivingFishAccount
+import com.kira.kiba.core.account.LxnsAccount
+import com.kira.kiba.core.data.ChuniRecordSync
 import com.kira.kiba.core.data.SongDataSync
+import com.kira.kiba.core.model.GameType
+import com.kira.kiba.core.model.ScoreSource
 import com.kira.kiba.core.state.KibaState
+import com.kira.kiba.core.utils.BrowserJump
 import com.kira.kiba.core.utils.SpUtil
 import com.kira.kiba.core.utils.CacheCleaner
 import com.kira.kiba.core.utils.DeviceGrade
@@ -105,6 +110,12 @@ fun SettingsScreen(
     var coverCacheMsg by remember { mutableStateOf<String?>(null) }
     var clearingCovers by remember { mutableStateOf(false) }
     var showCoverClearConfirm by remember { mutableStateOf(false) }
+
+    // ── 查分器数据源（舞萌 / 中二各自独立） ──
+    var maimaiSource by remember { mutableStateOf(SpUtil.getScoreSource(GameType.MAIMAI)) }
+    var chuniSource by remember { mutableStateOf(SpUtil.getScoreSource(GameType.CHUNITHM)) }
+    val lxnsState by LxnsAccount.state.collectAsState()
+    var showLxnsKeyDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         modifier = Modifier
@@ -240,6 +251,53 @@ fun SettingsScreen(
             }
 
             // ── 查分器工具 ──
+            // ── 查分器数据源 ──
+            // 两个游戏各选一个源，互不影响（例如舞萌用水鱼、中二用落雪）。
+            item(key = "source_title") { SectionTitle("查分器数据源") }
+            item(key = "source_card") {
+                Card(modifier = (Modifier.fillMaxWidth())) {
+                    OverlaySpinnerPreference(
+                        items = ScoreSource.entries.map { DropdownItem(text = it.label) },
+                        selectedIndex = maimaiSource.ordinal,
+                        title = "舞萌成绩源",
+                        summary = scoreSourceSummary(maimaiSource, lxnsState.bound),
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.CloudFill) },
+                        onSelectedIndexChange = { index ->
+                            ScoreSource.entries.getOrNull(index)?.let { picked ->
+                                maimaiSource = picked
+                                SpUtil.setScoreSource(GameType.MAIMAI, picked)
+                                // 切源后立刻按新源刷新一次；失败由「我」页状态条提示，不打断设置操作
+                                scope.launch { runCatching { DivingFishAccount.refreshRecords() } }
+                            }
+                        },
+                    )
+                    OverlaySpinnerPreference(
+                        items = ScoreSource.entries.map { DropdownItem(text = it.label) },
+                        selectedIndex = chuniSource.ordinal,
+                        title = "中二成绩源",
+                        summary = scoreSourceSummary(chuniSource, lxnsState.bound),
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.CloudFill) },
+                        onSelectedIndexChange = { index ->
+                            ScoreSource.entries.getOrNull(index)?.let { picked ->
+                                chuniSource = picked
+                                SpUtil.setScoreSource(GameType.CHUNITHM, picked)
+                                scope.launch { runCatching { ChuniRecordSync.refresh() } }
+                            }
+                        },
+                    )
+                    ArrowPreference(
+                        title = if (lxnsState.bound) "落雪账号" else "绑定落雪 API Key",
+                        summary = when {
+                            lxnsState.bound ->
+                                "${lxnsState.name.ifBlank { "已绑定" }} · 两个游戏共用这把 Key · 点击解绑"
+                            else -> "未绑定 · 点击查看获取方法（注册 / 生成 Key 全流程）"
+                        },
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Contacts) },
+                        onClick = { showLxnsKeyDialog = true },
+                    )
+                }
+            }
+
             item(key = "tool_title") { SectionTitle("查分器工具") }
             item(key = "tool_card") {
                 Card(modifier = (Modifier.fillMaxWidth())) {
@@ -372,6 +430,205 @@ fun SettingsScreen(
                 SpUtil.setCoverSource(it)
                 showCoverSource = false
             },
+        )
+    }
+
+    if (showLxnsKeyDialog) {
+        LxnsKeyDialog(
+            bound = lxnsState.bound,
+            name = lxnsState.name,
+            onDismiss = { showLxnsKeyDialog = false },
+        )
+    }
+}
+
+/** 数据源说明文案（设置页下拉副标题）。 */
+private fun scoreSourceSummary(source: ScoreSource, lxnsBound: Boolean): String = when (source) {
+    ScoreSource.WATER_FISH ->
+        "水鱼 · 只回 Top30，当前版本新曲可能缺失（B20 常空即此因）"
+    ScoreSource.LXNS ->
+        if (lxnsBound) "落雪 · 全量成绩 + 官方当前版本 B20"
+        else "落雪 · 尚未绑定 API Key，请先点下方「绑定落雪 API Key」"
+}
+
+/**
+ * 落雪 API Key 绑定弹层 —— **含完整的「怎么获取 Key」分步引导**。
+ *
+ * 用户最容易卡在「Key 在哪」这一步，所以这里不是一句「请输入 Token」就完事：
+ * 注册入口、Key 生成入口、四步说明、粘贴框、失败原因全在一屏内。
+ *
+ * Key 只存本机私有 SharedPreferences（`lxns_api_key`），不做任何上报；
+ * 用户可在落雪站内随时撤销，撤销后同步会提示重新绑定（401）。
+ */
+@Composable
+private fun LxnsKeyDialog(
+    bound: Boolean,
+    name: String,
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val state by LxnsAccount.state.collectAsState()
+    var input by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    KibaGlassDialog(
+        show = true,
+        title = if (bound) "落雪账号" else "获取落雪 API Key",
+        summary = if (bound) {
+            "${name.ifBlank { "已绑定" }} · 两个游戏的成绩同步共用这把 Key"
+        } else {
+            "落雪没有账号密码登录接口，需要用个人 API Key 授权。四步即可拿到："
+        },
+        onDismissRequest = onDismiss,
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            if (bound) {
+                Text(
+                    text = "解绑只清除本机的 Key，已同步进本地的成绩不会删除；" +
+                        "随时可以在落雪重新生成 Key 再绑定。",
+                    style = MiuixTheme.textStyles.body2,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                )
+                Spacer(Modifier.height(16.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(text = "关闭", onClick = onDismiss)
+                    Spacer(Modifier.width(12.dp))
+                    Button(
+                        onClick = {
+                            LxnsAccount.logout()
+                            onDismiss()
+                        },
+                        colors = ButtonDefaults.buttonColorsPrimary(),
+                    ) {
+                        Text(text = "解绑")
+                    }
+                }
+                return@Column
+            }
+
+            // ── 四步引导 ──
+            GuideStep(
+                index = "1",
+                text = "打开落雪并登录（没有账号就点下面的「注册落雪」）",
+            )
+            GuideStep(
+                index = "2",
+                text = "进入「个人设置 → API Token / 开发者」一栏",
+            )
+            GuideStep(
+                index = "3",
+                text = "点「生成 / 新建 Token」，复制生成的那串字符",
+            )
+            GuideStep(
+                index = "4",
+                text = "粘贴到下面的输入框，点「绑定」",
+            )
+
+            Spacer(Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                TextButton(
+                    text = "注册落雪",
+                    onClick = { BrowserJump.openUrl(context, LxnsAccount.REGISTER_URL) },
+                )
+                TextButton(
+                    text = "打开我的设置页",
+                    onClick = { BrowserJump.openUrl(context, LxnsAccount.API_KEY_URL) },
+                )
+            }
+
+            Spacer(Modifier.height(12.dp))
+            TextField(
+                value = input,
+                onValueChange = {
+                    input = it
+                    error = null
+                },
+                label = "粘贴落雪 API Key",
+                useLabelAsPlaceholder = true,
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            val message = error ?: state.error
+            if (message != null) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = message,
+                    style = MiuixTheme.textStyles.body2,
+                    color = MiuixTheme.colorScheme.error,
+                )
+            }
+
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = "找不到 Token 入口？登录落雪后打开 www.maimai.lxns.net 的个人设置页，" +
+                    "向下滚动到「开发者 / API」一节。Key 等同账号凭据，只保存在本机，" +
+                    "可随时在落雪站内撤销。",
+                style = MiuixTheme.textStyles.footnote1,
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            )
+
+            Spacer(Modifier.height(16.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextButton(text = "取消", onClick = onDismiss)
+                Spacer(Modifier.width(12.dp))
+                Button(
+                    onClick = {
+                        if (busy) return@Button
+                        busy = true
+                        error = null
+                        scope.launch {
+                            LxnsAccount.login(input)
+                                .onSuccess {
+                                    busy = false
+                                    onDismiss()
+                                }
+                                .onFailure {
+                                    busy = false
+                                    error = it.message ?: "绑定失败"
+                                }
+                        }
+                    },
+                    enabled = input.isNotBlank() && !busy,
+                    colors = ButtonDefaults.buttonColorsPrimary(),
+                ) {
+                    Text(text = if (busy) "验证中…" else "绑定")
+                }
+            }
+        }
+    }
+}
+
+/** 引导步骤一行：序号圆点 + 说明文字。 */
+@Composable
+private fun GuideStep(index: String, text: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 3.dp),
+        verticalAlignment = androidx.compose.ui.Alignment.Top,
+    ) {
+        Text(
+            text = "$index.",
+            style = MiuixTheme.textStyles.body2,
+            color = MiuixTheme.colorScheme.primary,
+            modifier = Modifier.width(20.dp),
+        )
+        Text(
+            text = text,
+            style = MiuixTheme.textStyles.body2,
+            color = MiuixTheme.colorScheme.onSurface,
         )
     }
 }

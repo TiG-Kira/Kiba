@@ -6,6 +6,8 @@ import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.db.entity.ChuniRecordEntity
+import com.kira.kiba.core.model.GameType
+import com.kira.kiba.core.model.ScoreSource
 import com.kira.kiba.core.utils.SpUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -99,65 +101,34 @@ object ChuniRecordSync {
     fun shouldAutoRefresh(): Boolean = !fetchedThisSession
 
     /**
-     * 拉取中二成绩：jwt Cookie 调 /player/records → 手工解析 → replaceAllChuniRecord 落库
-     * → rating/昵称/条数写 SpUtil。
+     * 拉取中二成绩。
      *
-     * 账号无中二成绩（best 为空）时**按成功处理**（count=0，empty=true），由 UI
-     * 展示「暂无中二节奏成绩数据」；未登录 jwt 返回明确的「换登录方式」提示。
+     * **按数据源分发**（[com.kira.kiba.core.model.ScoreSource]，两游戏各自独立）：
+     * - 落雪 LXNS → [fetchFromLxns]：全量成绩 + 官方分池（`new_bests` = 当前版本 B20）。
+     *   这是唯一能填满当前版本枠的来源，水鱼根本不给这份数据。
+     * - 水鱼 → [fetchFromDivingFish]：jwt Cookie 调 `player/records`，只回约 30 条 Top30。
+     *
+     * 两条路都落到同一个 [commit]：入库 → [ChuniStats] 现算 → 写昵称/条数。
+     * 落库（Room）与网络请求**必须整体待在 Dispatchers.IO**（本项目已知坑：主线程访问数据库闪退）。
      */
     suspend fun refresh() {
         if (_state.value is SyncState.Syncing) return
-        val jwt = SpUtil.getDivingFishJwt()
-        if (jwt.isBlank()) {
-            _state.value = SyncState.Failed("水鱼 OAuth 暂不支持中二节奏，请使用账号密码登录")
-            return
-        }
         _state.value = SyncState.Syncing
-        // 关键：落库（Room）**必须**和 IO 一起待在 Dispatchers.IO 里。
-        // 之前把 replaceAllChuniRecord 写在 withContext 返回后的 onSuccess 里 —— 那已经在
-        // 主线程，Room 会抛「Cannot access database on the main thread」，
-        // 而该处又在 runCatching 之外 → 未捕获异常直接把「同步中二成绩」打成闪退。
+        val source = SpUtil.getScoreSource(GameType.CHUNITHM)
         val outcome: Result<Parsed> = withContext(Dispatchers.IO) {
             runCatching {
-                val request = Request.Builder()
-                    .url(RECORDS_URL)
-                    .header("Cookie", jwt)
-                    .build()
-                val text = client.newCall(request).execute().use { resp ->
-                    val body = resp.body?.string().orEmpty()
-                    if (!resp.isSuccessful) {
-                        // 401 / 403 等多半是登录态失效，带上响应体片段便于定位
-                        throw IllegalStateException("HTTP ${resp.code}: ${body.take(120)}")
-                    }
-                    body
+                val parsed = when (source) {
+                    ScoreSource.LXNS -> fetchFromLxns()
+                    ScoreSource.WATER_FISH -> fetchFromDivingFish()
                 }
-                val parsed = parseRecords(text)
-
-                val ok = AppDataBase.getInstance().chuniRecordDao()
-                    .replaceAllChuniRecord(parsed.records)
-                if (!ok) throw IllegalStateException("成绩入库失败")
-
-                // Rating / 两个枠统一由 [ChuniStats] 从库里现算（成绩刚入库，版本标记来自 chuni_chart），
-                // 不再在这里各算一套 —— 之前「当前 TOP20 均值 0.00」就是同步时算好后写死进
-                // SharedPreferences，曲库补齐版本标记后也没人重算导致的。
-                val stats = ChuniStats.compute()
-                ChuniStats.persist(stats)
-                // 本地算不出（账号无成绩 / 曲库无版本标记）时才退用服务端 rating 兜底
-                if (stats.rating <= 0.0 && parsed.serverRating > 0.0) {
-                    SpUtil.setChuniRating(ChuniRating.truncate2(parsed.serverRating))
-                }
-
-                SpUtil.setChuniRecentCount(parsed.recentCount)
-                SpUtil.setChuniNickname(parsed.nickname)
-                SpUtil.setChuniRecordCount(parsed.records.size)
-                parsed
+                commit(parsed)
             }
         }
         outcome.onSuccess { parsed ->
             fetchedThisSession = true
             Log.i(
                 TAG,
-                "chuni records synced: ${parsed.records.size}, " +
+                "chuni records synced (${source.key}): ${parsed.records.size}, " +
                     "rating=${parsed.rating}, recent=${parsed.recentCount}",
             )
             _state.value = SyncState.Done(
@@ -173,6 +144,63 @@ object ChuniRecordSync {
                 if (msg.length > 200) msg.take(200) + "…" else msg,
             )
         }
+    }
+
+    /** 落雪源：全量成绩 + 官方分池，见 [ChuniLxnsSync]。 */
+    private suspend fun fetchFromLxns(): Parsed {
+        val result = ChuniLxnsSync.fetch()
+        return Parsed(
+            rating = 0.0,
+            serverRating = result.serverRating,
+            nickname = result.nickname,
+            records = result.records,
+            recentCount = 0,
+        )
+    }
+
+    /** 水鱼源：jwt Cookie 拉 Top30。 */
+    private fun fetchFromDivingFish(): Parsed {
+        val jwt = SpUtil.getDivingFishJwt()
+        if (jwt.isBlank()) {
+            throw IllegalStateException("水鱼登录方式不支持中二成绩拉取，请改用账号密码登录或切换落雪源")
+        }
+        val request = Request.Builder()
+            .url(RECORDS_URL)
+            .header("Cookie", jwt)
+            .build()
+        val text = client.newCall(request).execute().use { resp ->
+            val body = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) {
+                // 401 / 403 等多半是登录态失效，带上响应体片段便于定位
+                throw IllegalStateException("HTTP ${resp.code}: ${body.take(120)}")
+            }
+            body
+        }
+        return parseRecords(text)
+    }
+
+    /**
+     * 入库 + 统计 + 缓存回写（两条数据源共用）。
+     *
+     * Rating / 两个枠统一由 [ChuniStats] 从库里现算 —— 同步时算好写死进 Sp 的老做法，
+     * 会在「版本标记晚到 / 曲库重导入」时永久失真（1.8.1 当前 TOP20 恒 0.00 就是这么来的）。
+     */
+    private suspend fun commit(parsed: Parsed): Parsed {
+        val ok = AppDataBase.getInstance().chuniRecordDao()
+            .replaceAllChuniRecord(parsed.records)
+        if (!ok) throw IllegalStateException("成绩入库失败")
+
+        val stats = ChuniStats.compute()
+        ChuniStats.persist(stats)
+        // 本地算不出（账号无成绩）时才退用服务端 rating 兜底
+        if (stats.rating <= 0.0 && parsed.serverRating > 0.0) {
+            SpUtil.setChuniRating(ChuniRating.truncate2(parsed.serverRating))
+        }
+
+        SpUtil.setChuniRecentCount(parsed.recentCount)
+        SpUtil.setChuniNickname(parsed.nickname)
+        SpUtil.setChuniRecordCount(parsed.records.size)
+        return parsed
     }
 
     private data class Parsed(
