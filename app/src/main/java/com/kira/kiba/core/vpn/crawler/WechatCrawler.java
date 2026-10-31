@@ -201,6 +201,12 @@ public class WechatCrawler {
 //            if (matcher.find()) data = Objects.requireNonNull(matcher.group(1));
 //            data = Pattern.compile("\\s+").matcher(data).replaceAll(" ");
 
+            reportFetched(diffMap.get(diff), data, response.code());
+            if (data.length() < 200) {
+                writeLog(diffMap.get(diff) + " 页面内容异常，已跳过上传（大概率是登录态没拿到，请确认是微信里打开链接完成的授权）");
+                return;
+            }
+
             if (lxnsMode) {
                 // 落雪不收 <login> 包裹（那是水鱼 pageparser 的账密约定），原样上传页面源码
                 writeLog(diffMap.get(diff) + " 难度的数据已获取，正在上传至落雪查分器");
@@ -326,6 +332,12 @@ public class WechatCrawler {
             throw new Exception(exception);
         }
 
+        // 登录态诊断：只要有 code 换到的会话 cookie，各域数量应该都 > 0。
+        // 全为 0 说明拿到的不是带 code 的回调地址，后续页面必然是登录页/空页。
+        writeLog("登录态 Cookie：tgk-wcaime=" + jar.getCookies("tgk-wcaime.wahlap.com").size()
+                + " maimai=" + jar.getCookies("maimai.wahlap.com").size()
+                + " chunithm=" + jar.getCookies("chunithm.wahlap.com").size());
+
         // Handle redirect manually
         String location = response.headers().get("Location");
         if (response.code() >= 300 && response.code() < 400 && location != null) {
@@ -398,6 +410,14 @@ public class WechatCrawler {
             Call call = client.newCall(request);
             try (Response response = call.execute()) {
                 String data = Objects.requireNonNull(response.body()).string();
+                reportFetched("中二 " + chuniDiffMap.get(diff), data, response.code());
+                if (data.length() < 200) {
+                    // 未登录 / 授权失败时服务端会 302 到登录页，而 buildHttpClient(false) 不跟随重定向，
+                    // 拿到的就是空 body。落雪那边会直接显示「页面内容为空」，这里提前说清原因。
+                    writeLog("中二 " + chuniDiffMap.get(diff) + " 页面内容异常，已跳过上传"
+                            + "（请确认链接是在微信里打开、并已用机台账号完成授权）");
+                    return;
+                }
                 writeLog("中二 " + chuniDiffMap.get(diff) + " 的数据已获取，正在上传至"
                         + (lxnsMode ? "落雪查分器" : "水鱼查分器"));
                 uploadChuniData(jwt, diff, data, 1);
@@ -407,8 +427,12 @@ public class WechatCrawler {
         }
     }
 
-    private static void retryFetchAndUploadChuniData(Exception e, String jwt, Integer diff, Integer currentRetryCount) {
-        writeLog("获取中二 " + chuniDiffMap.get(diff) + " 难度数据时出现错误: " + e);
+    /** 统一的「页面抓到了」日志：带字节数与状态码，出问题一眼看出是空页还是解析失败。 */
+    private static void reportFetched(String label, String data, int httpCode) {
+        writeLog(label + " 页面已获取：" + data.length() + " 字节，HTTP " + httpCode);
+    }
+
+    private static void retryFetchAndUploadChuniData(Exception e, String jwt, Integer diff, Integer currentRetryCount) {        writeLog("获取中二 " + chuniDiffMap.get(diff) + " 难度数据时出现错误: " + e);
         if (currentRetryCount < MAX_RETRY_COUNT) {
             writeLog("进行第" + currentRetryCount + "次重试");
             fetchAndUploadChuniData(jwt, diff, currentRetryCount + 1);

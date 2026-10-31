@@ -108,6 +108,10 @@ object LxnsApi {
             httpCode == 401 || httpCode == 403 ->
                 "落雪 API Key 无效（常见原因：复制不完整、已重置，或把开发者密钥当个人密钥用）。" +
                     "请打开「账号详情」重新复制，注意区分大小写"
+            // 纯文本 `404 page not found` = 路由不存在；JSON `player not found` = 玩家没绑定。
+            // 两者都是 404，混着报会把「接口变更」误导成「去网页同步一次」。
+            httpCode == 404 && parsed == null ->
+                "落雪没有这个接口（${body.take(60)}），接口可能已变更"
             httpCode == 404 -> "落雪没有这项数据（请先在落雪同步一次，把玩家绑定到该账号）"
             httpCode == 429 -> "落雪请求过于频繁（每秒最多 5 次），请稍后再试"
             httpCode >= 500 -> "落雪服务器异常（HTTP $httpCode），请稍后再试"

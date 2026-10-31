@@ -10,7 +10,7 @@ public class HttpRedirectServer extends NanoHTTPD {
     public static int Port = 9457;
     private final static String TAG = "HttpRedirectServer";
 
-    protected HttpRedirectServer() throws IOException {
+    public HttpRedirectServer() throws IOException {
         super(Port);
     }
 

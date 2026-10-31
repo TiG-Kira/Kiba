@@ -4,6 +4,7 @@ import com.kira.kiba.core.model.GameType
 import com.kira.kiba.core.model.ScoreSource
 import com.kira.kiba.core.vpn.VpnSettings
 import com.kira.kiba.core.vpn.core.LocalVpnService
+import com.kira.kiba.core.vpn.tunnel.HttpCapturerTunnel
 import com.kira.kiba.core.utils.SpUtil
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -85,26 +86,32 @@ object CrawlerCaller {
     /**
      * 抓包并上传成绩。
      *
+     * **调用时机**：由 [com.kira.kiba.core.vpn.tunnel.HttpCapturerTunnel] 在 VPN 抓到
+     * 微信 OAuth **回调**（`callback/{game}?code=...`）时调用 —— 那个 URL 带着 code，
+     * 拿它去换登录态才能抓到有数据的页面。绝不能在用户还没在微信里打开链接时抢跑调用
+     * （曾因此在授权链接阶段就关掉 VPN，抓到的页面全是登录页/空串，落雪侧直接报
+     * 「页面内容为空」）。
+     *
      * **上传目标跟随该游戏在设置页选的数据源**（两游戏各自独立）：
      * - 水鱼：舞萌把账密包裹进 HTML 头部 → `pageparser/page`；中二走账号密码 jwt 通道
      *   （水鱼 OAuth scope 不支持中二），取数是「POST send → GET」两步串行，上传走
      *   `chunithmprober/player/update_records_html`；
      * - 落雪：抓到的 NET 页面**原样** `POST /api/v0/user/{game}/player/html`（X-User-Token），
      *   既不用账密也不用 jwt —— 落雪由服务端解析页面，口径与水鱼 pageparser 同源。
-     *
-     * [com.kira.kiba.core.vpn.tunnel.HttpCapturerTunnel] 是 Java 侧调用方（单参调用），
-     * 故用 @JvmOverloads 生成单参重载，默认跟随当前游戏开关。
      */
     @JvmOverloads
     fun fetchData(authUrl: String, gameType: GameType = SpUtil.getGameType()) {
         CoroutineScope(Dispatchers.IO).launch {
             try {
+                // 回调请求本身还要经 VPN 回给微信（微信那边要看到「登录信息已获取」页面），
+                // 留够时间再拆 VPN；拆晚一点不影响我们自己的后续直连请求。
                 Thread.sleep(3000)
-                LocalVpnService.IsRunning = false
-                Thread.sleep(3000)
+                LocalVpnService.requestStop()
+                Thread.sleep(2000)
             } catch (e: InterruptedException) {
                 onError(e)
             }
+            writeLog("已结束 VPN 抓包，开始用机台会话登录…")
             val crawler = WechatCrawler()
             val source = SpUtil.getScoreSource(gameType)
             val useLxns = source == ScoreSource.LXNS
@@ -139,6 +146,9 @@ object CrawlerCaller {
             } finally {
                 // 会话结束必须复位，否则下一次切回水鱼会继续往落雪推
                 WechatCrawler.setLxnsMode(false)
+                HttpCapturerTunnel.resetCaptureState()
+                // 抓完就收掉前台服务和通知，别让「机台抓包进行中」一直挂着
+                LocalVpnService.shutdown()
             }
         }
     }
