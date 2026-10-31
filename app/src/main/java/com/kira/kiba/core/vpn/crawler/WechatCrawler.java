@@ -93,6 +93,20 @@ public class WechatCrawler {
     private static final String CHUNI_UPLOAD_URL =
             "https://www.diving-fish.com/api/chunithmprober/player/update_records_html";
 
+    // ==================== 上传目标：水鱼 / 落雪 ====================
+    //
+    // false（默认）= 上传水鱼；true = 上传落雪个人 API（HTML 直传，
+    // 见 com.kira.kiba.core.network.LxnsUploader）。
+    //
+    // 用静态标志而不是改一堆方法签名：机台上分同一时刻只跑一条会话
+    // （用户点一次「开始抓包」），CrawlerCaller 在进入时设置、结束后清空。
+    private static volatile boolean lxnsMode = false;
+
+    /** 设置上传目标：true = 落雪，false = 水鱼。 */
+    public static void setLxnsMode(boolean enabled) {
+        lxnsMode = enabled;
+    }
+
     private static OkHttpClient client = null;
 
     public WechatCrawler() {
@@ -135,6 +149,28 @@ public class WechatCrawler {
         }
     }
 
+    /**
+     * 上传单页 HTML 到落雪（个人 API）。
+     *
+     * 与水鱼的区别：落雪**不做自研解析**，直接把 NET 页面源码交给服务端
+     * （`POST /api/v0/user/{game}/player/html`，头用 X-User-Token），
+     * 所以这里不需要账密 / jwt，也不需要 `<login>` 包裹。
+     *
+     * 401（Key 无效）与 404（账号还没绑定玩家）都是**重试也没用**的失败，
+     * 直接放弃并提示原因，避免无意义地重复打四次。
+     */
+    private static void uploadDataToLxns(String game, Integer diff, String data, Integer retryCount) {
+        String label = ("chunithm".equals(game) ? "中二 " + chuniDiffMap.get(diff) : diffMap.get(diff)) + " ";
+        String result = com.kira.kiba.core.network.LxnsUploader.uploadHtmlBlocking(game, data);
+        writeLog(label + result);
+
+        boolean fatal = result.contains("Key 无效") || result.contains("绑定玩家");
+        if (result.startsWith("上传失败") && !fatal && retryCount <= MAX_RETRY_COUNT) {
+            writeLog("进行第 " + retryCount + " 次重试");
+            uploadDataToLxns(game, diff, data, retryCount + 1);
+        }
+    }
+
     private static void fetchAndUploadData(String username, String password, Set<Integer> difficulties) {
         List<CompletableFuture<Object>> tasks = new ArrayList<>();
         for (Integer diff : difficulties) {
@@ -150,7 +186,12 @@ public class WechatCrawler {
 
     private static void fetchAndUploadData(String username, String password, Integer diff, Integer retryCount) {
         writeLog("开始获取 " + diffMap.get(diff) + " 难度的数据");
-        Request request = new Request.Builder().url("https://maimai.wahlap.com/maimai-mobile/record/musicGenre/search/?genre=99&diff=" + diff).build();
+        // 落雪只认 NET「最佳成绩」标准页（record/musicSort/search?...&diff=N），官方要求筛选条件保持不变；
+        // 水鱼 pageparser 沿用官方 proxy 的 musicGenre 地址。两者页面同构，区别只在 URL 参数。
+        String pageUrl = lxnsMode
+                ? "https://maimai.wahlap.com/maimai-mobile/record/musicSort/search/?search=V&sort=1&playCheck=on&diff=" + diff
+                : "https://maimai.wahlap.com/maimai-mobile/record/musicGenre/search/?genre=99&diff=" + diff;
+        Request request = new Request.Builder().url(pageUrl).build();
 
         Call call = client.newCall(request);
         try {
@@ -160,9 +201,15 @@ public class WechatCrawler {
 //            if (matcher.find()) data = Objects.requireNonNull(matcher.group(1));
 //            data = Pattern.compile("\\s+").matcher(data).replaceAll(" ");
 
-            // Upload data to maimai-prober
-            writeLog(diffMap.get(diff) + " 难度的数据已获取，正在上传至水鱼查分器");
-            uploadData(diff, "<login><u>" + username + "</u><p>" + password + "</p></login>" + data, 1);
+            if (lxnsMode) {
+                // 落雪不收 <login> 包裹（那是水鱼 pageparser 的账密约定），原样上传页面源码
+                writeLog(diffMap.get(diff) + " 难度的数据已获取，正在上传至落雪查分器");
+                uploadDataToLxns("maimai", diff, data, 1);
+            } else {
+                // Upload data to maimai-prober
+                writeLog(diffMap.get(diff) + " 难度的数据已获取，正在上传至水鱼查分器");
+                uploadData(diff, "<login><u>" + username + "</u><p>" + password + "</p></login>" + data, 1);
+            }
         } catch (Exception e) {
             retryFetchAndUploadData(e, username, password, diff, retryCount);
         }
@@ -351,7 +398,8 @@ public class WechatCrawler {
             Call call = client.newCall(request);
             try (Response response = call.execute()) {
                 String data = Objects.requireNonNull(response.body()).string();
-                writeLog("中二 " + chuniDiffMap.get(diff) + " 的数据已获取，正在上传至水鱼查分器");
+                writeLog("中二 " + chuniDiffMap.get(diff) + " 的数据已获取，正在上传至"
+                        + (lxnsMode ? "落雪查分器" : "水鱼查分器"));
                 uploadChuniData(jwt, diff, data, 1);
             }
         } catch (Exception e) {
@@ -370,6 +418,17 @@ public class WechatCrawler {
     }
 
     private static void uploadChuniData(String jwt, Integer diff, String data, Integer retryCount) {
+        if (lxnsMode) {
+            // 落雪支持中二的最佳成绩（record/musicGenre*）与 World's End（record/worldsEndList），
+            // 但**不支持**最近游玩 Rating 详情页（/home/playerData/ratingDetailRecent），
+            // 那个页面只服务于水鱼的 recent=1 通道，直接跳过免得刷一条失败日志。
+            if (diff == 6) {
+                writeLog("中二 最近游玩（Rating 详情）页落雪不支持，已跳过");
+                return;
+            }
+            uploadDataToLxns("chunithm", diff, data, 1);
+            return;
+        }
         String url = CHUNI_UPLOAD_URL;
         // diff=6 是最近游玩（Rating 详情），服务端要求 recent=1
         if (diff == 6) url += "?recent=1";

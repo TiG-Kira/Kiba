@@ -14,10 +14,16 @@ import java.util.concurrent.TimeUnit
 /**
  * 落雪（LXNS）API 客户端。
  *
- * ## 鉴权
- * 个人 API 用**个人 API Key 直传**：`Authorization: <key>`（**不是** `Bearer <key>`，
- * 落雪个人 API 就是这么认的；OAuth 的 access_token 才加 Bearer 前缀）。
- * Key 在落雪站内「个人设置 → API Token」生成，可在站内随时撤销。
+ * ## 鉴权（1.8.4 纠正）
+ * 落雪有**两套完全不同的鉴权头**，混用一律 401：
+ * - 个人 API（`/api/v0/user/...`）→ **`X-User-Token: <个人 API 密钥>`**
+ * - 开发者 API（`/api/v0/{maimai,chunithm}/...`）→ `Authorization: <开发者 API 密钥>`
+ * - OAuth API → `Authorization: Bearer <access_token>`
+ *
+ * 1.8.3 把个人 API 也写成了 `Authorization`，结果**任何合法的个人密钥都被判成无效**
+ * （实测：`Authorization` → 401；`X-User-Token` → 200/404 player not found）。
+ * 个人 API 密钥不能用于开发者 API，反之亦然（落雪官方明确要求）。
+ * Key 在落雪「账号详情」（`/user/profile`）生成/重置，可在站内随时撤销。
  *
  * ## 响应形态
  * 落雪有**两种**成功响应：
@@ -62,8 +68,8 @@ object LxnsApi {
         }
         val request = Request.Builder()
             .url(BASE_URL + path)
-            // 个人 API Key 直传，不加 Bearer 前缀
-            .header("Authorization", key)
+            // 个人 API 密钥走 X-User-Token（不是 Authorization，也不是 Bearer）
+            .header("X-User-Token", key)
             .header("Accept", "application/json")
             .build()
 
@@ -99,8 +105,11 @@ object LxnsApi {
         val parsed = runCatching { JsonParser.parseString(body).asJsonObject }.getOrNull()
         val code = parsed?.optInt("code")?.takeIf { it > 0 } ?: httpCode
         val message = when {
-            httpCode == 401 || httpCode == 403 -> "落雪 API Key 无效或已被撤销，请重新获取并绑定"
-            httpCode == 404 -> "落雪没有这项数据（请先在落雪上传该游戏的成绩）"
+            httpCode == 401 || httpCode == 403 ->
+                "落雪 API Key 无效（常见原因：复制不完整、已重置，或把开发者密钥当个人密钥用）。" +
+                    "请打开「账号详情」重新复制，注意区分大小写"
+            httpCode == 404 -> "落雪没有这项数据（请先在落雪同步一次，把玩家绑定到该账号）"
+            httpCode == 429 -> "落雪请求过于频繁（每秒最多 5 次），请稍后再试"
             httpCode >= 500 -> "落雪服务器异常（HTTP $httpCode），请稍后再试"
             else -> parsed?.optString("message")?.takeIf { it.isNotBlank() }
                 ?: "落雪请求失败（HTTP $httpCode）"
