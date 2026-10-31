@@ -199,6 +199,11 @@ dependencies {
     // 机台成绩更新（VPN 方案）：本地 HTTP 跳转服务
     implementation("org.nanohttpd:nanohttpd:2.2.0")
 
+    // 机台成绩更新（落雪源）：在本地解析 NET 页面，再走个人 API 的 JSON 成绩接口上传。
+    // 落雪的 HTML 直传端点是开发者 API（要审核 + friend_code），个人密钥用不了，
+    // 所以解析必须自己做 —— jsoup 的类选择器比手写正则稳得多。
+    implementation("org.jsoup:jsoup:1.18.3")
+
     // 机台成绩更新（二维码导入）：扫码（CameraX 取景 + ZXing 解码）与图片识别
     val cameraxVersion = "1.4.2"
     implementation("androidx.camera:camera-core:$cameraxVersion")

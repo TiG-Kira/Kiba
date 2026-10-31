@@ -150,21 +150,26 @@ public class WechatCrawler {
     }
 
     /**
-     * 上传单页 HTML 到落雪（个人 API）。
+     * 把单页 NET 源码解析成成绩并上传到落雪（个人 API 的 JSON 成绩接口）。
      *
-     * 与水鱼的区别：落雪**不做自研解析**，直接把 NET 页面源码交给服务端
-     * （`POST /api/v0/user/{game}/player/html`，头用 X-User-Token），
-     * 所以这里不需要账密 / jwt，也不需要 `<login>` 包裹。
+     * 与水鱼的区别：落雪的 HTML 直传端点属于开发者 API（要审核 + 好友码），个人密钥用不了，
+     * 所以这里在本地解析页面（[com.kira.kiba.core.data.NetHtmlParser]）再走
+     * `POST /api/v0/user/{game}/player/scores`，不需要账密 / jwt / `<login>` 包裹。
      *
-     * 401（Key 无效）与 404（账号还没绑定玩家）都是**重试也没用**的失败，
-     * 直接放弃并提示原因，避免无意义地重复打四次。
+     * 以下失败**重试也没用**，直接放弃并提示原因，避免无意义地重复打四次：
+     * Key 无效、账号没绑定玩家、本地曲库为空、抓到的不是成绩页。
      */
     private static void uploadDataToLxns(String game, Integer diff, String data, Integer retryCount) {
         String label = ("chunithm".equals(game) ? "中二 " + chuniDiffMap.get(diff) : diffMap.get(diff)) + " ";
-        String result = com.kira.kiba.core.network.LxnsUploader.uploadHtmlBlocking(game, data);
+        String result = com.kira.kiba.core.network.LxnsUploader.uploadScorePageBlocking(game, diff, data);
         writeLog(label + result);
 
-        boolean fatal = result.contains("Key 无效") || result.contains("绑定玩家");
+        boolean fatal = result.contains("Key 无效")
+                || result.contains("绑定玩家")
+                || result.contains("曲库为空")
+                || result.contains("不是成绩页")
+                || result.contains("暂不支持")
+                || result.contains("无法识别");
         if (result.startsWith("上传失败") && !fatal && retryCount <= MAX_RETRY_COUNT) {
             writeLog("进行第 " + retryCount + " 次重试");
             uploadDataToLxns(game, diff, data, retryCount + 1);
