@@ -48,15 +48,25 @@
         </activity>
 
         <!-- 机台成绩更新：本地 VPN 服务 + 本地 HTTP 跳转服务 -->
+        <!--
+            foregroundServiceType="specialUse"：抓包要撑到微信授权回调（用户切到微信时
+            App 在后台），必须前台化，否则后台 Service 约 1 分钟就被系统停掉，VPN 跟着掉线。
+            VPN 没有专用的 FGS type，按社区惯例用 specialUse。
+        -->
         <service
             android:name=".core.vpn.core.LocalVpnService"
             android:exported="false"
+            android:foregroundServiceType="specialUse"
             android:permission="android.permission.BIND_VPN_SERVICE">
             <intent-filter>
                 <action android:name="android.net.VpnService" />
             </intent-filter>
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="vpn_capture_for_machine_score_sync" />
         </service>
 
+        <!-- 历史遗留：HTTP 跳转服务现由 LocalVpnService 内联托管，这里保留声明仅为兼容 -->
         <service android:name=".core.vpn.server.HttpServerService" />
 
         <!-- 应用内更新：私有目录更新包的 FileProvider（updates/） -->

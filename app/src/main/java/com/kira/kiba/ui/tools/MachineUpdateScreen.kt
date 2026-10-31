@@ -41,7 +41,7 @@ import com.kira.kiba.core.vpn.crawler.CrawlerCaller
 import com.kira.kiba.core.vpn.crawler.WechatCrawlerListener
 import com.kira.kiba.core.vpn.core.LocalVpnService
 import com.kira.kiba.core.state.KibaState
-import com.kira.kiba.core.vpn.server.HttpServerService
+import com.kira.kiba.core.vpn.tunnel.HttpCapturerTunnel
 import com.kira.kiba.ui.common.SectionTitle
 import com.kira.kiba.ui.common.pageContentPadding
 import top.yukonga.miuix.kmp.basic.Button
@@ -77,6 +77,8 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
     val logs = remember { mutableStateListOf<String>() }
     val scope = rememberCoroutineScope()
     var running by remember { mutableStateOf(LocalVpnService.IsRunning) }
+    /** 已发起会话但还没收到微信回调（按钮会锁住，避免重复点把 VPN 反复拆建）。 */
+    var waitingCallback by remember { mutableStateOf(false) }
     var difficulties by remember { mutableStateOf(VpnSettings.getUpdateDifficulty()) }
     var chuniDifficulties by remember { mutableStateOf(VpnSettings.getUpdateChuniDifficulty()) }
     // 当前游戏（跟随曲目页开关）：决定微信授权路径、取数与上传方式、难度项
@@ -99,6 +101,7 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
             }
 
             override fun onFinishUpdate() {
+                waitingCallback = false
                 logs.add("成绩更新完成")
                 // 立刻刷新对应游戏的成绩：防止回到「我」页时还挂着上一次失败的错误提示
                 if (isChunithm) {
@@ -109,6 +112,7 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
             }
 
             override fun onError(e: Exception) {
+                waitingCallback = false
                 Log.e(TAG, "机台更新 onError", e)
                 logs.add("出错：${e.javaClass.simpleName}: ${e.message}")
             }
@@ -117,23 +121,47 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
         onDispose { CrawlerCaller.removeOnWechatCrawlerListener() }
     }
 
-    fun stopServices() {
-        runCatching {
-            context.stopService(Intent(context, LocalVpnService::class.java))
-            context.stopService(Intent(context, HttpServerService::class.java))
+    // VPN 真实状态跟随服务回调：中途被系统断开时 UI 不能还显示「抓包中」。
+    // 注意 VPN 在收到回调后会被抓取逻辑主动关闭，所以这里只同步 running，
+    // 会话是否结束由 waitingCallback 决定（否则正常流程也会被误判成失败）。
+    DisposableEffect(Unit) {
+        val statusListener = object : LocalVpnService.onStatusChangedListener {
+            override fun onStatusChanged(status: String?, isRunning: Boolean?) {
+                running = isRunning == true
+            }
+
+            override fun onLogReceived(logString: String?) = Unit
         }
-        LocalVpnService.IsRunning = false
+        LocalVpnService.addOnStatusChangedListener(statusListener)
+        onDispose { LocalVpnService.removeOnStatusChangedListener(statusListener) }
+    }
+
+    fun stopServices() {
+        runCatching { LocalVpnService.shutdown() }
         running = false
+        waitingCallback = false
         logs.add("已停止抓包")
     }
 
-    /** 一条龙：起服务 → 复制链接 → 拉起微信 → 自动取微信授权 → 抓包上传。 */
+    /**
+     * 一条龙：起前台服务 → 复制链接 → 拉起微信 → **等微信回调**。
+     *
+     * 这里刻意**不**由 App 自己发授权请求：`getWechatAuthUrl()` 拿到的只是
+     * `authorize` 入口，没有微信登录态，跟着它走只会拿到登录页，抓下来的页面是空的
+     * （落雪会直接报「页面内容为空」）。必须等微信带着 `code` 回调到
+     * `callback/{game}`，那条请求被 VPN 抓到后才会真正开始取数 —— 见
+     * [HttpCapturerTunnel]。
+     *
+     * 也正因如此，这个流程**必须**让 VPN 一直活着（前台服务），
+     * 用户切到微信期间服务被系统停掉就前功尽弃。
+     */
     fun startServices() {
         runCatching {
-            context.startService(Intent(context, LocalVpnService::class.java))
-            context.startService(Intent(context, HttpServerService::class.java))
+            context.startForegroundService(Intent(context, LocalVpnService::class.java))
         }.onFailure { logs.add("服务启动失败：${it.javaClass.simpleName}: ${it.message}") }
         running = true
+        waitingCallback = true
+        HttpCapturerTunnel.resetCaptureState()
         // 生成随机链接并复制到剪贴板，引导用户在微信里打开
         val chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
         val random = (1..10).map { chars[Random.nextInt(chars.length)] }.joinToString("")
@@ -141,24 +169,14 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
         copyToClipboard(context, link)
         logs.add("已复制链接：$link")
         logs.add("正在拉起微信…请在微信里把链接粘贴并打开")
+        logs.add("打开后如果出现授权页请点「允许」，然后留在微信里，别急着切回来")
         openWechat(context)
 
-        // 自动取微信授权链接并进入抓包上传流程（无需用户再点按钮）
+        // 只是提醒，不强制结束会话（微信那边可能多等一会儿）
         scope.launch {
-            try {
-                delay(3000)
-                val authUrl = CrawlerCaller.getWechatAuthUrl(
-                    if (isChunithm) CrawlerCaller.GAME_CHUNITHM else CrawlerCaller.GAME_MAIMAI
-                )
-                if (authUrl.isNullOrBlank()) {
-                    logs.add("获取微信授权链接失败，请确认手机能访问 tgk-wcaime.wahlap.com")
-                    return@launch
-                }
-                logs.add("已获取微信授权，开始抓取机台成绩…")
-                CrawlerCaller.fetchData(authUrl, gameType)
-            } catch (e: Exception) {
-                Log.e(TAG, "抓包失败", e)
-                logs.add("抓包失败：${e.javaClass.simpleName}: ${e.message}")
+            delay(180_000)
+            if (waitingCallback) {
+                logs.add("已等待 3 分钟还没收到微信授权回调：确认链接是在微信里打开的，可点「停止抓包」重试")
             }
         }
     }
@@ -201,9 +219,10 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
                         )
                         Spacer(Modifier.height(6.dp))
                         Text(
-                            text = "在机台 WiFi 下开启本地 VPN 抓取机台页面并上传到${source.label}：" +
-                                "点「开始抓包」授权 VPN → 链接会自动复制 → 切到微信把链接粘贴打开，" +
-                                "等待抓包完成即可更新成绩。",
+                            text = "点「开始抓包」并授权 VPN → 链接自动复制 → 切到微信粘贴打开，" +
+                                "授权后留在微信里等它自动跳转，成绩就会抓取并上传到${source.label}。\n" +
+                                "抓包期间通知栏会有一条「机台抓包进行中」——那是前台服务，" +
+                                "保证切到微信后 VPN 不被系统掐断，请别手动划掉。",
                             style = MiuixTheme.textStyles.footnote1,
                             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                         )
@@ -337,7 +356,7 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
                             Button(
                                 colors = ButtonDefaults.buttonColorsPrimary(),
                                 onClick = {
-                                    if (running) {
+                                    if (running || waitingCallback) {
                                         stopServices()
                                     } else {
                                         val prepare = LocalVpnService.prepare(context)
@@ -350,7 +369,13 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
                                 },
                                 modifier = Modifier.weight(1f),
                             ) {
-                                Text(text = if (running) "停止抓包" else "开始抓包")
+                                Text(
+                                    text = when {
+                                        running -> "停止抓包"
+                                        waitingCallback -> "抓取中…"
+                                        else -> "开始抓包"
+                                    }
+                                )
                             }
                         }
                     }

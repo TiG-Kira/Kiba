@@ -13,7 +13,7 @@ public class HttpServer extends NanoHTTPD {
     public static int Port = 8284;
     private final static String TAG = "HttpServer";
 
-    protected HttpServer() throws IOException {
+    public HttpServer() throws IOException {
         super(Port);
     }
 

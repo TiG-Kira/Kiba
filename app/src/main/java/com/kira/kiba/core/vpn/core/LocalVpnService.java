@@ -3,6 +3,9 @@ package com.kira.kiba.core.vpn.core;
 
 import static android.content.ContentValues.TAG;
 
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
@@ -10,6 +13,7 @@ import android.content.SharedPreferences;
 import android.content.SharedPreferences.Editor;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.content.pm.ServiceInfo;
 import android.net.VpnService;
 import android.os.Build;
 import android.os.Handler;
@@ -17,10 +21,14 @@ import android.os.IBinder;
 import android.os.ParcelFileDescriptor;
 import android.util.Log;
 
+import androidx.core.app.NotificationCompat;
+import androidx.core.app.ServiceCompat;
 
 import com.kira.kiba.R;
 import com.kira.kiba.MainActivity;
 import com.kira.kiba.core.vpn.dns.DnsPacket;
+import com.kira.kiba.core.vpn.server.HttpRedirectServer;
+import com.kira.kiba.core.vpn.server.HttpServer;
 import com.kira.kiba.core.vpn.tcpip.CommonMethods;
 import com.kira.kiba.core.vpn.tcpip.IPHeader;
 import com.kira.kiba.core.vpn.tcpip.TCPHeader;
@@ -37,8 +45,49 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class LocalVpnService extends VpnService implements Runnable {
 
+    /**
+     * 前台服务通知渠道 / ID。
+     *
+     * 为什么必须前台化：抓包链路要求用户切到微信里打开链接，此时 Kiba 退到后台。
+     * Android 8+ 的「后台执行限制」会在应用进入后台约 **1 分钟**后停止普通后台 Service，
+     * VPN 随之被系统 revoke —— 这正是「VPN 不到一分钟就自己掉」的根因。
+     * 前台服务（带常驻通知）不受该限制，能一直撑到微信授权回调回来。
+     */
+    private static final String NOTIFICATION_CHANNEL_ID = "kiba_vpn_capture";
+    private static final int NOTIFICATION_ID = 1001;
+
     public static LocalVpnService Instance;
-    public static boolean IsRunning = false;
+
+    /**
+     * 会话开关。**必须是 volatile**：抓包线程写、VPN 读循环读，
+     * 普通 boolean 存在可见性问题，会导致「置了 false 但 VPN 还在跑」。
+     */
+    public static volatile boolean IsRunning = false;
+
+    /**
+     * 请求结束本次 VPN 会话。
+     *
+     * 只把 [IsRunning] 置 false 是不够的：VPN 读循环阻塞在 `in.read()` 上，
+     * 没有流量进来就永远醒不了，VPN 会一直挂着。这里顺手关掉虚拟网卡，
+     * 让 read 立刻抛异常退出循环，系统 VPN 图标随即消失。
+     */
+    public static void requestStop() {
+        IsRunning = false;
+        LocalVpnService service = Instance;
+        if (service != null) service.closeVpnInterface();
+    }
+
+    /**
+     * 结束整个抓包会话：断 VPN + 停掉服务本身。
+     *
+     * 抓取完成（或失败）后必须走这里，否则前台通知会一直挂着
+     * 「机台抓包进行中」，用户以为还在跑。
+     */
+    public static void shutdown() {
+        requestStop();
+        LocalVpnService service = Instance;
+        if (service != null) service.stopSelf();
+    }
 
     private final String device = Build.DEVICE;
     private final String model = Build.MODEL;
@@ -53,6 +102,16 @@ public class LocalVpnService extends VpnService implements Runnable {
     private TcpProxyServer m_TcpProxyServer;
     private DnsProxy m_DnsProxy;
     private FileOutputStream m_VPNOutputStream;
+
+    /**
+     * 本地 HTTP 跳转服务（127.0.0.2:8284 / :9457）。
+     *
+     * 以前由独立的 HttpServerService 承载，但它同样是「后台 Service」，
+     * 会被系统在应用退到后台后停掉，微信里打开链接就直接连不上了。
+     * 现在改为由本前台服务内联托管：一个通知、一套生命周期，不会被单独杀掉。
+     */
+    private HttpServer m_HttpServer;
+    private HttpRedirectServer m_HttpRedirectServer;
 
     private byte[] m_Packet;
     private IPHeader m_IPHeader;
@@ -103,16 +162,120 @@ public class LocalVpnService extends VpnService implements Runnable {
             writeLog("Failed to start TCP/DNS Proxy");
         }
 
+        startLocalHttpServers();
+
         super.onCreate();
+    }
+
+    /**
+     * 起本地 HTTP 跳转服务（微信里打开 http://127.0.0.2:8284/xxx 才会走到这里）。
+     *
+     * 端口被占用（上一次会话没清理干净）时只记日志，不影响 VPN 本身。
+     */
+    private void startLocalHttpServers() {
+        try {
+            if (m_HttpServer == null) m_HttpServer = new HttpServer();
+            m_HttpServer.start();
+            writeLog("LocalHttpServer started on %d", HttpServer.Port);
+        } catch (Exception e) {
+            Log.w(TAG, "start HttpServer failed", e);
+            writeLog("本地跳转服务启动失败: %s", e.toString());
+        }
+        try {
+            if (m_HttpRedirectServer == null) m_HttpRedirectServer = new HttpRedirectServer();
+            m_HttpRedirectServer.start();
+            writeLog("LocalRedirectServer started on %d", HttpRedirectServer.Port);
+        } catch (Exception e) {
+            Log.w(TAG, "start HttpRedirectServer failed", e);
+            writeLog("本地回调服务启动失败: %s", e.toString());
+        }
+    }
+
+    private void stopLocalHttpServers() {
+        try {
+            if (m_HttpServer != null) {
+                m_HttpServer.stop();
+                m_HttpServer = null;
+            }
+        } catch (Exception e) {
+            // ignore
+        }
+        try {
+            if (m_HttpRedirectServer != null) {
+                m_HttpRedirectServer.stop();
+                m_HttpRedirectServer = null;
+            }
+        } catch (Exception e) {
+            // ignore
+        }
+    }
+
+    /**
+     * 把本服务提升为前台服务。
+     *
+     * 不提升就会被系统在应用退到后台约 1 分钟后停掉（VPN 掉线、微信打不开链接）。
+     * Android 13+ 若用户没给通知权限，通知不显示但前台服务照常生效，所以这里不强制拦。
+     */
+    private void startVpnForeground() {
+        try {
+            NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && nm != null) {
+                NotificationChannel channel = new NotificationChannel(
+                        NOTIFICATION_CHANNEL_ID,
+                        getString(R.string.vpn_capture_channel_name),
+                        NotificationManager.IMPORTANCE_LOW);
+                channel.setDescription(getString(R.string.vpn_capture_channel_desc));
+                channel.setShowBadge(false);
+                channel.setSound(null, null);
+                nm.createNotificationChannel(channel);
+            }
+
+            Intent intent = new Intent(this, MainActivity.class);
+            PendingIntent pendingIntent = PendingIntent.getActivity(
+                    this, 0, intent, PendingIntent.FLAG_IMMUTABLE);
+
+            Notification notification = new NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
+                    .setSmallIcon(R.drawable.kiba_alpha)
+                    .setContentTitle(getString(R.string.vpn_capture_notification_title))
+                    .setContentText(getString(R.string.vpn_capture_notification_text))
+                    .setContentIntent(pendingIntent)
+                    .setOngoing(true)
+                    .setSilent(true)
+                    .setPriority(NotificationCompat.PRIORITY_LOW)
+                    .setCategory(NotificationCompat.CATEGORY_SERVICE)
+                    .build();
+
+            int type = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+                    ? ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                    : 0;
+            ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, type);
+            Log.d(TAG, "startForeground ok, type=" + type);
+        } catch (Exception e) {
+            // 前台化失败不能拖死抓包：退化成普通 Service 至少还能跑一阵
+            Log.w(TAG, "startForeground failed", e);
+            writeLog("前台服务启动失败: %s", e.toString());
+        }
+    }
+
+    private void stopVpnForeground() {
+        try {
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE);
+        } catch (Exception e) {
+            // ignore
+        }
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         super.onStartCommand(intent, flags, startId);
+        // 必须先前台化再干活：Android 要求 startForegroundService 后在 5s 内调用 startForeground
+        startVpnForeground();
         IsRunning = true;
         // Start a new session by creating a new thread.
-        m_VPNThread = new Thread(this, "VPNServiceThread");
-        m_VPNThread.start();
+        if (m_VPNThread == null || !m_VPNThread.isAlive()) {
+            m_VPNThread = new Thread(this, "VPNServiceThread");
+            m_VPNThread.start();
+        }
         return START_NOT_STICKY;
     }
 
@@ -216,7 +379,14 @@ public class LocalVpnService extends VpnService implements Runnable {
         try {
             while (IsRunning) {
                 boolean idle = true;
-                int size = in.read(m_Packet);
+                int size;
+                try {
+                    size = in.read(m_Packet);
+                } catch (IOException readError) {
+                    // 主动 requestStop() 会关掉网卡，这里抛 IOException 属预期，不当错误上报
+                    if (!IsRunning) break;
+                    throw readError;
+                }
                 if (size > 0) {
                     if (m_DnsProxy.Stopped || m_TcpProxyServer.Stopped) {
                         in.close();
@@ -357,12 +527,13 @@ public class LocalVpnService extends VpnService implements Runnable {
         return pfdDescriptor;
     }
 
-    private synchronized void dispose() {
-
-        onStatusChanged(ProxyConfig.Instance.getSessionName() + " " + getString(R.string.vpn_disconnected_status), false);
-
-        IsRunning = false;
-
+    /**
+     * 关闭虚拟网卡。
+     *
+     * 关闭后 VPN 读循环的 `in.read()` 会立刻抛 IOException 并退出，VPN 才算真断开；
+     * 只把 IsRunning 置 false 不会唤醒阻塞中的 read。
+     */
+    private synchronized void closeVpnInterface() {
         try {
             if (m_VPNInterface != null) {
                 m_VPNInterface.close();
@@ -371,6 +542,14 @@ public class LocalVpnService extends VpnService implements Runnable {
         } catch (Exception e) {
             // ignore
         }
+    }
+
+    private synchronized void dispose() {
+
+        onStatusChanged(ProxyConfig.Instance.getSessionName() + " " + getString(R.string.vpn_disconnected_status), false);
+
+        IsRunning = false;
+        closeVpnInterface();
 
         try {
             if (m_VPNOutputStream != null) {
@@ -391,12 +570,17 @@ public class LocalVpnService extends VpnService implements Runnable {
             m_VPNThread.interrupt();
             m_VPNThread = null;
         }
+
+        // VPN 断开就撤掉常驻通知，别让「机台抓包进行中」一直挂在通知栏
+        stopVpnForeground();
     }
 
     @Override
     public void onDestroy() {
         Log.d(TAG, "VPNService(%s) destroyed: " + ID);
         if (IsRunning) dispose();
+        stopVpnForeground();
+        stopLocalHttpServers();
         try {
             // ֹͣTcpServer
             if (m_TcpProxyServer != null) {
@@ -424,8 +608,11 @@ public class LocalVpnService extends VpnService implements Runnable {
     @Override
     public void onRevoke() {
         super.onRevoke();
+        // 系统撤销（用户在其他 App 里断开 VPN / 被别的 VPN 抢占）：彻底收摊，别留半死不活的服务
+        writeLog("VPN 被系统撤销");
         IsRunning = false;
         dispose();
+        stopSelf();
     }
 
     public interface onStatusChangedListener {

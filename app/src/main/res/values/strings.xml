@@ -65,4 +65,10 @@
     <string name="maimaidx_achievement_desc">maimaidx_achievement_desc</string>
     <string name="vpn_connected_status">已连接</string>
     <string name="vpn_disconnected_status">已断开</string>
+
+    <!-- 机台抓包前台服务 -->
+    <string name="vpn_capture_channel_name">机台抓包</string>
+    <string name="vpn_capture_channel_desc">机台成绩更新期间保持抓包服务存活</string>
+    <string name="vpn_capture_notification_title">机台抓包进行中</string>
+    <string name="vpn_capture_notification_text">请在微信里打开刚复制的链接，等待成绩上传完成</string>
 </resources>
