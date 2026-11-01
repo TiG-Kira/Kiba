@@ -9,10 +9,15 @@ import com.kira.kiba.core.utils.CacheCleaner
 import com.kira.kiba.core.utils.CacheDirs
 import com.kira.kiba.core.utils.Constants
 import com.kira.kiba.core.best50.MemeImageBuilder
+import com.kira.kiba.core.data.ChuniRating
+import com.kira.kiba.core.data.ChuniStats
 import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.db.entity.ChartEntity
+import com.kira.kiba.core.db.entity.ChuniChartEntity
+import com.kira.kiba.core.db.entity.ChuniSongEntity
 import com.kira.kiba.core.db.entity.RecordEntity
 import com.kira.kiba.core.db.entity.SongDataEntity
+import com.kira.kiba.core.model.ChuniDiffType
 import com.kira.kiba.core.model.DifficultyType
 import com.kira.kiba.core.stats.RecommendFusion
 import com.kira.kiba.core.utils.SpUtil
@@ -48,11 +53,20 @@ class KibaAgent(private val context: Context) {
         val title: String,
         val artist: String,
         val genre: String,
+        /** 舞萌 SD/DX；中二留空（没有这个区分，UI 见到空串就不渲染类型徽标）。 */
         val type: String,
         val topLevel: String,
         val topDs: Double,
         val imageUrl: String = "",
+        /** 最高难度的名字：舞萌 紫/白，中二 MASTER/ULTIMA（由各自的 label 给）。 */
         val difficulty: String = "",
+        /**
+         * 这首歌属于哪个游戏：`maimai` / `chunithm`。
+         *
+         * 两套曲库 id 空间**不重叠但会撞数字**，卡片点击必须靠这个字段决定
+         * 跳「歌曲详情」还是「中二歌曲详情」，不能靠 id 猜。
+         */
+        val game: String = GAME_MAIMAI,
     )
 
     /**
@@ -144,6 +158,11 @@ class KibaAgent(private val context: Context) {
         "score_line" -> scoreLine(arg)
         "random_filtered" -> randomFiltered(arg)
         "guess_song" -> guessSong()
+        "chuni_song" -> chuniSongQuery(arg)
+        "chuni_ds" -> chuniDsQuery(arg)
+        "chuni_random" -> chuniRandom()
+        "chuni_best" -> chuniBest()
+        "chuni_push" -> chuniPush()
         "random_number" -> {
             val nums = Regex("\\d+").findAll(arg).map { it.value.toIntOrNull() }.filterNotNull().toList()
             if (nums.size >= 2) randomNumber(nums[0], nums[1]) else randomNumber(1, 100)
@@ -240,6 +259,23 @@ class KibaAgent(private val context: Context) {
             "random_filtered" -> randomFiltered(
                 args["condition"] ?: args["filter"] ?: fallbackText
             )
+            "chuni_song" -> chuniSongQuery(
+                args["query"] ?: args["keyword"] ?: args["title"] ?: fallbackText
+            )
+            "chuni_ds" -> {
+                val lo = args["min"]?.toDoubleOrNull()
+                    ?: args["ds_min"]?.toDoubleOrNull()
+                    ?: args["ds"]?.toDoubleOrNull()
+                val hi = args["max"]?.toDoubleOrNull()
+                    ?: args["ds_max"]?.toDoubleOrNull()
+                if (lo != null || hi != null) {
+                    val l = lo ?: hi!!
+                    val h = hi ?: lo!!
+                    chuniDsQuery("$l $h")
+                } else {
+                    chuniDsQuery(fallbackText)
+                }
+            }
             else -> runSkill(name, fallbackText)
         }
     }
@@ -476,6 +512,19 @@ class KibaAgent(private val context: Context) {
         runCatching {
             val songs = AppDataBase.getInstance().songDao().getAllSongsList()
             sb.append("· 本地曲库版本 ${SpUtil.getDataVersion().ifBlank { "未知" }}，共 ${songs.size} 首歌\n")
+        }
+        // 中二是平行表：不补这一段，模型会拿舞萌 Rating 当中二 Rating 用
+        runCatching {
+            val stats = ChuniStats.compute()
+            if (stats.isEmpty) {
+                sb.append("· 中二节奏：本地没有成绩数据（中二相关问题应引导去「我」→ 中二节奏同步）\n")
+            } else {
+                sb.append(
+                    "· 中二节奏 Rating ${"%.2f".format(stats.rating)}" +
+                        "（非当前 TOP30 ${stats.nonCurrent.size} 首 / 当前 TOP20 ${stats.current.size} 首，" +
+                        "本地成绩 ${stats.recordCount} 条）\n"
+                )
+            }
         }
         sb.append("回答涉及玩家本人数据时，以上下文为准，不知道就说不知道。")
         sb.toString()
@@ -1126,6 +1175,306 @@ class KibaAgent(private val context: Context) {
         )
     }
 
+
+    // ══════════════════════ 中二节奏（CHUNITHM）技能 ══════════════════════
+    //
+    // 中二是**平行表**（chuni_song / chuni_chart / chuni_record），查询逻辑不能套舞萌：
+    // 没有 SD/DX 之分、没有宴会場、成绩是 score（0–1009000）而不是达成率、
+    // 单曲 Rating 口径也不同（官方 /50 公式，见 ChuniRating）。
+    //
+    // 但**输出格式**（Markdown 正文 + AgentSong 卡片）与舞萌保持一致，
+    // UI 侧只按 AgentSong.game 决定点开哪个详情页，不用写两套渲染。
+
+    /** 中二难度标签（0..4，WE 不参与 Rating 也基本不在曲库里单独出现）。 */
+    private fun chuniLabel(index: Int): String = ChuniDiffType.fromIndex(index).label
+
+    /** 中二查歌：歌名 / 假名 / 曲师 / 流派 / 曲目 id 模糊匹配。 */
+    private suspend fun chuniSongQuery(text: String): AgentReply {
+        val query = text.trim()
+        if (query.isBlank()) {
+            return AgentReply("想查中二哪首歌？给我歌名、假名或曲目 ID，例如「查歌 宿星」")
+        }
+        val dao = AppDataBase.getInstance().chuniSongWithChartDao()
+        val songs = withContext(Dispatchers.IO) {
+            runCatching { dao.getAllChuniSongsList() }.getOrDefault(emptyList())
+        }
+        if (songs.isEmpty()) {
+            return AgentReply("本地中二曲库还是空的，请先到「设置 → 曲库更新」同步中二曲库。")
+        }
+
+        val lower = query.lowercase()
+        val idMatch = query.toIntOrNull()?.let { id -> songs.firstOrNull { it.id == id } }
+        val matched = buildList {
+            idMatch?.let { add(it) }
+            songs.filter { song ->
+                song.id != idMatch?.id && (
+                    song.title.lowercase().contains(lower) ||
+                        song.titleKana.lowercase().contains(lower) ||
+                        song.artist.lowercase().contains(lower) ||
+                        song.genre.lowercase().contains(lower)
+                    )
+            }
+        }.take(8)
+
+        if (matched.isEmpty()) {
+            return AgentReply(
+                "本地中二曲库没找到「$query」。\n" +
+                    "可以换个关键词（支持假名与曲师名），或到「设置 → 曲库更新」同步最新中二曲库。"
+            )
+        }
+
+        val sb = StringBuilder()
+        val cards = mutableListOf<AgentSong>()
+        for (song in matched) {
+            val charts = withContext(Dispatchers.IO) {
+                runCatching { dao.getChuniChartsBySongId(song.id) }.getOrDefault(emptyList())
+            }
+            sb.append("**${mdEscape(song.title)}**（${song.artist}）· ${song.genre}\n")
+            if (charts.isEmpty()) {
+                sb.append("  暂无谱面数据\n")
+            } else {
+                charts.sortedBy { it.difficultyIndex }.forEach { c ->
+                    sb.append(
+                        "  · ${chuniLabel(c.difficultyIndex)} ${c.level}　定数 ${c.ds}" +
+                            "　谱师：${c.charter.ifBlank { "-" }}"
+                    )
+                    if (c.combo > 0) sb.append("　物量 ${c.combo}")
+                    sb.append("\n")
+                }
+            }
+            sb.append("\n")
+            val top = charts.maxByOrNull { it.ds }
+            cards += song.toChuniAgentSong(top)
+        }
+        return AgentReply(sb.toString().trimEnd(), songs = cards)
+    }
+
+    /** 中二定数查歌（按定数区间）。 */
+    private suspend fun chuniDsQuery(arg: String): AgentReply {
+        val range = parseDsRange(arg)
+            ?: return AgentReply("请给出定数范围，例如「中二定数 14.5」或「中二定数 14 14.5」。")
+        val dao = AppDataBase.getInstance().chuniSongWithChartDao()
+        val charts = withContext(Dispatchers.IO) {
+            runCatching { dao.getAllChuniChartsList() }.getOrDefault(emptyList())
+        }
+        val songs = withContext(Dispatchers.IO) {
+            runCatching { dao.getAllChuniSongsList() }.getOrDefault(emptyList())
+        }
+        val titleById = songs.associate { it.id to it.title }
+        val artistById = songs.associate { it.id to it.artist }
+        val matched = charts
+            .filter { it.difficultyIndex != ChuniDiffType.WORLD_END.ordinal }
+            .filter { it.ds >= range.first && it.ds <= range.second }
+            .sortedByDescending { it.ds }
+            .take(30)
+        if (matched.isEmpty()) {
+            return AgentReply("中二曲库里没有定数在 ${fmtRange(range.first, range.second)} 的谱面。")
+        }
+        val sb = StringBuilder(
+            "中二定数 ${fmtRange(range.first, range.second)} 的谱面（共 ${matched.size} 首，显示前 ${minOf(matched.size, 30)} 首）：\n"
+        )
+        for (c in matched) {
+            sb.append(
+                "· ${titleById[c.songId] ?: "id ${c.songId}"}（${artistById[c.songId] ?: "-"}）" +
+                    " [${chuniLabel(c.difficultyIndex)} ${c.level}] 定数 ${c.ds}\n"
+            )
+        }
+        return AgentReply(sb.toString().trimEnd())
+    }
+
+    /** 中二随机一首（排除 WORLD'S END：不参与 Rating，也没法当作练习目标）。 */
+    private suspend fun chuniRandom(): AgentReply {
+        val dao = AppDataBase.getInstance().chuniSongWithChartDao()
+        val songs = withContext(Dispatchers.IO) {
+            runCatching { dao.getAllChuniSongsList() }.getOrDefault(emptyList())
+        }
+        if (songs.isEmpty()) {
+            return AgentReply("本地中二曲库还是空的，请先到「设置 → 曲库更新」同步中二曲库。")
+        }
+        val song = songs.random()
+        val charts = withContext(Dispatchers.IO) {
+            runCatching { dao.getChuniChartsBySongId(song.id) }.getOrDefault(emptyList())
+        }
+        val top = charts.maxByOrNull { it.ds }
+        val sb = StringBuilder()
+        sb.append("随机选曲：${song.title}\n")
+        sb.append("曲师：${song.artist}　流派：${song.genre}　BPM：${song.bpm}\n")
+        if (top != null) {
+            sb.append("最高难度：[${chuniLabel(top.difficultyIndex)} ${top.level}] 定数 ${top.ds}\n")
+        }
+        sb.append("祝 AJC！")
+        return AgentReply(sb.toString(), songs = listOf(song.toChuniAgentSong(top)))
+    }
+
+    /** 我的中二 Rating（官方 /50 口径，从 Room 现算，不读缓存值）。 */
+    private suspend fun chuniBest(): AgentReply {
+        val stats = withContext(Dispatchers.IO) { ChuniStats.compute() }
+        if (stats.isEmpty) {
+            return AgentReply(
+                "本地还没有中二成绩。\n" +
+                    "请先到「我」页面（切到中二节奏）登录查分器并同步一次成绩。"
+            )
+        }
+        val sb = StringBuilder()
+        sb.append("## 中二 Rating ${"%.2f".format(stats.rating)}\n\n")
+        sb.append(
+            "· 非当前版本 TOP30：${stats.nonCurrent.size} 首，均值 ${"%.2f".format(stats.nonCurrentAverage)}\n"
+        )
+        sb.append(
+            "· 当前版本 TOP20：${stats.current.size} 首，均值 ${"%.2f".format(stats.currentAverage)}\n"
+        )
+        if (!stats.hasVersionInfo) {
+            sb.append("\n曲库没有版本标记，当前 / 非当前无法分池，Rating 暂按 TOP30 均值口径。\n")
+        }
+        val top = (stats.nonCurrent + stats.current).sortedByDescending { it.ra }.take(10)
+        if (top.isNotEmpty()) {
+            sb.append("\n**Rating 贡献最高的 10 首**\n")
+            for ((index, r) in top.withIndex()) {
+                sb.append(
+                    "${index + 1}. ${mdEscape(r.title)} [${chuniLabel(r.levelIndex)} ${r.level}] " +
+                        "得分 ${r.score}　ra ${"%.2f".format(r.ra)}\n"
+                )
+            }
+        }
+        return AgentReply(sb.toString().trimEnd())
+    }
+
+    /**
+     * 中二推分推荐。
+     *
+     * 思路与舞萌推分一致，但**档位换成中二的分数段**：官方单曲 ra 完全由「分数 + 定数」
+     * 决定（[ChuniRating.raOf]），所以对每个谱面找「第一个能让 ra 超过地板地板的分数档」，
+     * 差距小的优先 —— 用户要的是「同样的练习量里最快进榜的那几首」。
+     */
+    private suspend fun chuniPush(): AgentReply {
+        val dao = AppDataBase.getInstance().chuniSongWithChartDao()
+        val stats = withContext(Dispatchers.IO) { ChuniStats.compute() }
+        if (stats.isEmpty) {
+            return AgentReply("推分推荐需要你的中二成绩。请先在「我」→ 中二节奏里同步一次成绩。")
+        }
+        val nonCurrentFloor = stats.nonCurrent.lastOrNull()?.ra
+        val currentFloor = stats.current.lastOrNull()?.ra
+        if (nonCurrentFloor == null && currentFloor == null) {
+            return AgentReply("还没有可用于推分的 Best 成绩，先去打几首再看建议吧。")
+        }
+
+        val charts = withContext(Dispatchers.IO) {
+            runCatching { dao.getAllChuniChartsList() }.getOrDefault(emptyList())
+        }
+        val songs = withContext(Dispatchers.IO) {
+            runCatching { dao.getAllChuniSongsList() }.getOrDefault(emptyList())
+        }
+        val versions = withContext(Dispatchers.IO) {
+            runCatching { dao.getChartVersions() }.getOrDefault(emptyList())
+        }
+        val records = withContext(Dispatchers.IO) {
+            runCatching { dao.getAllChuniRecordList() }.getOrDefault(emptyList())
+        }
+        if (charts.isEmpty() || songs.isEmpty()) {
+            return AgentReply("本地中二曲库为空，无法给出推分目标。请先到「设置 → 曲库更新」同步中二曲库。")
+        }
+
+        val titleById = songs.associate { it.id to it.title }
+        val versionMap = versions.associate {
+            ChuniRating.chartKey(it.songId, it.difficultyIndex) to it.version
+        }
+        val recordByKey = records
+            .filter { it.levelIndex != ChuniDiffType.WORLD_END.ordinal }
+            .associateBy { ChuniRating.chartKey(it.songId, it.levelIndex) }
+
+        // 中二曲库里 MASTER 以下的谱面基本不可能进 Rating 枠，先过滤掉，省得推荐一堆 BASIC
+        val candidates = charts
+            .filter { it.difficultyIndex != ChuniDiffType.WORLD_END.ordinal }
+            .filter { it.difficultyIndex >= ChuniDiffType.EXPERT.ordinal }
+            .mapNotNull { chart ->
+                val version = versionMap[ChuniRating.chartKey(chart.songId, chart.difficultyIndex)] ?: 0
+                val isCurrent = stats.currentVersion > 0 && version == stats.currentVersion
+                val floor = (if (isCurrent) currentFloor else nonCurrentFloor) ?: return@mapNotNull null
+                val current = recordByKey[ChuniRating.chartKey(chart.songId, chart.difficultyIndex)]
+                val currentScore = current?.score ?: 0
+                // 分数档 → 该档 ra；只保留「还没打到 + 能超过地板」的最低一档
+                val target = CHUNI_PUSH_TIERS.firstOrNull { (score, _) ->
+                    ChuniRating.raOf(score, chart.ds) > floor && currentScore < score
+                } ?: return@mapNotNull null
+                val potential = ChuniRating.raOf(target.first, chart.ds)
+                ChuniPushCand(
+                    songId = chart.songId,
+                    levelIndex = chart.difficultyIndex,
+                    level = chart.level,
+                    ds = chart.ds,
+                    isCurrent = isCurrent,
+                    tierScore = target.first,
+                    tierName = target.second,
+                    potential = potential,
+                    floor = floor,
+                    gap = target.first - currentScore,
+                    currentScore = currentScore,
+                )
+            }
+            .sortedWith(compareBy({ it.gap }, { -it.potential }))
+            .take(10)
+
+        val sb = StringBuilder()
+        sb.append("## 中二推分推荐\n\n")
+        sb.append(
+            "非当前 TOP30 地板 ra ${nonCurrentFloor?.let { "%.2f".format(it) } ?: "—"}" +
+                " · 当前 TOP20 地板 ra ${currentFloor?.let { "%.2f".format(it) } ?: "—"}\n\n"
+        )
+        if (candidates.isEmpty()) {
+            sb.append("暂时没有合适目标：高于地板的谱面你都贴着上限了，去冲更高定数的新谱吧。")
+        } else {
+            candidates.forEachIndexed { index, c ->
+                if (index > 0) sb.append("\n---\n\n")
+                val title = mdEscape(titleById[c.songId] ?: "id ${c.songId}")
+                val pool = if (c.isCurrent) "当前 TOP20" else "非当前 TOP30"
+                sb.append("**$title** · `${chuniLabel(c.levelIndex)} ${c.level}` · 定数 ${c.ds}\n")
+                if (c.currentScore <= 0) {
+                    sb.append(
+                        "未游玩：打到 ${c.tierScore}（${c.tierName}）得 ra ${"%.2f".format(c.potential)} " +
+                            "→ 顶替 $pool 地板（**+${"%.2f".format(c.potential - c.floor)}**）\n"
+                    )
+                } else {
+                    sb.append(
+                        "当前 ${c.currentScore}：还差 ${c.gap} 分到 ${c.tierScore}（${c.tierName}）" +
+                            "得 ra ${"%.2f".format(c.potential)} → **+${"%.2f".format(c.potential - c.floor)}**\n"
+                    )
+                }
+            }
+        }
+        sb.append("\n\n数据来自本地曲库定数 + 官方 ra 公式，实际增益以落雪 / 机台结算为准。")
+        return AgentReply(sb.toString().trimEnd())
+    }
+
+    /** 中二推分候选（局部结构，避免污染数据层）。 */
+    private data class ChuniPushCand(
+        val songId: Int,
+        val levelIndex: Int,
+        val level: String,
+        val ds: Double,
+        val isCurrent: Boolean,
+        val tierScore: Int,
+        val tierName: String,
+        val potential: Double,
+        val floor: Double,
+        val gap: Int,
+        val currentScore: Int,
+    )
+
+    /** 中二曲目 → Agent 卡片。 */
+    private fun ChuniSongEntity.toChuniAgentSong(top: ChuniChartEntity?): AgentSong = AgentSong(
+        id = id,
+        title = title,
+        artist = artist,
+        genre = genre,
+        // 中二没有 SD/DX，类型徽标留空（UI 侧见到空串就不渲染 ChartTypeChip）
+        type = "",
+        topLevel = top?.level ?: "",
+        topDs = top?.ds ?: 0.0,
+        imageUrl = imageUrl,
+        difficulty = top?.let { chuniLabel(it.difficultyIndex) } ?: "",
+        game = GAME_CHUNITHM,
+    )
+
     /** 今日性癖（源自 KibaBot「今日性癖 / jrxp」）。 */
     private fun todayKink(): AgentReply {
         val nick = DivingFishAccount.state.value.nickname.ifBlank { "你" }
@@ -1636,6 +1985,25 @@ class KibaAgent(private val context: Context) {
          */
         private const val MAX_ROUNDS = 3
 
+        /** 游戏标记（[AgentSong.game]）：决定卡片点开哪个详情页。 */
+        const val GAME_MAIMAI = "maimai"
+        const val GAME_CHUNITHM = "chunithm"
+
+        /**
+         * 中二推分用的分数档（降到能过地板的最低一档即为目标）。
+         *
+         * 档位与官方评级一致；`1009000` 已是 SSS+ / AJC 区间，再往上没有额外收益。
+         */
+        private val CHUNI_PUSH_TIERS = listOf(
+            1009000 to "SSS+",
+            1007500 to "SSS",
+            1005000 to "SS+",
+            1000000 to "SS",
+            990000 to "S+",
+            975000 to "S",
+            950000 to "AAA",
+        )
+
         /** 输出 token 上限（思考被截断时加额重试的封顶值）。 */
         private const val MAX_TOKENS_CAP = 16384
 
@@ -1728,6 +2096,43 @@ class KibaAgent(private val context: Context) {
             AgentSkill(
                 "guess_song", "猜歌",
                 "随机挑一首歌给出线索，在输入框提交答案（歌名/别名/ID），猜错逐步揭示",
+            ),
+            AgentSkill(
+                "chuni_song", "中二查歌",
+                "按歌名 / 假名 / 曲师 / 曲目 ID 查中二节奏歌曲，给出各难度的定数、谱师与物量",
+                params = listOf(
+                    KibaLlm.ToolParam(
+                        "query", "string",
+                        "中二歌曲名、假名、曲师或曲目 ID；支持模糊匹配，例：「宿星」「shama」",
+                        required = true,
+                    ),
+                ),
+                paramHint = "输入中二歌名 / 假名 / 曲目 ID，例如：宿星",
+            ),
+            AgentSkill(
+                "chuni_ds", "中二定数查歌",
+                "按定数区间查中二节奏谱面（只列 EXPERT 及以上没必要，全难度都可查）",
+                params = listOf(
+                    KibaLlm.ToolParam(
+                        "min", "number",
+                        "定数下限，例：14.5；只查一个定数时 min 与 max 填相同值",
+                        required = true,
+                    ),
+                    KibaLlm.ToolParam("max", "number", "定数上限，例：15.0；省略时与 min 相同"),
+                ),
+                paramHint = "输入定数区间，例如：14.5 15",
+            ),
+            AgentSkill(
+                "chuni_random", "中二随机一首",
+                "从中二节奏曲库随机选一首（含曲师、流派、BPM 与最高难度定数）",
+            ),
+            AgentSkill(
+                "chuni_best", "我的中二 Rating",
+                "按官方口径算中二 Rating（非当前 TOP30 + 当前 TOP20，÷50），并列出贡献最高的 10 首",
+            ),
+            AgentSkill(
+                "chuni_push", "中二推分推荐",
+                "按官方单曲 ra 公式找「再提一点分就能顶掉地板」的谱面，差距小的优先",
             ),
             AgentSkill(
                 "random_number", "随机数",

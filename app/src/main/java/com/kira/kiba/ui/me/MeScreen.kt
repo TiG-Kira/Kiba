@@ -80,6 +80,7 @@ fun MeScreen(
     onOpenRatingCalc: () -> Unit,
     onOpenVersionMap: () -> Unit,
     onOpenHotCharts: () -> Unit,
+    onOpenFriendQuery: () -> Unit,
     onOpenChuniBest: () -> Unit,
 ) {
     val account by DivingFishAccount.state.collectAsState()
@@ -318,6 +319,12 @@ fun MeScreen(
                             onClick = onOpenVersionMap,
                         )
                     }
+                    ArrowPreference(
+                        title = "查朋友",
+                        summary = "输入好友码查看对方公开的落雪数据（玩家信息 / Best / 全量成绩统计）",
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.ContactsCircle) },
+                        onClick = onOpenFriendQuery,
+                    )
                     ArrowPreference(
                         title = "登录机台",
                         summary = "打开微信「舞萌 | 中二」公众号，点底部「玩家二维码」菜单即可扫码上机",

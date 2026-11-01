@@ -1,4 +1,10 @@
+import java.security.MessageDigest
+import java.security.SecureRandom
+import java.util.Collections
 import java.util.Properties
+import javax.crypto.Cipher
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 plugins {
     id("com.android.application")
@@ -36,8 +42,11 @@ val qrGatewayPaths = (localProps.getProperty("kiba.qrGatewayPaths")
 // - kiba.lxnsClientId     OAuth 应用 ID
 // - kiba.lxnsClientSecret OAuth 应用密钥
 // CI 通过 GitHub Secrets KIBA_LXNS_DEV_KEY / KIBA_LXNS_CLIENT_ID / KIBA_LXNS_CLIENT_SECRET 注入。
-// 注意：这三项最终都会被打进 APK，反编译可取 —— 只是为了不把明文写进公开仓库，
-// 不是真正的「保密」，别把它们当成能防住逆向的密钥。
+//
+// **这些值不再进 BuildConfig**（那是名字直白的字符串常量，`strings` 一条命令就能捞出来）。
+// 现在由 sealLxnsCredentials 在构建时密封成一段「位置加扰 + 分片乱序」的 int 数组源码，
+// 运行时由 com.kira.kiba.core.security.LxnsVault 反向还原并 AES-GCM 解密，见该文件注释。
+// 注意：客户端能解出来的东西逆向也一定能解出来 —— 这是提高逆向成本，不是密码学保密。
 val lxnsDevKey = (localProps.getProperty("kiba.lxnsDevKey")
     ?: System.getenv("KIBA_LXNS_DEV_KEY") ?: "").toString()
 val lxnsClientId = (localProps.getProperty("kiba.lxnsClientId")
@@ -55,8 +64,8 @@ android {
         // miuix 0.9.4 各模块（blur/ui/icons/preference）要求 minSdk >= 33
         minSdk = 33
         targetSdk = 37
-        versionCode = 59
-        versionName = "1.8.7"
+        versionCode = 60
+        versionName = "1.8.8"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
@@ -77,9 +86,6 @@ android {
         buildConfigField("String", "QR_PATH_REFRESH", "\"${qrGatewayPaths.getOrElse(2) { "" }}\"")
         buildConfigField("String", "QR_PATH_QR_BIND", "\"${qrGatewayPaths.getOrElse(3) { "" }}\"")
         buildConfigField("String", "QR_PATH_SCORE", "\"${qrGatewayPaths.getOrElse(4) { "" }}\"")
-        buildConfigField("String", "LXNS_DEV_KEY", "\"$lxnsDevKey\"")
-        buildConfigField("String", "LXNS_CLIENT_ID", "\"$lxnsClientId\"")
-        buildConfigField("String", "LXNS_CLIENT_SECRET", "\"$lxnsClientSecret\"")
         ksp {
             arg("room.schemaLocation", "$projectDir/schemas")
         }
@@ -146,7 +152,130 @@ android {
     lint {
         disable += "ContentDescription"
     }
+
+    // 落雪凭据密封源码（由 sealLxnsCredentials 生成到 build/ 下）：
+    // 与 src/main/java 平级的 Kotlin 源根，不进仓库、不进 IDE 索引，只参与编译。
+    // 这里必须传 File 而不是 Provider —— AGP 9 不允许往 SourceSet 塞 Provider，
+    // 任务依赖由下面的 `preBuild.dependsOn(sealLxns)` 保证。
+    sourceSets.getByName("main").kotlin.srcDir(
+        layout.buildDirectory.dir("generated/lxnsSeal").get().asFile
+    )
 }
+
+/**
+ * 落雪凭据密封。
+ *
+ * 目标：让 `strings app-release.apk | grep <开发者密钥>` 拿不到东西，让「解包→搜字符串→抄走」
+ * 这条最省事的路径失效。构建时把三件凭据拼成一段明文，AES-GCM 加密后与随机 master / salt /
+ * nonce / 明文校验和一起「按位置加扰 + 按随机置换切片」，写成 int 数组形式的 Kotlin 源码。
+ * 运行时 [com.kira.kiba.core.security.LxnsVault] 反向还原。
+ *
+ * 为什么 master 也一起写进去：客户端必须有解密材料，藏得再好也只是「在哪」的问题。
+ * 加扰 + 乱序 + R8 混淆让这件事从「grep」升级成「逆一遍算法」—— 这是本项目要的成本档位，
+ * 真要隔离密钥只能走服务端中转（用户已明确暂不做）。
+ */
+val sealLxns = tasks.register("sealLxnsCredentials") {
+    val devKey = lxnsDevKey
+    val clientId = lxnsClientId
+    val clientSecret = lxnsClientSecret
+    val outDir = layout.buildDirectory.dir("generated/lxnsSeal")
+    // 只喂哈希，别把明文写进 Gradle 的任务历史 / 构建缓存键
+    inputs.property("devKeyHash", devKey.hashCode())
+    inputs.property("clientIdHash", clientId.hashCode())
+    inputs.property("clientSecretHash", clientSecret.hashCode())
+    outputs.dir(outDir)
+
+    doLast {
+        fun sha256(bytes: ByteArray): ByteArray =
+            MessageDigest.getInstance("SHA-256").digest(bytes)
+
+        val rnd = SecureRandom()
+        val master = ByteArray(32).also(rnd::nextBytes)
+        val salt = ByteArray(16).also(rnd::nextBytes)
+        val nonce = ByteArray(12).also(rnd::nextBytes)
+
+        val plain = (
+            "dev=$devKey\n" +
+                "id=$clientId\n" +
+                "secret=$clientSecret\n"
+            ).toByteArray(Charsets.UTF_8)
+
+        val key = MessageDigest.getInstance("SHA-256")
+            .apply { update(master); update(salt) }
+            .digest()
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(
+            Cipher.ENCRYPT_MODE,
+            SecretKeySpec(key, "AES"),
+            GCMParameterSpec(128, nonce),
+        )
+        val ct = cipher.doFinal(plain)
+
+        // blob = master(32) | salt(16) | nonce(12) | ctLen(2, BE) | ct | sha256(plain)(32)
+        val blob = ByteArray(32 + 16 + 12 + 2 + ct.size + 32)
+        var p = 0
+        for (b in master) blob[p++] = b
+        for (b in salt) blob[p++] = b
+        for (b in nonce) blob[p++] = b
+        blob[p++] = ((ct.size ushr 8) and 0xFF).toByte()
+        blob[p++] = (ct.size and 0xFF).toByte()
+        for (b in ct) blob[p++] = b
+        for (b in sha256(plain)) blob[p++] = b
+
+        // ① 位置加扰：第 i 个字节 + i*37 + 11（mod 256），单看每个字节都是噪声
+        val mesh = ByteArray(blob.size) { i -> ((blob[i].toInt() and 0xFF) + i * 37 + 11).and(0xFF).toByte() }
+        // ② 补齐到 4 的倍数后按 4 字节一组打包成 int
+        val padded = if (mesh.size % 4 == 0) mesh else mesh + ByteArray(4 - mesh.size % 4)
+        val words = IntArray(padded.size / 4) { k ->
+            val base = k * 4
+            ((padded[base].toInt() and 0xFF) shl 24) or
+                ((padded[base + 1].toInt() and 0xFF) shl 16) or
+                ((padded[base + 2].toInt() and 0xFF) shl 8) or
+                (padded[base + 3].toInt() and 0xFF)
+        }
+        // ③ 随机置换：DATA 里第 i 个 int 实际是原第 PERM[i] 个
+        val permList = (0 until words.size).toMutableList()
+        Collections.shuffle(permList, rnd)
+        val perm = permList.toIntArray()
+        val data = IntArray(words.size) { i -> words[perm[i]] }
+
+        fun literal(a: IntArray, indent: String = "        "): String =
+            a.toList().chunked(8).joinToString(",\n") { row ->
+                indent + row.joinToString(", ")
+            }
+
+        val file = outDir.get().file("com/kira/kiba/core/security/LxnsSealData.kt").asFile
+        file.parentFile.mkdirs()
+        file.writeText(
+            """
+            |// 自动生成，请勿手改（app/build.gradle.kts → sealLxnsCredentials）。
+            |//
+            |// 内容：落雪开发者密钥 / OAuth client_id / client_secret 的密封载荷。
+            |// 结构见 com.kira.kiba.core.security.LxnsVault：位置加扰 → 分片乱序 → AES-GCM。
+            |package com.kira.kiba.core.security
+            |
+            |internal object LxnsSealData {
+            |    /** 载荷是否为空（未注入凭据时为 true，整条开发者通道自动关闭）。 */
+            |    const val EMPTY: Boolean = ${if (devKey.isBlank() && clientId.isBlank() && clientSecret.isBlank()) "true" else "false"}
+            |
+            |    /** 加扰后的 int 数组（按 PERM 置换过顺序）。 */
+            |    val DATA: IntArray = intArrayOf(
+            |${literal(data)}
+            |    )
+            |
+            |    /** DATA[i] 对应的原始下标。 */
+            |    val PERM: IntArray = intArrayOf(
+            |${literal(perm)}
+            |    )
+            |}
+            |
+            """.trimMargin(),
+            Charsets.UTF_8,
+        )
+    }
+}
+
+tasks.named("preBuild") { dependsOn(sealLxns) }
 
 configurations.all {
     resolutionStrategy {

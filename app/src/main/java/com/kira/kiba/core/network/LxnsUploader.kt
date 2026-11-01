@@ -107,8 +107,47 @@ object LxnsUploader {
         }
     }
 
-    // ────────────────────── 通道 1：官方 HTML 直传 ──────────────────────
+    // ────────────────── 玩家资料页直传（称号 / 头像 / 名牌） ──────────────────
 
+    /**
+     * 直传**玩家信息页**（不是成绩页）：更新落雪侧的称号、等级/段位、头像、姓名框、背景。
+     *
+     * 为什么单独一个入口：这类页面**只能走官方直传**。个人 API 的 JSON 通道只收成绩，
+     * 本地也根本无法从页面里可靠地抽出「收藏品 id」（trophy / icon / name_plate / frame 都是
+     * 图片化 id，靠 DOM 猜极易错），交给落雪自己解析才准。
+     *
+     * 官方支持的页面（传错会被 400/501，所以别乱试别的页）：
+     * - 舞萌：`friend/userFriendCode/`、`collection/{icon,plate,frame}/`
+     * - 中二：`home/playerData`、`collection/{character,nameplate,mapIcon,trophy}`
+     *
+     * 失败**不影响成绩上传**，日志里说清楚即可（这一页是「顺手更新资料」，不是上分必需）。
+     *
+     * @return 人话状态串，直接写进机台更新日志
+     */
+    @JvmStatic
+    fun uploadPlayerPageBlocking(game: String, html: String): String {
+        if (!LxnsDevApi.isConfigured()) {
+            return "已跳过：本安装包未打包开发者密钥，玩家资料无法直传"
+        }
+        if (html.isBlank()) return "已跳过：玩家资料页内容为空"
+
+        val gameType = if (game == GAME_CHUNITHM) GameType.CHUNITHM else GameType.MAIMAI
+        val friendCode = ensureFriendCodeBlocking(game, gameType)
+        if (friendCode <= 0) {
+            return "已跳过：拿不到好友码（请先在落雪同步一次，把玩家绑定到账号）"
+        }
+
+        val result = LxnsDevApi.uploadHtmlBlocking(game, friendCode, html)
+        Log.i(TAG, "player page upload: $game fc=$friendCode ok=${result.ok} ${result.message}")
+        return if (result.ok) {
+            // 资料页落雪不返回 ScoreChanges，changed 恒 0，别写成「变化 0 条」误导用户
+            "玩家资料已直传（落雪侧会更新称号 / 等级 / 头像 / 名牌）"
+        } else {
+            "玩家资料未直传成功（不影响成绩上传）：${result.message}"
+        }
+    }
+
+    // ────────────────────── 通道 1：官方 HTML 直传 ──────────────────────
     /**
      * 直传尝试的结果。
      *

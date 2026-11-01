@@ -3,7 +3,7 @@ package com.kira.kiba.core.network
 import android.util.Log
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
-import com.kira.kiba.BuildConfig
+import com.kira.kiba.core.security.LxnsVault
 import com.kira.kiba.core.utils.SpUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -74,8 +74,7 @@ object LxnsOAuth {
         .build()
 
     /** 打包时的 OAuth 应用凭据是否齐全（公开仓库里占位为空 → 功能自动隐藏）。 */
-    fun isConfigured(): Boolean =
-        BuildConfig.LXNS_CLIENT_ID.isNotBlank() && BuildConfig.LXNS_CLIENT_SECRET.isNotBlank()
+    fun isConfigured(): Boolean = LxnsVault.hasOAuth()
 
     /**
      * 拼授权链接。
@@ -90,7 +89,7 @@ object LxnsOAuth {
         }
         val scope = SCOPE.split(' ').joinToString("%20") { enc(it) }
         return "$AUTHORIZE_URL?response_type=code" +
-            "&client_id=${enc(BuildConfig.LXNS_CLIENT_ID)}" +
+            "&client_id=${enc(LxnsVault.oauthClientId())}" +
             "&redirect_uri=${enc(REDIRECT_URI)}" +
             "&scope=$scope"
     }
@@ -123,8 +122,8 @@ object LxnsOAuth {
         if (c.length < 8) throw IllegalStateException("授权码看起来太短了，请确认复制完整")
 
         val body = JsonObject().apply {
-            addProperty("client_id", BuildConfig.LXNS_CLIENT_ID)
-            addProperty("client_secret", BuildConfig.LXNS_CLIENT_SECRET)
+            addProperty("client_id", LxnsVault.oauthClientId())
+            addProperty("client_secret", LxnsVault.oauthClientSecret())
             addProperty("grant_type", "authorization_code")
             addProperty("code", c)
             addProperty("redirect_uri", REDIRECT_URI)
@@ -164,8 +163,8 @@ object LxnsOAuth {
     @Synchronized
     private fun refreshBlocking(refreshToken: String): Token {
         val body = JsonObject().apply {
-            addProperty("client_id", BuildConfig.LXNS_CLIENT_ID)
-            addProperty("client_secret", BuildConfig.LXNS_CLIENT_SECRET)
+            addProperty("client_id", LxnsVault.oauthClientId())
+            addProperty("client_secret", LxnsVault.oauthClientSecret())
             addProperty("grant_type", "refresh_token")
             addProperty("refresh_token", refreshToken)
         }

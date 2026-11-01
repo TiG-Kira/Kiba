@@ -1,7 +1,19 @@
 package com.kira.kiba.ui.agent
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.net.Uri
+import android.widget.Toast
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import com.kira.kiba.core.share.ShareService
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -49,9 +61,12 @@ import com.kira.kiba.ui.common.DifficultyChip
 import com.kira.kiba.ui.common.MarkdownContent
 import com.kira.kiba.ui.common.difficultyColor
 import com.kira.kiba.ui.common.difficultyLabel
+import com.kira.kiba.ui.material.KibaGlassDialog
 import com.kira.kiba.ui.navigation.LocalNavBarBottomPadding
 import com.kira.kiba.ui.navigation.LocalTopBarClearance
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
@@ -73,7 +88,7 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 @Composable
 fun AgentScreen(
     scrollBehavior: ScrollBehavior,
-    onOpenSong: (songId: Int) -> Unit,
+    onOpenSong: (songId: Int, game: String) -> Unit,
 ) {
     val context = LocalContext.current
     val agent = remember { KibaAgent(context) }
@@ -111,6 +126,7 @@ fun AgentScreen(
                         "· 今日舞萌运势 —— 今日运势与推荐曲目\n" +
                         "· 定数查歌 / 分数线 / 随机条件曲 —— KibaBot 移植技能（带参数，点卡片填条件）\n" +
                         "· 猜歌 —— 给线索猜答案，在输入框提交（歌名 / 别名 / ID 均可），猜错逐步揭示\n" +
+                        "· 中二查歌 / 中二定数 / 中二随机 / 我的中二 Rating / 中二推分 —— 中二节奏专用技能\n" +
                         "配置 LLM 后还可以直接提问，我会自动调用对应技能；\n" +
                         "问「我该怎么推分」这类问题时，我会先读你的 Best 50 再给针对性结论。\n" +
                         "（Best 50 / 推分需要先在「我」页面登录查分器）",
@@ -457,9 +473,10 @@ private fun SkillStrip(
 }
 
 /** 消息气泡（用户右 / Agent 左；颜色走 miuix 配色字段），并承载歌曲 / 技能 / B50 卡片。 */
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
-private fun ChatBubble(msg: AgentSession.Turn, onOpenSong: (Int) -> Unit) {
+private fun ChatBubble(msg: AgentSession.Turn, onOpenSong: (Int, String) -> Unit) {
+    val context = LocalContext.current
     Column(modifier = Modifier.fillMaxWidth()) {
         // 正文与思考内容去重：部分模型把同一段话同时塞进 content 和 reasoning_content，
         // 不去重的话「深度思考」卡片和正文气泡会显示一模一样的两段话。
@@ -483,6 +500,22 @@ private fun ChatBubble(msg: AgentSession.Turn, onOpenSong: (Int) -> Unit) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth(if (msg.fromUser) 0.82f else 0.92f)
+                        // 长按整段气泡复制文本：模型给的答案经常要粘到别处，之前只能手拖选中
+                        .combinedClickable(
+                            onClick = {},
+                            onLongClick = {
+                                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE)
+                                    as? ClipboardManager
+                                if (cm == null) {
+                                    Toast.makeText(context, "剪贴板不可用", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    cm.setPrimaryClip(
+                                        ClipData.newPlainText("Kiba", bodyText)
+                                    )
+                                    Toast.makeText(context, "已复制这段文字", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                        )
                         .background(
                             if (msg.fromUser) {
                                 MiuixTheme.colorScheme.primary.copy(alpha = 0.14f)
@@ -520,7 +553,7 @@ private fun ChatBubble(msg: AgentSession.Turn, onOpenSong: (Int) -> Unit) {
         // 歌曲卡：点击进入歌曲详情
         msg.songs.forEach { song ->
             Spacer(Modifier.height(8.dp))
-            SongAgentCard(song = song, onClick = { onOpenSong(song.id) })
+            SongAgentCard(song = song, onClick = { onOpenSong(song.id, song.game) })
         }
 
         // 技能卡：点击直接执行
@@ -535,17 +568,10 @@ private fun ChatBubble(msg: AgentSession.Turn, onOpenSong: (Int) -> Unit) {
             Best50AgentCard(info = b50)
         }
 
-        // 梗图：技能产出的图片（已存相册）
+        // 梗图：技能产出的图片（缓存里，可长按保存 / 复制 / 分享）
         if (msg.imageUri.isNotBlank()) {
             Spacer(Modifier.height(8.dp))
-            coil.compose.AsyncImage(
-                model = msg.imageUri,
-                contentDescription = "生成的图片",
-                contentScale = androidx.compose.ui.layout.ContentScale.FillWidth,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp)),
-            )
+            AgentImage(uri = msg.imageUri)
         }
     }
 }
@@ -625,7 +651,8 @@ private fun SongAgentCard(song: KibaAgent.AgentSong, onClick: () -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                ChartTypeChip(type = song.type)
+                // 舞萌才有 SD/DX；中二的 type 是空串，别渲染成空白徽标
+                if (song.type.isNotBlank()) ChartTypeChip(type = song.type)
                 if (song.difficulty.isNotBlank()) {
                     DifficultyChip(
                         text = "${song.difficulty} ${song.topLevel}",
@@ -696,6 +723,151 @@ private fun Best50AgentCard(info: KibaAgent.Best50Info) {
                         style = MiuixTheme.textStyles.footnote2,
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                     )
+                }
+            }
+        }
+    }
+}
+
+// ══════════════════════ 对话内图片：点击看大图 / 长按保存·复制·分享 ══════════════════════
+//
+// 之前只是一个裸 AsyncImage：既不能长按保存，也不能复制，用户想留图只能截图。
+// 现在：
+// - **点击** → 全屏预览（黑底、Fit 居中，点任意处关闭）；
+// - **长按**（气泡里或预览里都行）→ 保存到相册 / 复制图片 / 分享给好友。
+//
+// 图片来自技能生成（cacheDir/generated，FileProvider 的 content:// URI），
+// 所以「复制」只能放 URI 进剪贴板 —— 部分应用支持粘贴图片，部分只认文字，
+// 这一点在提示里直说，别让用户以为坏了。
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun AgentImage(uri: String) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var preview by remember { mutableStateOf(false) }
+    var actions by remember { mutableStateOf(false) }
+
+    fun toast(text: String) {
+        Toast.makeText(context, text, Toast.LENGTH_SHORT).show()
+    }
+
+    /** 图片字节（IO 读取，供保存 / 分享复用）。 */
+    suspend fun bytesOf(): ByteArray? = withContext(Dispatchers.IO) {
+        runCatching {
+            context.contentResolver.openInputStream(Uri.parse(uri))?.use { it.readBytes() }
+        }.getOrNull()
+    }
+
+    coil.compose.AsyncImage(
+        model = uri,
+        contentDescription = "生成的图片",
+        contentScale = ContentScale.FillWidth,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .combinedClickable(
+                onClick = { preview = true },
+                onLongClick = { actions = true },
+            ),
+    )
+
+    if (preview) {
+        Dialog(
+            onDismissRequest = { preview = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black)
+                    .combinedClickable(
+                        onClick = { preview = false },
+                        onLongClick = { actions = true },
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                coil.compose.AsyncImage(
+                    model = uri,
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                Text(
+                    text = "点击任意处关闭 · 长按图片可保存 / 复制 / 分享",
+                    style = MiuixTheme.textStyles.footnote2,
+                    color = Color.White.copy(alpha = 0.72f),
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 36.dp),
+                )
+            }
+        }
+    }
+
+    if (actions) {
+        KibaGlassDialog(
+            show = true,
+            title = "图片",
+            summary = "保存到相册、复制图片，或发送给好友",
+            onDismissRequest = { actions = false },
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = "生成的图片存在应用缓存里，长期不用会被自动清理；" +
+                        "想留着就保存到相册。",
+                    style = MiuixTheme.textStyles.footnote2,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                )
+                Spacer(Modifier.height(16.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextButton(text = "取消", onClick = { actions = false })
+                    Spacer(Modifier.width(8.dp))
+                    TextButton(text = "复制图片", onClick = {
+                        actions = false
+                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                        if (cm == null) {
+                            toast("剪贴板不可用")
+                        } else {
+                            val clip = ClipData.newUri(context.contentResolver, "Kiba 图片", Uri.parse(uri))
+                            cm.setPrimaryClip(clip)
+                            toast("已复制图片，去聊天框长按粘贴（部分应用只认文字）")
+                        }
+                    })
+                    Spacer(Modifier.width(8.dp))
+                    TextButton(text = "分享", onClick = {
+                        actions = false
+                        scope.launch {
+                            val bytes = bytesOf()
+                            if (bytes == null) {
+                                toast("读取图片失败")
+                            } else {
+                                val name = "Kiba_image_${System.currentTimeMillis()}.png"
+                                if (!ShareService.sharePng(context, bytes, name)) toast("分享失败")
+                            }
+                        }
+                    })
+                    Spacer(Modifier.width(8.dp))
+                    TextButton(text = "保存到相册", onClick = {
+                        actions = false
+                        scope.launch {
+                            val bytes = bytesOf()
+                            if (bytes == null) {
+                                toast("读取图片失败")
+                                return@launch
+                            }
+                            val name = "Kiba_image_${System.currentTimeMillis()}.png"
+                            val saved = ShareService.saveToGallery(context, bytes, name)
+                            toast(
+                                if (saved != null) "已保存到相册：Pictures/Kiba/$name"
+                                else "保存失败：无法写入相册"
+                            )
+                        }
+                    })
                 }
             }
         }
