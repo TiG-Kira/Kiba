@@ -1,9 +1,11 @@
 package com.kira.kiba.core.network
 
 import android.util.Log
+import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.kira.kiba.core.data.LxnsScoreMapper
 import com.kira.kiba.core.data.NetHtmlParser
+import com.kira.kiba.core.model.GameType
 import com.kira.kiba.core.utils.SpUtil
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -12,30 +14,29 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.TimeUnit
 
 /**
- * 把机台抓到的 NET 页面解析成成绩，再用**落雪个人 API 的 JSON 接口**上传。
+ * 把机台抓到的 NET 页面源码送进落雪。**两条通道，官方直传优先**：
  *
- * ## 为什么不再直传 HTML（1.8.6 改动）
- * 1.8.3～1.8.5 走的是 `POST /api/v0/user/{game}/player/html`，实测被服务端拒成
- * **HTTP 550**。原因是落雪的 HTML 直传端点属于**开发者 API**
- * （`POST /api/v0/{game}/player/{friend_code}/html`），要求
- * `allow_third_party_write_data` 权限与好友码，得走 OAuth 应用审核；
- * 个人 API 密钥根本没有这个能力。
+ * 1. **开发者 API HTML 直传**（1.8.7 新增，需打包了开发者密钥）
+ *    `POST /api/v0/{game}/player/{friend_code}/html`，body 就是整页源码。
+ *    解析在落雪服务端做，口径与官方同步器完全一致；中二 WORLD'S END 也只有这条能传。
+ *    前置条件：玩家在落雪打开「允许其他查分器写入数据」，否则 403。
  *
- * 个人 API 文档明确支持的写通道只有一条：
- * ```
- * POST /api/v0/user/{game}/player/scores   { "scores": [Score, ...] }
- * ```
- * 所以改成「本地解析 → JSON 上传」：解析口径与水鱼服务端完全一致
- * （见 [NetHtmlParser] 的注释），曲名到曲目 ID 的映射见 [LxnsScoreMapper]。
+ * 2. **本地解析 → 个人/OAuth JSON 上传**（1.8.6 起的兜底）
+ *    `POST /api/v0/user/{game}/player/scores`，`{ "scores": [Score...] }`。
+ *    不依赖开发者密钥、也不依赖玩家授权第三方，但要求本地曲库能把曲名换成曲目 ID，
+ *    而且**中二 WORLD'S END 传不了**（列表页没有可直接引用的谱面 id）。
+ *
+ * 任一条能成就返回成功；直传失败会带上原因再走兜底，两个都失败才报错 ——
+ * 用户看到的永远是一句人话，而不是「直传 403」这种需要懂内情才看得懂的码。
+ *
+ * ## 为什么个人 API 不能直传 HTML
+ * 1.8.3～1.8.5 试过 `POST /api/v0/user/{game}/player/html`，被拒成 **HTTP 550**：
+ * 个人 API 根本没有这个端点，写入通道只有上面的 JSON 成绩接口。
  *
  * ## 另一条官方通路（不在本类负责范围）
  * 落雪官网还提供**代理同步**（`/user/sync`，把系统 WLAN 代理指向
  * `proxy.maimai.lxns.net:8080`，由落雪服务器代抓）。那条路与本 App 的本地 VPN
  * 会抢流量，所以两者只能二选一，设置页有入口说明。
- *
- * ## 上传前置条件（很容易被误判成 bug）
- * 落雪的数据挂在「玩家」上，**账号在落雪同步过一次之前没有 player**，
- * 所有写入接口都回 `404 player not found`。这不是 Key 错。
  *
  * ## 线程
  * 阻塞式接口（供 [com.kira.kiba.core.vpn.crawler.WechatCrawler] 这类 Java 调用方使用），
@@ -63,36 +64,148 @@ object LxnsUploader {
      * 解析并上传一页 NET 成绩源码。
      *
      * @param game [GAME_MAIMAI] / [GAME_CHUNITHM]
-     * @param diffIndex 该页对应的难度索引，仅用于日志（真实难度以页面解析结果为准）
+     * @param diffIndex 该页对应的难度索引，用于日志与 WORLD'S END 判定
      * @param html 完整页面源码
      * @return 人话状态串，直接写进机台更新日志。失败不抛异常 —— 抓包链路是并发/重试的，
      *   抛异常会打断其它难度的上传；错误信息已经包含在返回串里。
      */
     @JvmStatic
     fun uploadScorePageBlocking(game: String, diffIndex: Int, html: String): String {
-        val key = SpUtil.getLxnsApiKey()
-        if (key.isBlank()) return "上传失败：尚未绑定落雪 API Key"
+        if (!LxnsAuth.hasCredential()) return "上传失败：尚未登录落雪账号"
         if (html.isBlank()) return "上传失败：页面内容为空"
 
         val isChuni = game == GAME_CHUNITHM
-
-        // 中二 WORLD'S END 页（record/worldsEndList）是独立表格，没有可直接引用的谱面 id；
-        // 落雪把 WE 当成独立 difficulty，乱猜会把成绩写到错的谱面上。WE 不参与 Rating，跳过影响很小。
-        if (isChuni && diffIndex == 5) {
-            return "已跳过：WORLD'S END 页面暂不支持 JSON 上传（不参与 Rating 计算，影响很小）"
-        }
+        val gameType = if (isChuni) GameType.CHUNITHM else GameType.MAIMAI
 
         // ① 先嗅探页面类型：把「抓到登录页」这类故障说成人话，而不是「0 条成绩」
+        var worldEnd = false
         when (NetHtmlParser.sniff(game, html)) {
             NetHtmlParser.PageKind.LOGIN_OR_ERROR ->
                 return "上传失败：抓到的不是成绩页（登录态没拿到或授权未生效），本页已跳过"
-            NetHtmlParser.PageKind.CHUNI_WORLD_END ->
-                return "已跳过：WORLD'S END 页面暂不支持 JSON 上传（不参与 Rating 计算，影响很小）"
+            NetHtmlParser.PageKind.CHUNI_WORLD_END -> worldEnd = true
             NetHtmlParser.PageKind.UNKNOWN ->
                 return "上传失败：无法识别该页面的结构（页面可能改版），" +
                     "页面里找到的曲名片段：" + NetHtmlParser.debugTitleSample(html)
             else -> Unit
         }
+
+        // ② 官方直传（解析在落雪侧，最准）
+        val dev = tryDevHtmlUpload(game, gameType, html)
+        if (dev.ok) return dev.text
+
+        // ③ 兜底：本地解析 → JSON 上传
+        if (worldEnd) {
+            // 只有官方直传支持 WE；它不可用就只能跳过（WE 不参与 Rating，影响很小）
+            return "已跳过：WORLD'S END 页面只能用官方直传，当前不可用（${dev.text}）"
+        }
+        val jsonResult = uploadJsonBlocking(game, html)
+        // 兜底也失败：把两条通道的原因都带上，省得用户来回问
+        return if (jsonResult.startsWith("上传失败") && dev.text.isNotEmpty()) {
+            "$jsonResult；官方直传也未成功（${dev.text}）"
+        } else {
+            jsonResult
+        }
+    }
+
+    // ────────────────── 玩家资料页直传（称号 / 头像 / 名牌） ──────────────────
+
+    /**
+     * 直传**玩家信息页**（不是成绩页）：更新落雪侧的称号、等级/段位、头像、姓名框、背景。
+     *
+     * 为什么单独一个入口：这类页面**只能走官方直传**。个人 API 的 JSON 通道只收成绩，
+     * 本地也根本无法从页面里可靠地抽出「收藏品 id」（trophy / icon / name_plate / frame 都是
+     * 图片化 id，靠 DOM 猜极易错），交给落雪自己解析才准。
+     *
+     * 官方支持的页面（传错会被 400/501，所以别乱试别的页）：
+     * - 舞萌：`friend/userFriendCode/`、`collection/{icon,plate,frame}/`
+     * - 中二：`home/playerData`、`collection/{character,nameplate,mapIcon,trophy}`
+     *
+     * 失败**不影响成绩上传**，日志里说清楚即可（这一页是「顺手更新资料」，不是上分必需）。
+     *
+     * @return 人话状态串，直接写进机台更新日志
+     */
+    @JvmStatic
+    fun uploadPlayerPageBlocking(game: String, html: String): String {
+        if (!LxnsDevApi.isConfigured()) {
+            return "已跳过：本安装包未打包开发者密钥，玩家资料无法直传"
+        }
+        if (html.isBlank()) return "已跳过：玩家资料页内容为空"
+
+        val gameType = if (game == GAME_CHUNITHM) GameType.CHUNITHM else GameType.MAIMAI
+        val friendCode = ensureFriendCodeBlocking(game, gameType)
+        if (friendCode <= 0) {
+            return "已跳过：拿不到好友码（请先在落雪同步一次，把玩家绑定到账号）"
+        }
+
+        val result = LxnsDevApi.uploadHtmlBlocking(game, friendCode, html)
+        Log.i(TAG, "player page upload: $game fc=$friendCode ok=${result.ok} ${result.message}")
+        return if (result.ok) {
+            // 资料页落雪不返回 ScoreChanges，changed 恒 0，别写成「变化 0 条」误导用户
+            "玩家资料已直传（落雪侧会更新称号 / 等级 / 头像 / 名牌）"
+        } else {
+            "玩家资料未直传成功（不影响成绩上传）：${result.message}"
+        }
+    }
+
+    // ────────────────────── 通道 1：官方 HTML 直传 ──────────────────────
+    /**
+     * 直传尝试的结果。
+     *
+     * @param ok true = 落雪收下了这一页（[text] 是给日志的成功描述）
+     * @param text ok 时是成功描述，false 时是失败原因（调用方继续走兜底）
+     */
+    private class DevOutcome(val ok: Boolean, val text: String)
+
+    private fun tryDevHtmlUpload(game: String, gameType: GameType, html: String): DevOutcome {
+        if (!LxnsDevApi.isConfigured()) return DevOutcome(false, "本安装包未打包开发者密钥")
+        val friendCode = ensureFriendCodeBlocking(game, gameType)
+        if (friendCode <= 0) {
+            return DevOutcome(false, "拿不到好友码（请先在落雪同步一次，把玩家绑定到账号）")
+        }
+
+        val result = LxnsDevApi.uploadHtmlBlocking(game, friendCode, html)
+        if (result.ok) {
+            Log.i(TAG, "dev html upload ok: $game fc=$friendCode changed=${result.changed}")
+        } else {
+            Log.i(TAG, "dev html upload failed: $game fc=$friendCode reason=${result.message}")
+        }
+        return DevOutcome(result.ok, result.message)
+    }
+
+    /**
+     * 好友码（开发者 API 的唯一寻址方式）。登录时 [com.kira.kiba.core.account.LxnsAccount]
+     * 已经顺手存过一份，这里只是**兜底补取**：用户可能是老版本升上来的，SP 里还没有。
+     *
+     * 失败一律返回 0，不抛异常 —— 拿不到就退回 JSON 通道，别让上分卡在这一步。
+     */
+    private fun ensureFriendCodeBlocking(game: String, gameType: GameType): Long {
+        SpUtil.getLxnsFriendCode(gameType).takeIf { it > 0 }?.let { return it }
+        return try {
+            val (name, value) = LxnsAuth.headerBlocking()
+            val request = Request.Builder()
+                .url("$BASE_URL/user/$game/player")
+                .header(name, value)
+                .header("Accept", "application/json")
+                .build()
+            val text = client.newCall(request).execute().use { resp ->
+                if (!resp.isSuccessful) return 0
+                resp.body?.string().orEmpty()
+            }
+            val root = runCatching { JsonParser.parseString(text).asJsonObject }.getOrNull()
+            val data = (root?.get("data") as? JsonObject) ?: root ?: return 0
+            val fc = data.get("friend_code")?.takeIf { it.isJsonPrimitive }?.asLong ?: 0L
+            if (fc > 0) SpUtil.saveLxnsFriendCode(gameType, fc)
+            fc
+        } catch (e: Exception) {
+            Log.i(TAG, "friend code lookup failed: ${e.message}")
+            0
+        }
+    }
+
+    // ─────────────────── 通道 2：本地解析 + JSON 上传 ───────────────────
+
+    private fun uploadJsonBlocking(game: String, html: String): String {
+        val isChuni = game == GAME_CHUNITHM
 
         // ② 解析
         val scores = if (isChuni) NetHtmlParser.parseChuni(html) else NetHtmlParser.parseMaimai(html)
@@ -118,11 +231,15 @@ object LxnsUploader {
                 (if (sample.isBlank()) "" else "，例如：$sample")
         }
 
-        // ④ 上传
+        // ④ 上传（鉴权头由 LxnsAuth 决定：OAuth Bearer 或 个人 Key）
+        val auth = try {
+            LxnsAuth.headerBlocking()
+        } catch (e: LxnsApi.LxnsException) {
+            return "上传失败：${e.message}"
+        }
         val request = Request.Builder()
             .url("$BASE_URL/user/$game/player/scores")
-            // 个人 API 用 X-User-Token；Authorization 是开发者 API 的头，混用必 401
-            .header("X-User-Token", key)
+            .header(auth.first, auth.second)
             .post(built.payload.toString().toRequestBody(JSON_TYPE))
             .build()
 
@@ -145,7 +262,7 @@ object LxnsUploader {
                         "$summary；落雪已接收，变化 $changed 条"
                     }
                     code == 401 || code == 403 ->
-                        "上传失败：落雪 API Key 无效或被撤销（请到「账号详情」重新复制）"
+                        "上传失败：落雪登录态无效或被撤销（请重新登录落雪账号）"
                     // 404 有两种完全不同的含义，靠响应体区分：
                     // - JSON `{"message":"player not found"}`：路由存在，只是账号还没绑定玩家；
                     // - 纯文本 `404 page not found`：路由本身不存在（接口改名/下线）。

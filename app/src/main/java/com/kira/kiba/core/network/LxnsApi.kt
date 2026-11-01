@@ -4,7 +4,6 @@ import com.google.gson.JsonArray
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
-import com.kira.kiba.core.utils.SpUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -12,17 +11,17 @@ import okhttp3.Request
 import java.util.concurrent.TimeUnit
 
 /**
- * 落雪（LXNS）API 客户端。
+ * 落雪（LXNS）API 客户端 —— **用户级接口**（`/api/v0/user/...`）。
  *
- * ## 鉴权（1.8.4 纠正）
- * 落雪有**两套完全不同的鉴权头**，混用一律 401：
+ * ## 鉴权
+ * 落雪有三套完全不同的鉴权头，混用一律 401：
  * - 个人 API（`/api/v0/user/...`）→ **`X-User-Token: <个人 API 密钥>`**
  * - 开发者 API（`/api/v0/{maimai,chunithm}/...`）→ `Authorization: <开发者 API 密钥>`
- * - OAuth API → `Authorization: Bearer <access_token>`
+ * - OAuth API → `Authorization: Bearer <access_token>`（访问的也是 `/api/v0/user/...`）
  *
  * 1.8.3 把个人 API 也写成了 `Authorization`，结果**任何合法的个人密钥都被判成无效**
  * （实测：`Authorization` → 401；`X-User-Token` → 200/404 player not found）。
- * 个人 API 密钥不能用于开发者 API，反之亦然（落雪官方明确要求）。
+ * 1.8.7 起 OAuth 与个人 Key 并存，具体发哪个头由 [LxnsAuth] 统一决定（OAuth 优先）。
  * Key 在落雪「账号详情」（`/user/profile`）生成/重置，可在站内随时撤销。
  *
  * ## 响应形态
@@ -31,6 +30,8 @@ import java.util.concurrent.TimeUnit
  * 2. 直接把业务对象放在最外层（公共曲库 `song/list` 就是这样，实测无 data 包裹）。
  * 这里统一解包：有 `data` 且 `success != false` 就取 `data`，否则原样返回。
  * 失败统一 `{"success":false,"code":401,"message":"unauthorized"}`。
+ *
+ * 注意 OAuth 的**令牌接口**（`/api/v0/oauth/token`）不遵守上面这套外壳，见 [LxnsOAuth]。
  *
  * ## 线程
  * **一律在 IO 线程执行**（内部 `withContext(Dispatchers.IO)`）。落雪调用若不离开主线程，
@@ -62,14 +63,12 @@ object LxnsApi {
      * @param path 相对 [BASE_URL] 的路径，例如 `/user/chunithm/player/scores`。
      */
     suspend fun get(path: String): JsonElement = withContext(Dispatchers.IO) {
-        val key = SpUtil.getLxnsApiKey()
-        if (key.isBlank()) {
-            throw LxnsException(401, "尚未绑定落雪 API Key")
-        }
+        // 请求头统一由 LxnsAuth 决定（OAuth Bearer 优先、个人 Key 兜底），
+        // 这里不要再自己读 SpUtil，否则两处判定不一致会出现「某个接口突然 401」
+        val (name, value) = LxnsAuth.header()
         val request = Request.Builder()
             .url(BASE_URL + path)
-            // 个人 API 密钥走 X-User-Token（不是 Authorization，也不是 Bearer）
-            .header("X-User-Token", key)
+            .header(name, value)
             .header("Accept", "application/json")
             .build()
 

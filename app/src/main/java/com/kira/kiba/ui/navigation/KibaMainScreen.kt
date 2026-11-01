@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.kira.kiba.core.data.ChuniRecordSync
 import com.kira.kiba.core.data.SongDataSync
+import com.kira.kiba.core.agent.KibaAgent
 import com.kira.kiba.core.share.ShareService
 import com.kira.kiba.core.state.KibaState
 import com.kira.kiba.core.model.GameType
@@ -52,6 +53,7 @@ import com.kira.kiba.ui.settings.SettingsScreen
 import com.kira.kiba.ui.share.ShareImageAction
 import com.kira.kiba.ui.songdetail.ChartDetailScreen
 import com.kira.kiba.ui.tools.DxConverterScreen
+import com.kira.kiba.ui.tools.FriendQueryScreen
 import com.kira.kiba.ui.tools.HotChartsScreen
 import com.kira.kiba.ui.tools.MachineUpdateScreen
 import com.kira.kiba.ui.tools.QrImportScreen
@@ -179,6 +181,11 @@ sealed interface KibaSubPage {
     /** 热门乐曲排行（工具箱，水鱼谱面统计）。 */
     data object HotCharts : KibaSubPage {
         override val title: String = "热门乐曲排行"
+    }
+
+    /** 查朋友（落雪开发者 API，按好友码查他人公开数据）。 */
+    data object FriendQuery : KibaSubPage {
+        override val title: String = "查朋友"
     }
 
     /** Agent 模型配置（LLM）。 */
@@ -556,6 +563,15 @@ fun KibaMainScreen() {
                                   scrollBehavior = scrollBehavior,
                                   onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
                               )
+                              is KibaSubPage.FriendQuery -> FriendQueryScreen(
+                                  scrollBehavior = scrollBehavior,
+                                  onOpenSong = { songId, chuni ->
+                                      pushPage(
+                                          if (chuni) KibaSubPage.ChuniSongDetail(songId)
+                                          else KibaSubPage.SongDetail(songId)
+                                      )
+                                  },
+                              )
                               is KibaSubPage.LlmConfig -> LlmConfigScreen(scrollBehavior = scrollBehavior)
                               is KibaSubPage.Login -> LoginScreen(
                                   scrollBehavior = scrollBehavior,
@@ -599,7 +615,15 @@ fun KibaMainScreen() {
                               )
                               KibaTab.Agent -> AgentScreen(
                                   scrollBehavior = scrollBehavior,
-                                  onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
+                                  onOpenSong = { songId, game ->
+                                      pushPage(
+                                          if (game == KibaAgent.GAME_CHUNITHM) {
+                                              KibaSubPage.ChuniSongDetail(songId)
+                                          } else {
+                                              KibaSubPage.SongDetail(songId)
+                                          }
+                                      )
+                                  },
                               )
                               KibaTab.Me -> MeScreen(
                                   scrollBehavior = scrollBehavior,
@@ -615,6 +639,7 @@ fun KibaMainScreen() {
                                   onOpenGatewayAccount = { pushPage(KibaSubPage.GatewayAccount) },
                                   onOpenRatingCalc = { pushPage(KibaSubPage.RatingCalc) },
                                   onOpenVersionMap = { pushPage(KibaSubPage.VersionMap) },
+                                  onOpenFriendQuery = { pushPage(KibaSubPage.FriendQuery) },
                                   onOpenHotCharts = { pushPage(KibaSubPage.HotCharts) },
                                   onOpenChuniBest = { pushPage(KibaSubPage.ChuniBest) },
                               )

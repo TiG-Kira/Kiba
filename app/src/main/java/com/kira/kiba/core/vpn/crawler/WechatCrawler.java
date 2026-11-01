@@ -69,6 +69,16 @@ public class WechatCrawler {
     /** 中二节奏国服站点前缀（官方 proxy 实现：`chunithm.wahlap.com/mobile`）。 */
     private static final String CHUNI_BASE = "https://chunithm.wahlap.com/mobile";
 
+    /**
+     * 玩家资料页（落雪开发者 API 支持直传的「玩家信息」页）：
+     * - 中二：`home/playerData`（官方文档明确列出）；
+     * - 舞萌：`friend/userFriendCode/`（官方文档明确列出）。
+     * 这两页不含成绩，只是称号 / 头像 / 名牌 / 等级，用来把落雪里的资料一起刷新。
+     */
+    private static final String CHUNI_PROFILE_URL = CHUNI_BASE + "/home/playerData/";
+    private static final String MAIMAI_PROFILE_URL =
+            "https://maimai.wahlap.com/maimai-mobile/friend/userFriendCode/";
+
     /** 标准难度需先 POST 的筛选接口（设置会话内的难度筛选）。 */
     private static final String[] CHUNI_POST_URLS = {
             "/record/musicGenre/sendBasic",
@@ -95,7 +105,7 @@ public class WechatCrawler {
 
     // ==================== 上传目标：水鱼 / 落雪 ====================
     //
-    // false（默认）= 上传水鱼；true = 上传落雪个人 API（HTML 直传，
+    // false（默认）= 上传水鱼；true = 上传落雪（官方 HTML 直传优先，失败回落本地解析 + JSON，
     // 见 com.kira.kiba.core.network.LxnsUploader）。
     //
     // 用静态标志而不是改一堆方法签名：机台上分同一时刻只跑一条会话
@@ -150,26 +160,25 @@ public class WechatCrawler {
     }
 
     /**
-     * 把单页 NET 源码解析成成绩并上传到落雪（个人 API 的 JSON 成绩接口）。
-     *
-     * 与水鱼的区别：落雪的 HTML 直传端点属于开发者 API（要审核 + 好友码），个人密钥用不了，
-     * 所以这里在本地解析页面（[com.kira.kiba.core.data.NetHtmlParser]）再走
-     * `POST /api/v0/user/{game}/player/scores`，不需要账密 / jwt / `<login>` 包裹。
+     * 把单页 NET 源码送进落雪。落雪侧内部有两条通道（官方 HTML 直传优先、本地解析 + JSON 兜底），
+     * 具体选择与失败回落都在 [com.kira.kiba.core.network.LxnsUploader] 里，这里只负责调用与重试判定。
      *
      * 以下失败**重试也没用**，直接放弃并提示原因，避免无意义地重复打四次：
-     * Key 无效、账号没绑定玩家、本地曲库为空、抓到的不是成绩页。
+     * 没登录、凭据失效、账号没绑定玩家、本地曲库为空、抓到的不是成绩页、页面类型不支持。
      */
     private static void uploadDataToLxns(String game, Integer diff, String data, Integer retryCount) {
         String label = ("chunithm".equals(game) ? "中二 " + chuniDiffMap.get(diff) : diffMap.get(diff)) + " ";
         String result = com.kira.kiba.core.network.LxnsUploader.uploadScorePageBlocking(game, diff, data);
         writeLog(label + result);
 
-        boolean fatal = result.contains("Key 无效")
+        boolean fatal = result.contains("尚未登录")
+                || result.contains("无效")
                 || result.contains("绑定玩家")
                 || result.contains("曲库为空")
                 || result.contains("不是成绩页")
-                || result.contains("暂不支持")
-                || result.contains("无法识别");
+                || result.contains("只能用官方直传")
+                || result.contains("无法识别")
+                || result.contains("缺少好友码");
         if (result.startsWith("上传失败") && !fatal && retryCount <= MAX_RETRY_COUNT) {
             writeLog("进行第 " + retryCount + " 次重试");
             uploadDataToLxns(game, diff, data, retryCount + 1);
@@ -355,6 +364,34 @@ public class WechatCrawler {
     private void fetchMaimaiData(String username, String password, Set<Integer> difficulties) throws IOException {
         this.buildHttpClient(false);
         fetchAndUploadData(username, password, difficulties);
+        // 落雪模式下顺手把「玩家信息页」也直传一次：更新落雪里的称号 / 头像 / 姓名框 / 背景。
+        // 水鱼没有这条通道（pageparser 只解析成绩页），所以只在 lxnsMode 下抓。
+        if (lxnsMode) fetchAndUploadPlayerProfile(MAIMAI_PROFILE_URL, "舞萌", "maimai");
+    }
+
+    /**
+     * 抓「玩家信息页」并直传给落雪（开发者 API 的 HTML 直传）。
+     *
+     * 与水鱼无关：水鱼的 pageparser 只认成绩页，接收资料页只会返回解析失败。
+     * 这里全程 best-effort —— 资料页挂了绝不影响成绩上传，日志里也不写成「失败」吓人。
+     */
+    private static void fetchAndUploadPlayerProfile(String url, String label, String game) {
+        try {
+            Request request = new Request.Builder().url(url).build();
+            try (Response response = client.newCall(request).execute()) {
+                String data = response.body() != null ? response.body().string() : "";
+                reportFetched(label + " 玩家资料", data, response.code());
+                if (data.length() < 200) {
+                    writeLog(label + " 玩家资料页内容异常，已跳过（不影响成绩上传）");
+                    return;
+                }
+                writeLog(label + " 玩家资料页已获取，正在上传至落雪");
+                writeLog(label + " " + com.kira.kiba.core.network.LxnsUploader
+                        .uploadPlayerPageBlocking(game, data));
+            }
+        } catch (Exception e) {
+            writeLog(label + " 玩家资料页获取失败（不影响成绩上传）：" + e);
+        }
     }
 
     // ==================== 中二节奏（CHUNITHM） ====================
@@ -388,6 +425,9 @@ public class WechatCrawler {
             } catch (InterruptedException ignored) {
             }
         }
+        // 落雪模式下再抓一页「玩家资料」（home/playerData）：更新称号 / 等级 / 角色 / 名牌。
+        // 水鱼的中二通道没有资料页上传，故只对落雪生效。
+        if (lxnsMode) fetchAndUploadPlayerProfile(CHUNI_PROFILE_URL, "中二", "chunithm");
     }
 
     private static void fetchAndUploadChuniData(String jwt, Integer diff, Integer retryCount) {
@@ -451,6 +491,8 @@ public class WechatCrawler {
             // 落雪支持中二的最佳成绩（record/musicGenre*）与 World's End（record/worldsEndList），
             // 但**不支持**最近游玩 Rating 详情页（/home/playerData/ratingDetailRecent），
             // 那个页面只服务于水鱼的 recent=1 通道，直接跳过免得刷一条失败日志。
+            // 注意：WORLD'S END 只有「官方 HTML 直传」通道能传（本地 JSON 通道没有可引用的谱面 id），
+            // 直传不可用时 LxnsUploader 会自己给出「已跳过」的说明。
             if (diff == 6) {
                 writeLog("中二 最近游玩（Rating 详情）页落雪不支持，已跳过");
                 return;

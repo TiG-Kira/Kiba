@@ -2,33 +2,39 @@ package com.kira.kiba.core.account
 
 import android.util.Log
 import com.google.gson.JsonObject
+import com.kira.kiba.core.model.GameType
 import com.kira.kiba.core.network.LxnsApi
+import com.kira.kiba.core.network.LxnsOAuth
 import com.kira.kiba.core.utils.SpUtil
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * 落雪（LXNS）账号层 —— **个人 API Key 绑定**。
+ * 落雪（LXNS）账号层 —— 支持**两条登录通道**。
  *
- * ## 为什么不是账号密码
- * 落雪没有公开的账号密码换 token 接口（网页登录是站内私有接口，随时可能改）。
- * 官方给第三方的合法凭据只有两种：
- * 1. **个人 API Key**（本类采用）：用户在落雪站内生成，`Authorization: <key>` 直传；
- * 2. OAuth2 + PKCE：需要自建 client_id 并通过落雪人工审核，App 无法凭空拥有。
+ * ## 通道一：OAuth 授权（1.8.7 新增，推荐）
+ * 点「用落雪账号授权」→ 浏览器打开授权页 → 用户同意后页面**直接显示授权码**
+ * （应用登记的是「无回调地址」，不重定向）→ 复制粘回 App。
+ * 拿到的是 15 分钟一换的 access_token + 30 天滚动 refresh_token，权限可被用户随时撤销。
+ * 好处：不用去「账号详情」翻个人 API 密钥，写入权限（`write_player`）一次授权就够，
+ * 而且**泄露面比长期密钥小得多**。
  *
- * ## Key 怎么拿（UI 里的引导文案与这里保持一致，改一处要改两处）
- * 1. 打开 https://maimai.lxns.net/register 注册落雪账号（已有账号直接跳过）；
- * 2. 登录后点右上角头像进「账号详情」（`/user/profile`）；
- * 3. 在「个人 API 密钥」一栏点「重置 API 密钥」旁的复制按钮拿到 Key；
- * 4. 回到本 App 粘贴保存。
+ * ## 通道二：个人 API 密钥（1.8.3 起，保留为兜底）
+ * 用户自己在落雪「账号详情」生成，等价于账号读写凭据。
+ * 留着的理由：没打包 OAuth 凭据的安装包、或不想授权的用户仍然能用；
+ * OAuth 令牌万一失效，只要 Key 还在就能继续同步。
  *
- * ## 请求头（1.8.4 纠正）
- * 个人 API 必须用 **`X-User-Token`**；`Authorization` 是开发者 API 用的，
- * 拿个人密钥去 `Authorization` 只会得到 401（1.8.3 的「密钥无法识别」即此因）。
+ * 共存时**优先 OAuth**（见 [LxnsAuth]）。
  *
- * Key 等价于「可读写该账号成绩」的凭据，只存本机私有 SP，用户可在落雪站内随时撤销；
- * 撤销后所有请求统一 401，由 [state] 的 [State.error] 提示重新绑定。
+ * ## 数据挂在「玩家」上
+ * 新注册的账号在**落雪网页/同步器同步过一次之前**只有账号没有玩家，
+ * 所有成绩接口都返回 `404 player not found` —— 这不是凭据错，也不是 App 错。
+ * 所以这里用 [State.playerFound] 单独标出来，UI 必须区别于「登录失败」来提示。
+ *
+ * ## 好友码
+ * 开发者 API（HTML 直传）只认好友码。探活时顺手从 `GET /user/{game}/player`
+ * 把两个游戏的好友码存进 SP，用户全程不用手输。
  */
 object LxnsAccount {
 
@@ -60,24 +66,66 @@ object LxnsAccount {
         /**
          * 落雪账号里是否已经绑定了玩家（好友码）。
          *
-         * 落雪的数据是按「玩家」存的：新注册的账号在**落雪网页/同步器同步过一次之前**
-         * 只有账号没有玩家，所有成绩接口都返回 `404 player not found` ——
-         * 这不是 Key 错，也不是 App 错，必须先在落雪那边同步一次把玩家绑上。
-         * false 时 UI 要明确写出来，否则用户会以为 Key 失效。
+         * false 时所有成绩接口都是 `404 player not found`，UI 要明确写成
+         * 「账号有效，但还没在落雪同步过游戏数据」，否则用户会以为登录失败。
          */
         val playerFound: Boolean = false,
+        /** 当前凭据通道是不是 OAuth（决定 UI 显示「授权登录」还是「API 密钥」）。 */
+        val oauth: Boolean = false,
     )
 
     private val _state = MutableStateFlow(
-        State(bound = SpUtil.isLxnsLoggedIn(), name = SpUtil.getLxnsName()),
+        State(
+            bound = SpUtil.isLxnsLoggedIn(),
+            name = SpUtil.getLxnsName(),
+            oauth = SpUtil.hasLxnsOAuth(),
+        ),
     )
     val state: StateFlow<State> = _state.asStateFlow()
 
-    /** 是否已绑定 Key。同步读 SP，供数据源分发时无协程判断。 */
+    /** 是否已登录（OAuth 或 Key 任一）。同步读 SP，供数据源分发时无协程判断。 */
     fun isBound(): Boolean = SpUtil.isLxnsLoggedIn()
 
+    /** OAuth 是否可用（打包了应用凭据才显示授权入口）。 */
+    fun isOAuthAvailable(): Boolean = LxnsOAuth.isConfigured()
+
+    /** 取授权链接，直接拿去 [com.kira.kiba.core.utils.BrowserJump] 打开。 */
+    fun authorizeUrl(): Result<String> = runCatching { LxnsOAuth.authorizeUrl() }
+
     /**
-     * 绑定 Key：先落盘再验证（[LxnsApi] 从 SP 取 Key），验证失败回滚到绑定前的值。
+     * **OAuth 登录**：授权码 → 令牌 → 探活。
+     *
+     * 顺序很讲究：
+     * 1. 先换令牌（失败说明码过期/被用过了，本地什么都不改）；
+     * 2. 再调 UserInfo 证明令牌真的能用（`openid` 权限决定的 `sub` 是稳定身份）；
+     * 3. 最后探活玩家（这一步允许 404，只标记 `playerFound=false`）。
+     */
+    suspend fun loginWithOAuth(rawCode: String): Result<Unit> = runCatching {
+        _state.value = _state.value.copy(loading = true, error = null)
+        LxnsOAuth.exchangeCode(rawCode)
+        val sub = runCatching { LxnsOAuth.userInfo().stringOrEmpty("sub") }.getOrDefault("")
+        val probe = probe()
+        SpUtil.saveLxnsName(probe.name)
+        Log.i(TAG, "lxns oauth bound, sub=$sub playerFound=${probe.playerFound}")
+        _state.value = State(
+            bound = true,
+            name = probe.name,
+            playerFound = probe.playerFound,
+            oauth = true,
+        )
+    }.onFailure { e ->
+        Log.w(TAG, "lxns oauth login failed", e)
+        // 令牌没换成功就不要留下半截状态；但如果之前已经登录过，别把老凭据搞坏
+        _state.value = State(
+            bound = SpUtil.isLxnsLoggedIn(),
+            name = SpUtil.getLxnsName(),
+            error = e.message ?: "落雪授权登录失败",
+            oauth = SpUtil.hasLxnsOAuth(),
+        )
+    }
+
+    /**
+     * **个人 API 密钥登录**：先落盘再验证（[LxnsApi] 从 SP 取凭据），验证失败回滚。
      *
      * 验证失败分类：
      * - 401/403 → Key 错误或被撤销，直接失败并提示；
@@ -92,6 +140,9 @@ object LxnsAccount {
         _state.value = _state.value.copy(loading = true, error = null)
         val previous = SpUtil.getLxnsApiKey()
         SpUtil.saveLxnsApiKey(key)
+        // Key 与 OAuth 并存时以 OAuth 为准，会导致刚填的 Key 根本不生效 —— 明确清掉 OAuth，
+        // 让用户「点哪个通道就走哪个通道」，避免出现「明明换了 Key 还是旧账号」的困惑。
+        SpUtil.clearLxnsOAuth()
         try {
             val probe = probe()
             SpUtil.saveLxnsName(probe.name)
@@ -115,14 +166,16 @@ object LxnsAccount {
         }
     }
 
-    /** 解绑：清 Key 与昵称（不动已同步进 Room 的成绩，用户随时可切回水鱼源）。 */
+    /** 解绑：清凭据 / 昵称 / 好友码（不动已同步进 Room 的成绩，用户随时可切回水鱼源）。 */
     fun logout() {
+        SpUtil.clearLxnsOAuth()
         SpUtil.saveLxnsApiKey("")
         SpUtil.saveLxnsName("")
+        SpUtil.clearLxnsFriendCodes()
         _state.value = State()
     }
 
-    /** 启动恢复：已绑定时刷新一次昵称；失败只记日志，不影响已同步数据展示。 */
+    /** 启动恢复：已登录时刷新一次昵称 / 好友码；失败只记日志，不影响已同步数据展示。 */
     suspend fun restore() {
         if (!SpUtil.isLxnsLoggedIn()) {
             _state.value = State()
@@ -136,6 +189,7 @@ object LxnsAccount {
                     bound = true,
                     name = probe.name.ifBlank { SpUtil.getLxnsName() },
                     playerFound = probe.playerFound,
+                    oauth = SpUtil.hasLxnsOAuth(),
                 )
             }
             .onFailure { e ->
@@ -144,6 +198,7 @@ object LxnsAccount {
                     bound = true,
                     name = SpUtil.getLxnsName(),
                     error = e.message,
+                    oauth = SpUtil.hasLxnsOAuth(),
                 )
             }
     }
@@ -151,17 +206,22 @@ object LxnsAccount {
     private data class Probe(val name: String, val playerFound: Boolean)
 
     /**
-     * 探昵称 + 玩家是否已绑定：先舞萌后中二，只有 401/403 才判 Key 无效。
-     * 两个游戏都 404（`player not found`）时返回缓存名（或占位），并标记 playerFound=false。
+     * 探昵称 / 好友码 / 玩家是否已绑定：两个游戏都探一遍（拿两侧好友码），
+     * 只有 401/403 才判凭据无效。两个游戏都 404（`player not found`）时
+     * 返回缓存名（或占位），并标记 playerFound=false。
      */
     private suspend fun probe(): Probe {
         var authError: LxnsApi.LxnsException? = null
-        for (path in PROBE_PATHS) {
+        var name = ""
+        var found = false
+        for ((gameType, path) in PROBE_PATHS) {
             try {
                 val obj = LxnsApi.getObject(path)
-                val name = obj.stringOrEmpty("name").takeIf { it.isNotBlank() }
-                    ?: SpUtil.getLxnsName().ifBlank { "落雪玩家" }
-                return Probe(name, playerFound = true)
+                val fc = obj.longOrZero("friend_code")
+                if (fc > 0) SpUtil.saveLxnsFriendCode(gameType, fc)
+                val n = obj.stringOrEmpty("name")
+                if (n.isNotBlank() && name.isBlank()) name = n
+                found = true
             } catch (e: LxnsApi.LxnsException) {
                 if (e.isAuthError) {
                     authError = e
@@ -172,8 +232,8 @@ object LxnsAccount {
         }
         authError?.let { throw it }
         return Probe(
-            name = SpUtil.getLxnsName().ifBlank { "落雪玩家" },
-            playerFound = false,
+            name = name.ifBlank { SpUtil.getLxnsName() }.ifBlank { "落雪玩家" },
+            playerFound = found,
         )
     }
 
@@ -187,12 +247,17 @@ object LxnsAccount {
         .trim()
 
     private val PROBE_PATHS = listOf(
-        "/user/maimai/player",
-        "/user/chunithm/player",
+        GameType.MAIMAI to "/user/maimai/player",
+        GameType.CHUNITHM to "/user/chunithm/player",
     )
 
     private fun JsonObject.stringOrEmpty(name: String): String {
         val el = get(name)?.takeIf { !it.isJsonNull && it.isJsonPrimitive } ?: return ""
         return runCatching { el.asString }.getOrDefault("")
+    }
+
+    private fun JsonObject.longOrZero(name: String): Long {
+        val el = get(name)?.takeIf { !it.isJsonNull && it.isJsonPrimitive } ?: return 0L
+        return runCatching { el.asLong }.getOrDefault(0L)
     }
 }

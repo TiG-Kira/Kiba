@@ -1,7 +1,13 @@
 # Kiba ProGuard / R8 规则
-# 不混淆（保留类名/方法名，降低 R8 击破反射与运行时取景层的风险；仍做代码收缩）
--dontobfuscate
-
+#
+# 1.8.8 起**开启混淆**（此前是 -dontobfuscate）。
+# 目的：把落雪凭据保险箱（core/security/LxnsVault + 构建期生成的 LxnsSealData）连同 UI 层
+# 一起改名，让「解包 → 找常量 → 抄密钥」的路径断掉；只靠加密不改名，加密逻辑本身一眼可见。
+#
+# 为什么敢开了：历史上被 R8 打穿的都是**仅反射可达**的东西（Gson TypeToken / 反射 DTO /
+# Room 实体），这些现在全部有显式 -keep（见下）。UI / Compose / Coil / miuix 都是静态引用，
+# 改名无影响；Activity / Service / Receiver 由 Manifest 引用，R8 自动保留。
+#
 # 保留行号，便于 release 崩溃定位
 -keepattributes SourceFile,LineNumberTable
 
@@ -58,3 +64,19 @@
 
 # ── 原生库（.so）不参与 R8，保留 ──
 -keep class **.BuildConfig { *; }
+
+# ── 混淆相关的补充保留（1.8.8）──
+# 导航用 page.javaClass.simpleName 生成页面状态 key（滚动位置/顶栏记忆），
+# 类名被改成 a/b/c 后不同页可能撞名 → 只保名不保实现，收缩照常。
+-keepnames class com.kira.kiba.ui.navigation.KibaSubPage$*
+-keepnames class com.kira.kiba.ui.navigation.KibaTab
+
+# kotlinx.serialization：二维码网关的 DTO 走编译器生成的 $$serializer。
+# 只被 Companion / 内联 serializer<T>() 静态引用，R8 开混淆后仍可能被合并掉，显式保留。
+-keep,includedescriptorclasses class com.kira.kiba.core.maimai.**$$serializer { *; }
+-keepclassmembers class com.kira.kiba.core.maimai.** {
+    *** Companion;
+}
+-keepclasseswithmembers class com.kira.kiba.core.maimai.** {
+    kotlinx.serialization.KSerializer serializer(...);
+}

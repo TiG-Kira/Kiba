@@ -80,6 +80,7 @@ fun MeScreen(
     onOpenRatingCalc: () -> Unit,
     onOpenVersionMap: () -> Unit,
     onOpenHotCharts: () -> Unit,
+    onOpenFriendQuery: () -> Unit,
     onOpenChuniBest: () -> Unit,
 ) {
     val account by DivingFishAccount.state.collectAsState()
@@ -96,7 +97,7 @@ fun MeScreen(
     // 同步成功但账号无任何中二成绩（best 为空数组）——不是错误，需单独文案
     val chuniNoData = (chuniSyncState as? ChuniRecordSync.SyncState.Done)?.empty == true
     val chuniJwtPresent = remember { SpUtil.getDivingFishJwt().isNotBlank() }
-    // 数据源就绪判定：落雪看 API Key，水鱼看各自凭据
+    // 数据源就绪判定：落雪看登录凭据（OAuth 或个人 API Key），水鱼看各自凭据
     val maimaiSource = remember { SpUtil.getScoreSource(GameType.MAIMAI) }
     val chuniSource = remember { SpUtil.getScoreSource(GameType.CHUNITHM) }
     val chuniReady = remember(chuniSource, chuniJwtPresent) {
@@ -139,7 +140,7 @@ fun MeScreen(
                             },
                             summary = when {
                                 !chuniReady && chuniSource == ScoreSource.LXNS ->
-                                    "落雪源需要 API Key：设置 → 查分器数据源 → 绑定落雪 API Key"
+                                    "落雪源需要先登录落雪账号：设置 → 查分器数据源 → 登录落雪账号"
                                 !chuniReady ->
                                     "水鱼 OAuth 暂不支持中二节奏，请使用账号密码登录"
                                 chuniSyncing -> "正在同步中二成绩…"
@@ -154,7 +155,7 @@ fun MeScreen(
                                 when {
                                     !chuniReady && chuniSource == ScoreSource.LXNS -> Toast.makeText(
                                         context,
-                                        "请到「设置 → 查分器数据源」绑定落雪 API Key",
+                                        "请到「设置 → 查分器数据源」登录落雪账号",
                                         Toast.LENGTH_LONG,
                                     ).show()
                                     !chuniReady -> onOpenLogin()
@@ -177,9 +178,9 @@ fun MeScreen(
                                 "未绑定查分器"
                             },
                             summary = when {
-                                // 舞萌侧选了落雪但没绑 Key：别再把人往水鱼登录页带
+                                // 舞萌侧选了落雪但没登录：别再把人往水鱼登录页带
                                 !account.bound && maimaiSource == ScoreSource.LXNS ->
-                                    "落雪源需要 API Key：设置 → 查分器数据源 → 绑定落雪 API Key"
+                                    "落雪源需要先登录落雪账号：设置 → 查分器数据源 → 登录落雪账号"
                                 !account.bound -> "账号密码登录，解锁 Best 50 / 推分推荐"
                                 account.loading -> "正在获取成绩…"
                                 account.error != null -> "${account.error}（点击查看 Best 50）"
@@ -192,7 +193,7 @@ fun MeScreen(
                                     account.bound -> onOpenBest50()
                                     maimaiSource == ScoreSource.LXNS -> Toast.makeText(
                                         context,
-                                        "请到「设置 → 查分器数据源」绑定落雪 API Key",
+                                        "请到「设置 → 查分器数据源」登录落雪账号",
                                         Toast.LENGTH_LONG,
                                     ).show()
                                     else -> onOpenLogin()
@@ -219,7 +220,7 @@ fun MeScreen(
                         },
                         summary = when {
                             maimaiSource == ScoreSource.LXNS ->
-                                "舞萌当前用落雪源 · 两个游戏的 Key 一把通用，可在「设置 → 查分器数据源」切换"
+                                "舞萌当前用落雪源 · 一个落雪账号两个游戏通用，可在「设置 → 查分器数据源」切换"
                             account.bound ->
                                 "当前：${account.nickname.ifBlank { "查分器用户" }}（Rating ${account.rating}）"
                             else -> "支持水鱼账号密码登录（OAuth 授权已暂时停用）"
@@ -318,6 +319,12 @@ fun MeScreen(
                             onClick = onOpenVersionMap,
                         )
                     }
+                    ArrowPreference(
+                        title = "查朋友",
+                        summary = "输入好友码查看对方公开的落雪数据（玩家信息 / Best / 全量成绩统计）",
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.ContactsCircle) },
+                        onClick = onOpenFriendQuery,
+                    )
                     ArrowPreference(
                         title = "登录机台",
                         summary = "打开微信「舞萌 | 中二」公众号，点底部「玩家二维码」菜单即可扫码上机",

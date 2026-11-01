@@ -96,10 +96,10 @@ object CrawlerCaller {
      * - 水鱼：舞萌把账密包裹进 HTML 头部 → `pageparser/page`；中二走账号密码 jwt 通道
      *   （水鱼 OAuth scope 不支持中二），取数是「POST send → GET」两步串行，上传走
      *   `chunithmprober/player/update_records_html`；
-     * - 落雪：本地把 NET 页面解析成成绩（[com.kira.kiba.core.data.NetHtmlParser]），
-     *   再 `POST /api/v0/user/{game}/player/scores`（X-User-Token）。既不用账密也不用 jwt。
-     *   **不能**直传 HTML：落雪的 HTML 直传端点是开发者 API（要审核 + 好友码），
-     *   个人密钥打过去只会拿到 550 / 404。
+     * - 落雪：**官方 HTML 直传优先**（开发者 API，`POST /api/v0/{game}/player/{fc}/html`，
+     *   解析在落雪侧、中二 WORLD'S END 也能传），直传不可用时回落「本地解析 NET 页面
+     *   （[com.kira.kiba.core.data.NetHtmlParser]）→ `POST /api/v0/user/{game}/player/scores`」。
+     *   两条通道都不需要账密 / jwt。详见 [com.kira.kiba.core.network.LxnsUploader]。
      */
     @JvmOverloads
     fun fetchData(authUrl: String, gameType: GameType = SpUtil.getGameType()) {
@@ -117,9 +117,9 @@ object CrawlerCaller {
             val crawler = WechatCrawler()
             val source = SpUtil.getScoreSource(gameType)
             val useLxns = source == ScoreSource.LXNS
-            if (useLxns && SpUtil.getLxnsApiKey().isBlank()) {
-                writeLog("当前数据源是落雪，但还没有绑定落雪 API Key")
-                onError(IllegalStateException("请先到「设置 → 查分器数据源」绑定落雪 API Key"))
+            if (useLxns && !com.kira.kiba.core.network.LxnsAuth.hasCredential()) {
+                writeLog("当前数据源是落雪，但还没有登录落雪账号")
+                onError(IllegalStateException("请先到「设置 → 查分器数据源」登录落雪账号"))
                 return@launch
             }
             writeLog("上传目标：${source.shortLabel}查分器")

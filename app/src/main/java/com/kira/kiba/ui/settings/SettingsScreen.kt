@@ -286,11 +286,15 @@ fun SettingsScreen(
                         },
                     )
                     ArrowPreference(
-                        title = if (lxnsState.bound) "落雪账号" else "绑定落雪 API Key",
+                        title = if (lxnsState.bound) "落雪账号" else "登录落雪账号",
                         summary = when {
                             lxnsState.bound ->
-                                "${lxnsState.name.ifBlank { "已绑定" }} · 两个游戏共用这把 Key · 点击解绑"
-                            else -> "未绑定 · 点击查看获取方法（注册 / 生成 Key 全流程）"
+                                "${lxnsState.name.ifBlank { "已登录" }} · " +
+                                    (if (lxnsState.oauth) "落雪账号授权" else "个人 API 密钥") +
+                                    " · 两个游戏共用 · 点击管理"
+                            LxnsAccount.isOAuthAvailable() ->
+                                "未登录 · 推荐「用落雪账号授权」，一步到位；也可手填个人 API 密钥"
+                            else -> "未登录 · 点击查看个人 API 密钥获取方法"
                         },
                         startAction = { PrefIcon(MiuixGlassIcons.Regular.Contacts) },
                         onClick = { showLxnsKeyDialog = true },
@@ -446,9 +450,10 @@ fun SettingsScreen(
     }
 
     if (showLxnsKeyDialog) {
-        LxnsKeyDialog(
+        LxnsAccountDialog(
             bound = lxnsState.bound,
             name = lxnsState.name,
+            playerFound = lxnsState.playerFound,
             onDismiss = { showLxnsKeyDialog = false },
         )
     }
@@ -472,49 +477,83 @@ private fun scoreSourceSummary(
         "水鱼 · 完整成绩，机台更新链路最成熟（推荐）"
     }
     ScoreSource.LXNS -> when {
-        !lxnsBound -> "落雪 · 尚未绑定 API Key，请先点下方「绑定落雪 API Key」"
+        !lxnsBound -> "落雪 · 尚未登录落雪账号，请先点下方「登录落雪账号」"
         game == GameType.CHUNITHM -> "落雪 · 全量成绩 + 官方当前版本 B20"
         else -> "落雪 · 全量成绩（需先在落雪同步过一次，账号才会绑定玩家）"
     }
 }
 
 /**
- * 落雪 API Key 绑定弹层 —— **含完整的「怎么获取 Key」分步引导**。
+ * 落雪账号弹层 —— **两条登录通道**，默认走 OAuth。
  *
- * 用户最容易卡在「Key 在哪」这一步，所以这里不是一句「请输入 Token」就完事：
- * 注册入口、Key 生成入口、四步说明、粘贴框、失败原因全在一屏内。
+ * ## 为什么优先 OAuth
+ * 落雪官方明确把 OAuth 定位成「替代个人 API 密钥」：权限更细（本项目只要
+ * `read_user_profile / read_player / write_player / openid`，**不要**能读密钥的
+ * `read_user_token`）、令牌 15 分钟一换、用户可随时在站内撤销。
+ * 对用户来说也少一步：不用去「账号详情」翻那串 44 位密钥。
  *
- * Key 只存本机私有 SharedPreferences（`lxns_api_key`），不做任何上报；
- * 用户可在落雪站内随时撤销，撤销后同步会提示重新绑定（401）。
+ * ## 为什么是「复制授权码」而不是自动回调
+ * 这个 OAuth 应用登记的是**无回调地址**，授权成功后落雪**不重定向**，
+ * 而是直接在页面上把授权码（形如 `JVJ6-VPTM-MGHZ`）显示出来。
+ * 所以流程就是「打开授权页 → 复制那串码 → 粘回来」，不需要起本地 HTTP 监听，
+ * 也不用给每台设备登记回调。
+ *
+ * ## 兜底通道
+ * 打包时没带 OAuth 应用凭据（公开仓库构建即是）会自动切到「个人 API 密钥」引导；
+ * 用户也可以手动切 —— 两条都能用，OAuth 令牌失效时只要 Key 还在就还能同步。
  */
 @Composable
-private fun LxnsKeyDialog(
+private fun LxnsAccountDialog(
     bound: Boolean,
     name: String,
+    playerFound: Boolean,
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val state by LxnsAccount.state.collectAsState()
-    var input by remember { mutableStateOf("") }
+    val oauthAvailable = remember { LxnsAccount.isOAuthAvailable() }
+
+    var useOAuth by remember { mutableStateOf(oauthAvailable) }
+    var codeInput by remember { mutableStateOf("") }
+    var keyInput by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
 
+    val authModeLabel = if (state.oauth) "落雪账号授权" else "个人 API 密钥"
+
     KibaGlassDialog(
         show = true,
-        title = if (bound) "落雪账号" else "获取落雪 API Key",
+        title = if (bound) "落雪账号" else "登录落雪账号",
         summary = if (bound) {
-            "${name.ifBlank { "已绑定" }} · 两个游戏的成绩同步共用这把 Key"
+            "${name.ifBlank { "已登录" }} · 两个游戏的成绩同步共用这一个凭据"
         } else {
-            "落雪没有账号密码登录接口，需要用「个人 API 密钥」授权。四步即可拿到："
+            "落雪是「舞萌 / 中二」的第三方查分器。登录后即可用落雪源同步成绩、往落雪上分。"
         },
         onDismissRequest = onDismiss,
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
             if (bound) {
                 Text(
-                    text = "解绑只清除本机的 Key，已同步进本地的成绩不会删除；" +
-                        "随时可以在落雪重新生成 Key 再绑定。",
+                    text = "当前通道：$authModeLabel",
+                    style = MiuixTheme.textStyles.body2,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                )
+                if (!playerFound) {
+                    Spacer(Modifier.height(8.dp))
+                    // 这是最常见的误解来源：登录成功 ≠ 能查到成绩。落雪的数据挂在「玩家」上，
+                    // 账号里没有玩家时所有成绩接口都 404 player not found。
+                    Text(
+                        text = "注意：这个落雪账号还没有绑定玩家。请到落雪网页「同步游戏数据」" +
+                            "同步一次，把机台好友码绑上，否则成绩接口会一直返回「找不到玩家」。",
+                        style = MiuixTheme.textStyles.body2,
+                        color = MiuixTheme.colorScheme.error,
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "解绑只清除本机的凭据，已同步进本地的成绩不会删除；" +
+                        "随时可以重新登录或换一把 Key。",
                     style = MiuixTheme.textStyles.body2,
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                 )
@@ -538,7 +577,130 @@ private fun LxnsKeyDialog(
                 return@Column
             }
 
-            // ── 四步引导 ──
+            // ── 通道切换 ──
+            if (oauthAvailable) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    TextButton(
+                        text = if (useOAuth) "● 落雪账号授权" else "○ 落雪账号授权",
+                        onClick = {
+                            useOAuth = true
+                            error = null
+                        },
+                    )
+                    TextButton(
+                        text = if (useOAuth) "○ 个人 API 密钥" else "● 个人 API 密钥",
+                        onClick = {
+                            useOAuth = false
+                            error = null
+                        },
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+            }
+
+            if (useOAuth) {
+                GuideStep(
+                    index = "1",
+                    text = "点下面的「打开授权页」，用落雪账号登录并点同意授权（没有账号先去注册）",
+                )
+                GuideStep(
+                    index = "2",
+                    text = "授权完成后页面会**直接显示一串授权码**（形如 JVJ6-VPTM-MGHZ），长按复制它，" +
+                        "注意授权码只能用一次、且很快过期",
+                )
+                GuideStep(
+                    index = "3",
+                    text = "回到这里粘贴授权码，点「登录」",
+                )
+
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    TextButton(
+                        text = "打开授权页",
+                        onClick = {
+                            LxnsAccount.authorizeUrl()
+                                .onSuccess { BrowserJump.openUrl(context, it) }
+                                .onFailure { error = it.message }
+                        },
+                    )
+                    TextButton(
+                        text = "注册落雪",
+                        onClick = { BrowserJump.openUrl(context, LxnsAccount.REGISTER_URL) },
+                    )
+                }
+
+                Spacer(Modifier.height(12.dp))
+                TextField(
+                    value = codeInput,
+                    onValueChange = {
+                        codeInput = it
+                        error = null
+                    },
+                    label = "粘贴授权码",
+                    useLabelAsPlaceholder = true,
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+
+                val message = error ?: state.error
+                if (message != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = message,
+                        style = MiuixTheme.textStyles.body2,
+                        color = MiuixTheme.colorScheme.error,
+                    )
+                }
+
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "授权范围：读取你的落雪资料、读取成绩、写入成绩（机台上分必需）、" +
+                        "以及一个稳定的账号标识。**不含**「读取个人 API 密钥」。\n" +
+                        "令牌 15 分钟自动续期（刷新令牌 30 天），随时可以在落雪「已授权应用」里撤销。",
+                    style = MiuixTheme.textStyles.footnote1,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                )
+
+                Spacer(Modifier.height(16.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(text = "取消", onClick = onDismiss)
+                    Spacer(Modifier.width(12.dp))
+                    Button(
+                        onClick = {
+                            if (busy) return@Button
+                            busy = true
+                            error = null
+                            scope.launch {
+                                LxnsAccount.loginWithOAuth(codeInput)
+                                    .onSuccess {
+                                        busy = false
+                                        onDismiss()
+                                    }
+                                    .onFailure {
+                                        busy = false
+                                        error = it.message ?: "授权登录失败"
+                                    }
+                            }
+                        },
+                        enabled = codeInput.isNotBlank() && !busy,
+                        colors = ButtonDefaults.buttonColorsPrimary(),
+                    ) {
+                        Text(text = if (busy) "登录中…" else "登录")
+                    }
+                }
+                return@Column
+            }
+
+            // ── 个人 API 密钥通道 ──
             GuideStep(
                 index = "1",
                 text = "打开落雪并登录（没有账号就点下面的「注册落雪」）",
@@ -573,9 +735,9 @@ private fun LxnsKeyDialog(
 
             Spacer(Modifier.height(12.dp))
             TextField(
-                value = input,
+                value = keyInput,
                 onValueChange = {
-                    input = it
+                    keyInput = it
                     error = null
                 },
                 label = "粘贴落雪 API Key",
@@ -616,7 +778,7 @@ private fun LxnsKeyDialog(
                         busy = true
                         error = null
                         scope.launch {
-                            LxnsAccount.login(input)
+                            LxnsAccount.login(keyInput)
                                 .onSuccess {
                                     busy = false
                                     onDismiss()
@@ -627,7 +789,7 @@ private fun LxnsKeyDialog(
                                 }
                         }
                     },
-                    enabled = input.isNotBlank() && !busy,
+                    enabled = keyInput.isNotBlank() && !busy,
                     colors = ButtonDefaults.buttonColorsPrimary(),
                 ) {
                     Text(text = if (busy) "验证中…" else "绑定")

@@ -337,7 +337,13 @@ object SpUtil {
         userInfoPrefs.edit { putString(KEY_LXNS_API_KEY, key.trim()) }
     }
 
-    fun isLxnsLoggedIn(): Boolean = getLxnsApiKey().isNotBlank()
+    /**
+     * 落雪是否已「登录」—— **个人 API Key 或 OAuth 授权任一存在**即可。
+     *
+     * 迁移注意：1.8.7 之前只有个人 Key 一条路，老用户升级后 Key 还在，
+     * 行为不变；OAuth 是新增的**优先通道**，两者并存时优先 OAuth（见 LxnsAuth）。
+     */
+    fun isLxnsLoggedIn(): Boolean = getLxnsApiKey().isNotBlank() || hasLxnsOAuth()
 
     /** 落雪玩家名（验证 Key 时顺手缓存，避免每次进设置页都打接口）。 */
     private const val KEY_LXNS_NAME = "lxns_player_name"
@@ -346,6 +352,76 @@ object SpUtil {
 
     fun saveLxnsName(name: String) {
         userInfoPrefs.edit { putString(KEY_LXNS_NAME, name) }
+    }
+
+    // ── 落雪 OAuth 令牌 ──
+    //
+    // access_token 只有 15 分钟，refresh_token 30 天且**每次刷新都换新**（旧的立即失效）。
+    // 所以三个字段必须一起原子写，否则进程在中间被杀会留下「新 refresh + 旧 access」的半截状态。
+    // 一律用**新键**：老版本没有这些键，回落空串/0 即可，不存在类型冲突。
+
+    private const val KEY_LXNS_OAUTH_ACCESS = "lxns_oauth_access"
+    private const val KEY_LXNS_OAUTH_REFRESH = "lxns_oauth_refresh"
+    private const val KEY_LXNS_OAUTH_EXPIRES_AT = "lxns_oauth_expires_at"
+
+    fun getLxnsOAuthAccess(): String = userInfoPrefs.getString(KEY_LXNS_OAUTH_ACCESS, "") ?: ""
+
+    fun getLxnsOAuthRefresh(): String = userInfoPrefs.getString(KEY_LXNS_OAUTH_REFRESH, "") ?: ""
+
+    /** access_token 的过期时刻（epoch 毫秒，0 = 未知/未登录）。 */
+    fun getLxnsOAuthExpiresAt(): Long =
+        runCatching { userInfoPrefs.getLong(KEY_LXNS_OAUTH_EXPIRES_AT, 0L) }.getOrDefault(0L)
+
+    fun saveLxnsOAuthToken(access: String, refresh: String, expiresAt: Long) {
+        userInfoPrefs.edit {
+            putString(KEY_LXNS_OAUTH_ACCESS, access)
+            putString(KEY_LXNS_OAUTH_REFRESH, refresh)
+            putLong(KEY_LXNS_OAUTH_EXPIRES_AT, expiresAt)
+        }
+    }
+
+    fun clearLxnsOAuth() {
+        userInfoPrefs.edit {
+            remove(KEY_LXNS_OAUTH_ACCESS)
+            remove(KEY_LXNS_OAUTH_REFRESH)
+            remove(KEY_LXNS_OAUTH_EXPIRES_AT)
+        }
+    }
+
+    fun hasLxnsOAuth(): Boolean = getLxnsOAuthRefresh().isNotBlank()
+
+    // ── 落雪好友码 ──
+    //
+    // 开发者 API（HTML 直传 / 按好友码查玩家）只认好友码，不认账号。登录拿到成绩后
+    // 从 `GET /user/{game}/player` 取一次存下来，省得让用户手输 15 位数字。
+    // 用 String 存（15 位仍在 Long 范围内，但 String 更不容易被格式化/截断搞坏）。
+
+    private const val KEY_LXNS_MAIMAI_FC = "lxns_maimai_friend_code"
+    private const val KEY_LXNS_CHUNI_FC = "lxns_chuni_friend_code"
+
+    fun getLxnsFriendCode(gameType: GameType): Long =
+        runCatching {
+            userInfoPrefs.getString(
+                if (gameType == GameType.MAIMAI) KEY_LXNS_MAIMAI_FC else KEY_LXNS_CHUNI_FC,
+                "",
+            )?.toLongOrNull() ?: 0L
+        }.getOrDefault(0L)
+
+    fun saveLxnsFriendCode(gameType: GameType, code: Long) {
+        if (code <= 0) return
+        userInfoPrefs.edit {
+            putString(
+                if (gameType == GameType.MAIMAI) KEY_LXNS_MAIMAI_FC else KEY_LXNS_CHUNI_FC,
+                code.toString(),
+            )
+        }
+    }
+
+    fun clearLxnsFriendCodes() {
+        userInfoPrefs.edit {
+            remove(KEY_LXNS_MAIMAI_FC)
+            remove(KEY_LXNS_CHUNI_FC)
+        }
     }
 
     // ================= 中二节奏成绩（chunithmprober） =================

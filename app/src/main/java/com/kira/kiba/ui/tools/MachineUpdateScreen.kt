@@ -228,15 +228,15 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
                         )
                         Spacer(Modifier.height(8.dp))
                         if (useLxns) {
-                            // 落雪：只要绑定了个人 API 密钥就能上传，不需要账密 / jwt
+                            // 落雪：只要登录了（OAuth 授权或个人 API 密钥）就能上传，不需要账密 / jwt
                             val keyBound = lxnsState.bound || SpUtil.isLxnsLoggedIn()
                             Text(
                                 text = when {
-                                    !keyBound -> "落雪账号：未绑定 API Key（无法上传成绩）"
+                                    !keyBound -> "落雪账号：未登录（无法上传成绩）"
                                     !lxnsState.playerFound ->
-                                        "落雪账号：${lxnsState.name.ifBlank { "已绑定" }}" +
+                                        "落雪账号：${lxnsState.name.ifBlank { "已登录" }}" +
                                             " · 尚未绑定玩家，请先在落雪网页同步一次"
-                                    else -> "落雪账号：${lxnsState.name.ifBlank { "已绑定" }}"
+                                    else -> "落雪账号：${lxnsState.name.ifBlank { "已登录" }}（${if (lxnsState.oauth) "授权登录" else "API 密钥"}）"
                                 },
                                 style = MiuixTheme.textStyles.footnote1,
                                 color = if (!keyBound || !lxnsState.playerFound) {
@@ -275,7 +275,7 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
                         Text(
                             text = when {
                                 !isChunithm -> "当前游戏：舞萌 DX（在「曲目」页顶部切换游戏）"
-                                useLxns -> "当前游戏：中二节奏 · 落雪通道（本地解析页面后按成绩接口上传）"
+                                useLxns -> "当前游戏：中二节奏 · 落雪通道（官方 HTML 直传优先，失败回落本地解析）"
                                 chuniNoJwt -> "当前游戏：中二节奏 · 需改用「账号密码」登录（OAuth 不支持中二上传）"
                                 else -> "当前游戏：中二节奏 · 账号密码通道可用"
                             },
@@ -290,9 +290,10 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
                             Spacer(Modifier.height(4.dp))
                             // 两条通路都写清楚，避免用户以为只有一种办法
                             Text(
-                                text = "抓包成功后会在本地把页面解析成成绩再传给落雪。若这条通道走不通，" +
-                                    "可到「设置 → 查分器数据源」用落雪官方同步（WLAN 代理 proxy.maimai.lxns.net:8080，" +
-                                    "由落雪服务器代抓，与本页的 VPN 不能同时开）。",
+                                text = "抓包成功后优先把整页源码「官方直传」给落雪（解析在落雪侧，含中二 WORLD'S END）；" +
+                                    "直传不可用时自动回落到「本地解析 + 成绩接口」，不需要你额外操作。" +
+                                    "两条都不通时，可到「设置 → 查分器数据源」用落雪官方同步" +
+                                    "（WLAN 代理 proxy.maimai.lxns.net:8080，由落雪服务器代抓，与本页 VPN 不能同时开）。",
                                 style = MiuixTheme.textStyles.footnote1,
                                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                             )
