@@ -29,4 +29,7 @@ jobs:
           KIBA_QR_GATEWAY_BASE: ${{ secrets.KIBA_QR_GATEWAY_BASE }}
           KIBA_QR_GATEWAY_SECRET: ${{ secrets.KIBA_QR_GATEWAY_SECRET }}
           KIBA_QR_GATEWAY_PATHS: ${{ secrets.KIBA_QR_GATEWAY_PATHS }}
+          KIBA_LXNS_DEV_KEY: ${{ secrets.KIBA_LXNS_DEV_KEY }}
+          KIBA_LXNS_CLIENT_ID: ${{ secrets.KIBA_LXNS_CLIENT_ID }}
+          KIBA_LXNS_CLIENT_SECRET: ${{ secrets.KIBA_LXNS_CLIENT_SECRET }}
         run: ./gradlew assembleDebug --no-daemon

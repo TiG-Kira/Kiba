@@ -31,6 +31,20 @@ val qrGatewaySecret = (localProps.getProperty("kiba.qrGatewaySecret")
 val qrGatewayPaths = (localProps.getProperty("kiba.qrGatewayPaths")
     ?: System.getenv("KIBA_QR_GATEWAY_PATHS") ?: "").split('|')
 
+// 落雪 maimai DX 查分器凭据（开发者资质 + OAuth 应用），**一律不入库**：
+// - kiba.lxnsDevKey       开发者 API 密钥（HTML 直传、按好友码查玩家）
+// - kiba.lxnsClientId     OAuth 应用 ID
+// - kiba.lxnsClientSecret OAuth 应用密钥
+// CI 通过 GitHub Secrets KIBA_LXNS_DEV_KEY / KIBA_LXNS_CLIENT_ID / KIBA_LXNS_CLIENT_SECRET 注入。
+// 注意：这三项最终都会被打进 APK，反编译可取 —— 只是为了不把明文写进公开仓库，
+// 不是真正的「保密」，别把它们当成能防住逆向的密钥。
+val lxnsDevKey = (localProps.getProperty("kiba.lxnsDevKey")
+    ?: System.getenv("KIBA_LXNS_DEV_KEY") ?: "").toString()
+val lxnsClientId = (localProps.getProperty("kiba.lxnsClientId")
+    ?: System.getenv("KIBA_LXNS_CLIENT_ID") ?: "").toString()
+val lxnsClientSecret = (localProps.getProperty("kiba.lxnsClientSecret")
+    ?: System.getenv("KIBA_LXNS_CLIENT_SECRET") ?: "").toString()
+
 android {
     namespace = "com.kira.kiba"
     // miuix 0.9.4 / kyant backdrop 2.0.1 硬要求 compileSdk >= 37
@@ -41,8 +55,8 @@ android {
         // miuix 0.9.4 各模块（blur/ui/icons/preference）要求 minSdk >= 33
         minSdk = 33
         targetSdk = 37
-        versionCode = 58
-        versionName = "1.8.6"
+        versionCode = 59
+        versionName = "1.8.7"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
@@ -63,6 +77,9 @@ android {
         buildConfigField("String", "QR_PATH_REFRESH", "\"${qrGatewayPaths.getOrElse(2) { "" }}\"")
         buildConfigField("String", "QR_PATH_QR_BIND", "\"${qrGatewayPaths.getOrElse(3) { "" }}\"")
         buildConfigField("String", "QR_PATH_SCORE", "\"${qrGatewayPaths.getOrElse(4) { "" }}\"")
+        buildConfigField("String", "LXNS_DEV_KEY", "\"$lxnsDevKey\"")
+        buildConfigField("String", "LXNS_CLIENT_ID", "\"$lxnsClientId\"")
+        buildConfigField("String", "LXNS_CLIENT_SECRET", "\"$lxnsClientSecret\"")
         ksp {
             arg("room.schemaLocation", "$projectDir/schemas")
         }
