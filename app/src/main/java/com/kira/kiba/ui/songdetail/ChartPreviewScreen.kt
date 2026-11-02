@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import android.view.ViewGroup
 import androidx.compose.ui.viewinterop.AndroidView
 import com.kira.kiba.core.utils.BrowserJump
+import com.kira.kiba.core.utils.CoverSources
 import com.kira.kiba.ui.common.EmptyStateCard
 import com.kira.kiba.ui.common.pageContentPadding
 import com.kira.kiba.ui.navigation.KibaBackAction
@@ -66,6 +67,8 @@ fun ChartPreviewScreen(
     url: String,
     title: String,
     subtitle: String,
+    songId: Int,
+    songImageUrl: String,
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -123,7 +126,14 @@ fun ChartPreviewScreen(
         // 注册到后台播放器中枢：同 url 复用保留实例（播放进度不丢），
         // 手里留着别的谱面则销毁旧实例。离开本页时探测播放态——
         // 在播则保留 WebView + 弹 mini 播放器；未播直接销毁，不漏后台音频。
-        ChartPreviewPlayer.register(url, webView, title, subtitle)
+        ChartPreviewPlayer.register(
+            url = url,
+            view = webView,
+            songTitle = title,
+            songSubtitle = subtitle,
+            // 媒体通知封面候选链（与 UI 封面同一套源，复用 Coil 磁盘缓存）
+            coverCandidates = CoverSources.candidates(songId, songImageUrl),
+        )
         onDispose { ChartPreviewPlayer.onScreenDispose() }
     }
 

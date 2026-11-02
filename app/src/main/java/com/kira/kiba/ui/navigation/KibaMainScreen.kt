@@ -158,8 +158,14 @@ sealed interface KibaSubPage {
     }
 
     /** 落雪谱面预览（WebView 加载落雪官方谱面确认播放页，舞萌专用）。
-     *  songTitle/songSubtitle 透传给后台媒体通知展示曲名与难度。 */
-    data class ChartPreview(val url: String, val songTitle: String, val songSubtitle: String) : KibaSubPage {
+     *  songTitle/songSubtitle/songId/songImageUrl 透传给后台媒体通知（曲名、难度、封面）。 */
+    data class ChartPreview(
+        val url: String,
+        val songTitle: String,
+        val songSubtitle: String,
+        val songId: Int,
+        val songImageUrl: String,
+    ) : KibaSubPage {
         override val title: String = "谱面预览"
     }
 
@@ -551,12 +557,16 @@ fun KibaMainScreen() {
                                   songId = target.songId,
                                   difficultyOrdinal = target.difficultyOrdinal,
                                   scrollBehavior = scrollBehavior,
-                                  onOpenPreview = { url, t, s -> pushPage(KibaSubPage.ChartPreview(url, t, s)) },
+                                  onOpenPreview = { url, t, s, id, img ->
+                                      pushPage(KibaSubPage.ChartPreview(url, t, s, id, img))
+                                  },
                               )
                               is KibaSubPage.ChartPreview -> ChartPreviewScreen(
                                   url = target.url,
                                   title = target.songTitle,
                                   subtitle = target.songSubtitle,
+                                  songId = target.songId,
+                                  songImageUrl = target.songImageUrl,
                                   onBack = { popPage() },
                               )
                               is KibaSubPage.ChuniSongDetail -> ChuniSongDetailScreen(

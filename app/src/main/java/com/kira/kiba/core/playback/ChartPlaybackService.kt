@@ -75,7 +75,8 @@ class ChartPlaybackService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var session: MediaSessionCompat? = null
     private var lastPosMs = 0L
-    private var lastDurationMs = 0L
+    /** 谱面封面（后台异步加载，成功后刷一次元数据；拿不到就退化为应用图标）。 */
+    @Volatile private var coverBitmap: android.graphics.Bitmap? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -85,6 +86,7 @@ class ChartPlaybackService : Service() {
             return START_NOT_STICKY
         }
         enterForeground()
+        loadCoverAsync()
         pollLoop()
         return START_NOT_STICKY
     }
@@ -158,12 +160,10 @@ class ChartPlaybackService : Service() {
             when (st.state) {
                 "playing" -> {
                     lastPosMs = st.posMs
-                    lastDurationMs = st.durMs
                     applyState(ms, PlaybackStateCompat.STATE_PLAYING, st.posMs)
                 }
                 "paused" -> {
                     if (st.posMs > 0) lastPosMs = st.posMs
-                    if (st.durMs > 0) lastDurationMs = st.durMs
                     applyState(ms, PlaybackStateCompat.STATE_PAUSED, lastPosMs)
                 }
                 "ended" -> {
@@ -175,21 +175,48 @@ class ChartPlaybackService : Service() {
         }
     }
 
+    /**
+     * 后台加载谱面封面（复用 [com.kira.kiba.core.utils.CoverFetcher] 与全局 Coil
+     * 磁盘缓存——详情页刚展示过的封面多半直接命中，秒回）。成功后刷一次元数据。
+     */
+    private fun loadCoverAsync() {
+        if (ChartPreviewPlayer.coverCandidates.isEmpty()) return
+        val ms = session ?: return
+        scope.launch(Dispatchers.IO) {
+            val bmp = com.kira.kiba.core.utils.CoverFetcher.fetch(
+                applicationContext,
+                ChartPreviewPlayer.coverCandidates,
+            )
+            if (bmp == null) return@launch
+            launch(Dispatchers.Main) {
+                if (session == ms && ChartPreviewPlayer.webView != null) {
+                    coverBitmap = bmp
+                    applyState(ms, PlaybackStateCompat.STATE_PAUSED, lastPosMs)
+                }
+            }
+        }
+    }
+
     private fun applyState(ms: MediaSessionCompat, state: Int, posMs: Long) {
         ms.setPlaybackState(buildState(state, posMs))
-        ms.setMetadata(
-            MediaMetadataCompat.Builder()
-                .putString(MediaMetadataCompat.METADATA_KEY_TITLE, ChartPreviewPlayer.title.ifBlank { "谱面播放中" })
-                .putString(
-                    MediaMetadataCompat.METADATA_KEY_ARTIST,
-                    ChartPreviewPlayer.subtitle.ifBlank { "落雪谱面预览" },
-                )
-                .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, lastDurationMs)
-                .build(),
-        )
+        ms.setMetadata(buildMetadata())
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         nm.notify(NOTIFICATION_ID, buildNotification(state, posMs))
     }
+
+    private fun buildMetadata(): MediaMetadataCompat =
+        MediaMetadataCompat.Builder()
+            .putString(MediaMetadataCompat.METADATA_KEY_TITLE, ChartPreviewPlayer.title.ifBlank { "谱面播放中" })
+            .putString(
+                MediaMetadataCompat.METADATA_KEY_ARTIST,
+                ChartPreviewPlayer.subtitle.ifBlank { "落雪谱面预览" },
+            )
+            .apply {
+                // 封面：媒体卡片左侧小图 + 锁屏大图。刻意**不放 METADATA_KEY_DURATION**：
+                // 落雪时间线按小节拍数走，与音频整轨秒数对不上，展示出来是错的。
+                coverBitmap?.let { putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, it) }
+            }
+            .build()
 
     private fun buildState(state: Int, posMs: Long): PlaybackStateCompat =
         PlaybackStateCompat.Builder()
@@ -228,23 +255,13 @@ class ChartPlaybackService : Service() {
             .setSilent(true)
             .setOnlyAlertOnce(true)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setLargeIcon(coverBitmap)
             .setStyle(
                 androidx.media.app.NotificationCompat.MediaStyle()
                     .setMediaSession(getOrCreateSession().sessionToken)
                     .setShowActionsInCompactView(0, 1, 2),
             )
-            // MediaStyle 进度条：duration>0 且 setProgress(enabled) 时显示
-            .apply {
-                if (lastDurationMs > 0) {
-                    setProgress(
-                        lastDurationMs.toInt(),
-                        posMs.toInt().coerceAtMost(lastDurationMs.toInt()),
-                        state == PlaybackStateCompat.STATE_PLAYING,
-                    )
-                } else {
-                    setProgress(0, 0, false)
-                }
-            }
+            // 不带进度条：时长口径对不上（见 buildMetadata），展示反而误导。
             .build()
     }
 }

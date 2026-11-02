@@ -71,7 +71,8 @@ fun ChartDetailScreen(
     songId: Int,
     difficultyOrdinal: Int,
     scrollBehavior: ScrollBehavior,
-    onOpenPreview: (url: String, title: String, subtitle: String) -> Unit = { _, _, _ -> },
+    onOpenPreview: (url: String, title: String, subtitle: String, songId: Int, imageUrl: String) -> Unit =
+        { _, _, _, _, _ -> },
 ) {
     val db = remember { AppDataBase.getInstance() }
 
@@ -145,6 +146,8 @@ fun ChartDetailScreen(
                                 chartPreviewUrl(currentChart),
                                 song?.title ?: "未知曲目",
                                 difficultyLabel(currentChart.difficultyType),
+                                songId,
+                                song?.imageUrl ?: "",
                             )
                         },
                     )

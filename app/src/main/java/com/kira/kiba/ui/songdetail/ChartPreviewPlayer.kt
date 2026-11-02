@@ -54,6 +54,11 @@ object ChartPreviewPlayer {
     var subtitle: String = ""
         private set
 
+    /** 谱面封面候选链（[com.kira.kiba.core.utils.CoverSources.candidates]），
+     *  供媒体通知封面加载；空 = 未知曲，通知退化为应用图标。 */
+    var coverCandidates: List<String> = emptyList()
+        private set
+
     /** 一次播放态探测结果。state ∈ playing / paused / ended / idle。 */
     data class Snapshot(val state: String, val posMs: Long, val durMs: Long)
 
@@ -61,7 +66,13 @@ object ChartPreviewPlayer {
     fun current(url: String): WebView? = webView?.takeIf { currentUrl == url }
 
     /** 预览页注册实例；若手里还留着别的谱面（后台播放中）先销毁它。 */
-    fun register(url: String, view: WebView, songTitle: String, songSubtitle: String) {
+    fun register(
+        url: String,
+        view: WebView,
+        songTitle: String,
+        songSubtitle: String,
+        coverCandidates: List<String> = emptyList(),
+    ) {
         if (webView === view) {
             // 同一实例回到前台：解锁上下文（后台期间可能被我们 suspend 过），
             // 否则用户手动点网页播放键时 AudioContext 还挂着，页面有进度没声音。
@@ -73,6 +84,7 @@ object ChartPreviewPlayer {
         currentUrl = url
         title = songTitle
         subtitle = songSubtitle
+        this.coverCandidates = coverCandidates
     }
 
     /**
@@ -101,7 +113,9 @@ object ChartPreviewPlayer {
             evaluateJavascript("(function(){try{var s=window.__kibaMusicSource;if(s&&!s.ended){try{s.stop()}catch(e){}}}catch(e){}})()", null)
             stopLoading()
             onPause()
-            pauseTimers()
+            // **绝不能调 pauseTimers()**：它是进程级 API（暂停所有 WebView 的渲染
+            // 与 JS 调度），销毁旧实例时会把紧接着新建的 WebView 一起冻住 ——
+            // 正是「返回后打开另一首歌灰屏」的根因。音源已在上面显式 stop。
             (parent as? ViewGroup)?.removeView(this)
             destroy()
         }
@@ -109,6 +123,7 @@ object ChartPreviewPlayer {
         currentUrl = null
         title = ""
         subtitle = ""
+        coverCandidates = emptyList()
         appContext?.let { com.kira.kiba.core.playback.ChartPlaybackService.stop(it) }
     }
 
