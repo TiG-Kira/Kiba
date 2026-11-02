@@ -33,7 +33,6 @@ import com.kira.kiba.core.db.entity.SongDataEntity
 import com.kira.kiba.core.stats.RelativeDifficulty
 import com.kira.kiba.core.stats.SongRating
 import com.kira.kiba.core.stats.statsLevelIndex
-import com.kira.kiba.core.utils.Constants
 import com.kira.kiba.ui.common.DifficultyChip
 import com.kira.kiba.ui.common.EmptyStateCard
 import com.kira.kiba.ui.common.HGap
@@ -177,20 +176,15 @@ fun ChartDetailScreen(
 /**
  * 落雪谱面预览页 URL。
  *
- * chart_id 口径（与落雪 CDN 一致）：标准谱 = 曲目 id，DX 谱 = 曲目 id + 10000；
- * 宴谱曲目 id 本身 ≥ 100000，原样使用。difficulty = 0..4（BASIC..Re:MASTER，
- * 与本地 level_index 同口径）；宴谱省略，由落雪页面自行选择。
+ * chart_id = 曲目 id 原样（落雪 CDN 的 simai 谱面文件一曲一份、内含全部难度，
+ * 不做 DX +10000 偏移；宴谱曲目 id ≥ 100000 亦原样）。
+ * difficulty = 0..4（BASIC..Re:MASTER，与本地 level_index 同口径；
+ * 落雪页面内部会 +2 映射到其 1=EASY~6=Re:MASTER 枚举）；
+ * 宴谱省略，由落雪页面自行选择。
  */
 fun chartPreviewUrl(chart: ChartEntity): String = buildString {
     append("https://maimai.lxns.net/chart?chart_id=")
-    val songId = chart.songId
-    append(
-        when {
-            songId >= 100000 -> songId
-            chart.type == Constants.CHART_TYPE_SD -> songId
-            else -> songId + 10000
-        },
-    )
+    append(chart.songId)
     if (chart.difficultyType.ordinal <= 4) {
         append("&difficulty=")
         append(chart.difficultyType.ordinal)

@@ -378,12 +378,13 @@ fun KibaMainScreen() {
           topBar = {
               // 顶栏玻璃模糊仅在「真·高级材质」开启时生效；关闭时提供 null，
               // GlassTopAppBar 自动回落为传统纯色默认样式（无模糊、无玻璃描边）。
-              // 关于页为豁免页：无论开关如何，一律普通顶栏（不用任何高级材质）。
+              // 豁免页：关于页 + 谱面预览页一律普通顶栏——预览页底下是 WebView 全屏画布，
+              // 玻璃取景层采样不到有效背景，只会渲染出一块纯透明。
               val sub = subStack.lastOrNull()
-              val aboutExempt = sub is KibaSubPage.About
+              val plainTopBarExempt = sub is KibaSubPage.About || sub is KibaSubPage.ChartPreview
               CompositionLocalProvider(
                   LocalGlassTopAppBarBackdrop provides
-                      if (aboutExempt) null
+                      if (plainTopBarExempt) null
                       else if (LocalAdvancedMaterialEnabled.current) glassNavBackdrop else null,
               ) {
                   if (sub == null) {

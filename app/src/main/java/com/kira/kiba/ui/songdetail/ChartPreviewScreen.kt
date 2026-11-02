@@ -47,7 +47,7 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  * simai 渲染器，不如直接加载它的公开预览页：
  * `https://maimai.lxns.net/chart?chart_id={id}&difficulty={n}`。
  *
- * - chart_id：标准谱 = 曲目 id，DX 谱 = 曲目 id + 10000（宴谱 id 本身 ≥ 100000，原样使用）；
+ * - chart_id：曲目 id 原样（落雪 CDN 的 simai 谱面一曲一份、含全部难度，无 DX 偏移）；
  * - difficulty：0 = BASIC … 4 = Re:MASTER（与本地 level_index 一致；宴谱省略，页面自选）。
  *
  * 失败兜底：WebView 加载失败（断网 / CDN 异常）时给出「用浏览器打开」入口，
@@ -77,6 +77,11 @@ fun ChartPreviewScreen(
             webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView, u: String) {
                     loading = false
+                    injectKibaStyle(view)
+                    // SPA 渲染晚于 onPageFinished：延迟补注入一次，
+                    // 此时「谱面预览」h3 才存在，标题区隐藏靠这一波。
+                    // 注意这里只排一次；injectKibaStyle 内部不再自排，避免无限链式调度。
+                    view.postDelayed({ injectKibaStyle(view) }, 8_000L)
                 }
 
                 override fun onReceivedError(
@@ -181,8 +186,49 @@ fun ChartPreviewScreen(
     }
 }
 
+/**
+ * 注入 Kiba 侧脚本：隐藏落雪页自带的站点头部（汉堡菜单 / Logo / 游戏切换 Tab /
+ * 主题切换）和「谱面预览 测试版」标题区，避免用户在 App 内跳去落雪其他页面。
+ *
+ * 站点头部：落雪前端用 CSS 变量做占位（--header-height / --header-bar-height），
+ * 变量归零 + display:none 容器即可无留白；类名是 vite CSS module 编译产物
+ * `_header_<hash>_<n>`（只保留 local 名），用 `_header_` 属性子串匹配。
+ *
+ * 标题区：JSX 是 `Group > (返回按钮 + Title(h3)"谱面预览" + Badge"测试版")`，
+ * mantine v7 组件带全局类 `mantine-Group-root`，故按 h3 文本定位后
+ * hide 最近的一个 Group。SPA 渲染晚于 onPageFinished，因此除即时执行外
+ * 还会在 8 秒后补一次；style 挂在 html（documentElement）上——react-helmet
+ * 会重写 head，挂那里会被它清掉。
+ */
+private fun injectKibaStyle(view: WebView) {
+    val js = """
+        (function() {
+            var s = document.getElementById('kiba-inject-style');
+            if (!s) {
+                s = document.createElement('style');
+                s.id = 'kiba-inject-style';
+                document.documentElement.appendChild(s);
+            }
+            s.textContent = ':root { --header-height: 0px !important; --header-bar-height: 0px !important; }'
+                + 'div[class*="_header_"] { display: none !important; }';
+            var hidden = 0;
+            document.querySelectorAll('h3').forEach(function(h) {
+                if ((h.textContent || '').trim() !== '谱面预览') return;
+                var c = h.closest('.mantine-Container-root');
+                if (c && c.firstElementChild) { c.firstElementChild.style.display = 'none'; hidden++; }
+            });
+            return 'alive:' + !!s.parentNode + ',hid:' + hidden;
+        })()
+    """.trimIndent().replace("\n", " ")
+    view.evaluateJavascript(js) { result ->
+        android.util.Log.d("LxnsChartPreview", "inject -> $result")
+    }
+}
+
 /** WebChromeClient 挂载辅助（避免匿名对象里改捕获变量需要可空包装）。 */
 private object WebChromeClientHost {
+    private const val TAG = "LxnsChartPreview"
+
     fun attach(webView: WebView, onShow: (View) -> Unit, onHide: () -> Unit) {
         webView.webChromeClient = object : WebChromeClient() {
             override fun onShowCustomView(view: View, callback: CustomViewCallback) {
@@ -191,6 +237,16 @@ private object WebChromeClientHost {
 
             override fun onHideCustomView() {
                 onHide()
+            }
+
+            // 落雪页面 JS 报错转发到 logcat，便于排查 WebView 内的播放故障
+            override fun onConsoleMessage(message: android.webkit.ConsoleMessage): Boolean {
+                android.util.Log.w(
+                    TAG,
+                    "[js:${message.messageLevel()}] ${message.message()} " +
+                        "(${message.sourceId()}:${message.lineNumber()})",
+                )
+                return true
             }
         }
     }
