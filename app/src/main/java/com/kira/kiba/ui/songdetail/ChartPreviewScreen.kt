@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -27,11 +28,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import android.view.ViewGroup
 import androidx.compose.ui.viewinterop.AndroidView
+import com.kira.kiba.core.playback.ChartPlaybackService
 import com.kira.kiba.core.utils.BrowserJump
 import com.kira.kiba.core.utils.CoverSources
 import com.kira.kiba.ui.common.EmptyStateCard
 import com.kira.kiba.ui.common.pageContentPadding
 import com.kira.kiba.ui.navigation.KibaBackAction
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Scaffold
@@ -133,8 +137,29 @@ fun ChartPreviewScreen(
             songSubtitle = subtitle,
             // 媒体通知封面候选链（与 UI 封面同一套源，复用 Coil 磁盘缓存）
             coverCandidates = CoverSources.candidates(songId, songImageUrl),
+            newSongId = songId,
+            newSongImageUrl = songImageUrl,
         )
         onDispose { ChartPreviewPlayer.onScreenDispose() }
+    }
+
+    // 播放开始**立刻**拉起媒体通知（不等返回）：页面存活期间轮询播放态，
+    // 探到 playing 且服务未跑就 startForegroundService。服务侧幂等（重复
+    // start 只刷一次状态），所以这里的轮询与离页收尾的双重触发是安全的。
+    // 换谱面时 register() 会 release() 掉旧 WebView 并停掉旧服务——新谱面
+    // 一开播这里重新拉起，通知的曲名/难度/封面自然跟着换。
+    LaunchedEffect(url) {
+        while (isActive) {
+            delay(500)
+            if (!ChartPlaybackService.isRunning) {
+                ChartPreviewPlayer.probeState { st ->
+                    if (st.state == "playing") {
+                        android.util.Log.d("LxnsChartPreview", "playing detected on-screen -> start media notification")
+                        ChartPlaybackService.start(context.applicationContext)
+                    }
+                }
+            }
+        }
     }
 
     val cv = customView

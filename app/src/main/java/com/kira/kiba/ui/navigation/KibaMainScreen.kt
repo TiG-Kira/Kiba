@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -55,6 +56,7 @@ import com.kira.kiba.ui.settings.AboutScreen
 import com.kira.kiba.ui.settings.SettingsScreen
 import com.kira.kiba.ui.share.ShareImageAction
 import com.kira.kiba.ui.songdetail.ChartDetailScreen
+import com.kira.kiba.ui.songdetail.ChartPreviewPlayer
 import com.kira.kiba.ui.songdetail.ChartPreviewScreen
 import com.kira.kiba.ui.tools.DxConverterScreen
 import com.kira.kiba.ui.tools.FriendQueryScreen
@@ -352,6 +354,32 @@ fun KibaMainScreen() {
             // 返回上一页：恢复其滚动位置与顶栏塌缩状态，不强制回顶/展开
             restoreTopBar(back)
         }
+    }
+
+    // 点媒体通知「回到预览页」：通知 contentIntent → MainActivity 转发
+    // （onCreate/onNewIntent）→ ChartPreviewPlayer.requestReopen()，这里消费后
+    // pushPage 回 ChartPreview——复用保留的 WebView，播放进度不丢。
+    // 已在本页（同 url）时忽略，避免栈里叠出重复的预览页。
+    fun reopenChartPreview() {
+        val url = ChartPreviewPlayer.currentUrl ?: return
+        val top = subStack.lastOrNull()
+        if (top is KibaSubPage.ChartPreview && top.url == url) return
+        pushPage(
+            KibaSubPage.ChartPreview(
+                url = url,
+                songTitle = ChartPreviewPlayer.title,
+                songSubtitle = ChartPreviewPlayer.subtitle,
+                songId = ChartPreviewPlayer.songId,
+                songImageUrl = ChartPreviewPlayer.songImageUrl,
+            ),
+        )
+    }
+
+    LaunchedEffect(Unit) {
+        // onCreate 的 Intent 早于本订阅挂上：先消费一次 pending 标记兜时序，
+        // 再订阅流接住 onNewIntent 的活跃转发。
+        if (ChartPreviewPlayer.consumePendingReopen()) reopenChartPreview()
+        ChartPreviewPlayer.reopenFlow.collect { reopenChartPreview() }
     }
 
     // 顶栏搜索按钮：每次点击 +1，曲目页据此聚焦搜索框

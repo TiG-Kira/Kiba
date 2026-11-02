@@ -58,6 +58,11 @@ class ChartPlaybackService : Service() {
         private const val NOTIFICATION_ID = 4101
         private const val ACTION_STOP = "com.kira.kiba.playback.STOP"
 
+        /** 服务是否在跑（预览页轮询用它避免重复 startForegroundService）。 */
+        @Volatile
+        var isRunning: Boolean = false
+            private set
+
         /** 在播拉起服务（幂等：已在跑则只刷新一次状态）。 */
         fun start(context: Context) {
             ContextCompat.startForegroundService(
@@ -75,23 +80,38 @@ class ChartPlaybackService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var session: MediaSessionCompat? = null
     private var lastPosMs = 0L
+    /** onStartCommand 幂等闸：重复 start（页面内轮询 + 离页拉起双重触发）不重跑引导。 */
+    private var bootstrapped = false
     /** 谱面封面（后台异步加载，成功后刷一次元数据；拿不到就退化为应用图标）。 */
     @Volatile private var coverBitmap: android.graphics.Bitmap? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        isRunning = true
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
             stopSelf()
             return START_NOT_STICKY
         }
-        enterForeground()
-        loadCoverAsync()
-        pollLoop()
+        if (!bootstrapped) {
+            bootstrapped = true
+            enterForeground()
+            loadCoverAsync()
+            pollLoop()
+        } else {
+            // 已在跑（页面内轮询与离页收尾可能双重触发）：元数据/封面由
+            // ChartPreviewPlayer 单例提供、服务每次刷新都读最新值，刷一次即可。
+            refresh()
+        }
         return START_NOT_STICKY
     }
 
     override fun onDestroy() {
+        isRunning = false
         scope.cancel()
         session?.release()
         session = null
@@ -131,7 +151,19 @@ class ChartPlaybackService : Service() {
             override fun onPause() = ChartPreviewPlayer.pause()
             override fun onRewind() = ChartPreviewPlayer.seekBack()
             override fun onFastForward() = ChartPreviewPlayer.seekForward()
-            override fun onStop() = ChartPreviewPlayer.release()
+
+            override fun onStop() {
+                if (ChartPreviewPlayer.screenVisible) {
+                    // 预览页还挂着：只停声 + 撤通知，**绝不销毁 WebView**——
+                    // 页面还组合着它，销毁会让预览页直接变死页。用户在页面里
+                    // 重新点播放后，页面轮询会重新拉起本服务。
+                    ChartPreviewPlayer.pause()
+                    stopSelf()
+                } else {
+                    // 后台场景：彻底收尾（销毁 WebView、释放内存、撤通知）
+                    ChartPreviewPlayer.release()
+                }
+            }
         })
         ms.isActive = true
         session = ms
@@ -167,8 +199,11 @@ class ChartPlaybackService : Service() {
                     applyState(ms, PlaybackStateCompat.STATE_PAUSED, lastPosMs)
                 }
                 "ended" -> {
-                    // 自然播完：WebView 留着不会再响，直接收尾（release 会顺带 stop 服务）
-                    ChartPreviewPlayer.release()
+                    // 自然播完：WebView 留着不会再响。页面还挂着就只撤通知
+                    // （销毁 WebView 会让预览页变死页），用户重播后页面轮询再拉起；
+                    // 后台场景彻底收尾（release 会顺带 stop 服务）。
+                    if (ChartPreviewPlayer.screenVisible) stopSelf()
+                    else ChartPreviewPlayer.release()
                 }
                 else -> applyState(ms, PlaybackStateCompat.STATE_PAUSED, lastPosMs)
             }
@@ -240,11 +275,19 @@ class ChartPlaybackService : Service() {
      * action 渲染（播放/暂停、快退、快进、停止），无需在通知里塞自定义 action。
      */
     private fun buildNotification(state: Int, posMs: Long): Notification {
+        // 点卡片正文回到谱面预览页（不回主页）：SINGLE_TOP|CLEAR_TOP 让已存在的
+        // MainActivity 收 onNewIntent 而不是叠一个新实例；extras 标记由 MainActivity
+        // 转发给 ChartPreviewPlayer.requestReopen()，KibaMainScreen 消费后 pushPage
+        // 回 ChartPreview（复用保留 WebView，播放进度不丢）。
+        val reopenIntent = Intent(this, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            putExtra(MainActivity.EXTRA_REOPEN_CHART_PREVIEW, true)
+        }
         val contentIntent = PendingIntent.getActivity(
             this,
             0,
-            Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE,
+            reopenIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.kiba_alpha)

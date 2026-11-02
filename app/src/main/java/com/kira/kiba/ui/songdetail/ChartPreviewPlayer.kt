@@ -2,6 +2,9 @@ package com.kira.kiba.ui.songdetail
 
 import android.view.ViewGroup
 import android.webkit.WebView
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import org.json.JSONObject
 
 /**
@@ -54,10 +57,40 @@ object ChartPreviewPlayer {
     var subtitle: String = ""
         private set
 
+    /** 曲目 id 与封面 URL（点通知重开预览页时还原 KibaSubPage.ChartPreview 用）。 */
+    var songId: Int = 0
+        private set
+    var songImageUrl: String = ""
+        private set
+
     /** 谱面封面候选链（[com.kira.kiba.core.utils.CoverSources.candidates]），
      *  供媒体通知封面加载；空 = 未知曲，通知退化为应用图标。 */
     var coverCandidates: List<String> = emptyList()
         private set
+
+    /** 预览页当前是否在组合中（服务收尾判定用：页面还挂着就不能销毁 WebView）。 */
+    internal var screenVisible: Boolean = false
+        private set
+
+    // ---- 点媒体通知「回到预览页」----
+    // 路由链：通知 contentIntent → MainActivity（onCreate/onNewIntent）→
+    // requestReopen() → KibaMainScreen 消费（pushPage 回 ChartPreview）。
+    // 活跃信号走 SharedFlow；onCreate 时序上先于 Compose 订阅者挂上，再用
+    // pendingReopen 补一发（订阅前先消费一次），两条路都通。
+
+    private val _reopenFlow = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val reopenFlow: SharedFlow<Unit> = _reopenFlow
+
+    @Volatile private var pendingReopen = false
+
+    /** MainActivity 收到带 reopen 标记的 Intent 时调用。 */
+    fun requestReopen() {
+        pendingReopen = true
+        _reopenFlow.tryEmit(Unit)
+    }
+
+    /** KibaMainScreen 订阅 reopenFlow 前先消费一次（兜 onCreate 早于订阅的时序）。 */
+    fun consumePendingReopen(): Boolean = pendingReopen.also { pendingReopen = false }
 
     /** 一次播放态探测结果。state ∈ playing / paused / ended / idle。 */
     data class Snapshot(val state: String, val posMs: Long, val durMs: Long)
@@ -72,19 +105,26 @@ object ChartPreviewPlayer {
         songTitle: String,
         songSubtitle: String,
         coverCandidates: List<String> = emptyList(),
+        newSongId: Int = 0,
+        newSongImageUrl: String = "",
     ) {
+        screenVisible = true
         if (webView === view) {
             // 同一实例回到前台：解锁上下文（后台期间可能被我们 suspend 过），
             // 否则用户手动点网页播放键时 AudioContext 还挂着，页面有进度没声音。
+            android.util.Log.d(TAG, "register: same instance, resume ctx")
             view.evaluateJavascript(SUSPEND_JS.replace("%op%", "resume()"), null)
             return
         }
+        android.util.Log.d(TAG, "register: new instance for $url (old=${currentUrl ?: "none"})")
         release()
         webView = view
         currentUrl = url
         title = songTitle
         subtitle = songSubtitle
         this.coverCandidates = coverCandidates
+        songId = newSongId
+        songImageUrl = newSongImageUrl
     }
 
     /**
@@ -93,6 +133,7 @@ object ChartPreviewPlayer {
      * 探测是异步回调，期间 WebView 由本对象持有，不会被 GC。
      */
     fun onScreenDispose() {
+        screenVisible = false
         val view = webView ?: return
         probeState { st ->
             // 回调期间用户可能又开了别的谱面预览（webView 已被换掉），别越权处理新实例
@@ -108,6 +149,7 @@ object ChartPreviewPlayer {
 
     /** 销毁 WebView、停掉一切音频，并收掉媒体通知服务。 */
     fun release() {
+        android.util.Log.d(TAG, "release: url=$currentUrl, hasView=${webView != null}")
         val appContext = webView?.context?.applicationContext
         webView?.apply {
             evaluateJavascript("(function(){try{var s=window.__kibaMusicSource;if(s&&!s.ended){try{s.stop()}catch(e){}}}catch(e){}})()", null)
@@ -123,7 +165,10 @@ object ChartPreviewPlayer {
         currentUrl = null
         title = ""
         subtitle = ""
+        songId = 0
+        songImageUrl = ""
         coverCandidates = emptyList()
+        screenVisible = false
         appContext?.let { com.kira.kiba.core.playback.ChartPlaybackService.stop(it) }
     }
 

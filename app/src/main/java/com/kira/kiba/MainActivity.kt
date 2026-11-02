@@ -1,5 +1,6 @@
 package com.kira.kiba
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -32,6 +33,11 @@ import com.kira.kiba.ui.theme.KibaTheme
  */
 class MainActivity : ComponentActivity(), NavigationEventDispatcherOwner {
 
+    companion object {
+        /** 媒体通知点正文 → 回到谱面预览页（ChartPlaybackService 塞入，转发给 ChartPreviewPlayer）。 */
+        const val EXTRA_REOPEN_CHART_PREVIEW = "kiba.reopen.CHART_PREVIEW"
+    }
+
     private val navEventDispatcher = NavigationEventDispatcher()
 
     override val navigationEventDispatcher: NavigationEventDispatcher
@@ -39,6 +45,7 @@ class MainActivity : ComponentActivity(), NavigationEventDispatcherOwner {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        forwardReopen(intent)
         // 显式 edge-to-edge：窗口不再被系统栏/键盘 resize，insets 统一交给 Compose 处理。
         // 修复「对话框弹输入法后与键盘之间出现大空白」：此前 opt-out e2e + adjustResize
         // 下窗口缩放与 WindowInsets.ime 双重避让，miuix 弹层的 imePadding 被叠加放大。
@@ -62,6 +69,18 @@ class MainActivity : ComponentActivity(), NavigationEventDispatcherOwner {
                     KibaMainScreen()
                 }
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // 通知点正文回到预览页时 App 已在跑：单顶栈路由到此
+        forwardReopen(intent)
+    }
+
+    private fun forwardReopen(intent: Intent?) {
+        if (intent?.getBooleanExtra(EXTRA_REOPEN_CHART_PREVIEW, false) == true) {
+            com.kira.kiba.ui.songdetail.ChartPreviewPlayer.requestReopen()
         }
     }
 
