@@ -10,8 +10,10 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
@@ -378,16 +380,19 @@ fun KibaMainScreen() {
           topBar = {
               // 顶栏玻璃模糊仅在「真·高级材质」开启时生效；关闭时提供 null，
               // GlassTopAppBar 自动回落为传统纯色默认样式（无模糊、无玻璃描边）。
-              // 豁免页：关于页 + 谱面预览页一律普通顶栏——预览页底下是 WebView 全屏画布，
-              // 玻璃取景层采样不到有效背景，只会渲染出一块纯透明。
+              // 豁免页：关于页一律普通顶栏。谱面预览页不在这里给顶栏——
+              // 它自带 miuix 普通 SmallTopAppBar（页内实色 + 自吃 padding），外层不叠。
               val sub = subStack.lastOrNull()
-              val plainTopBarExempt = sub is KibaSubPage.About || sub is KibaSubPage.ChartPreview
+              val plainTopBarExempt = sub is KibaSubPage.About
               CompositionLocalProvider(
                   LocalGlassTopAppBarBackdrop provides
                       if (plainTopBarExempt) null
                       else if (LocalAdvancedMaterialEnabled.current) glassNavBackdrop else null,
               ) {
-                  if (sub == null) {
+                  if (sub is KibaSubPage.ChartPreview) {
+                      // 空占位：外层 padding 顶距归零，谱面预览页满屏自管顶栏
+                      Spacer(Modifier.height(0.dp))
+                  } else if (sub == null) {
                       KibaTopBar(
                           title = selectedTab.title,
                           scrollBehavior = scrollBehavior,
@@ -549,7 +554,7 @@ fun KibaMainScreen() {
                               )
                               is KibaSubPage.ChartPreview -> ChartPreviewScreen(
                                   url = target.url,
-                                  scrollBehavior = scrollBehavior,
+                                  onBack = { popPage() },
                               )
                               is KibaSubPage.ChuniSongDetail -> ChuniSongDetailScreen(
                                   songId = target.songId,

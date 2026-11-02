@@ -22,7 +22,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import android.view.ViewGroup
@@ -30,10 +29,11 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.kira.kiba.core.utils.BrowserJump
 import com.kira.kiba.ui.common.EmptyStateCard
 import com.kira.kiba.ui.common.pageContentPadding
+import com.kira.kiba.ui.navigation.KibaBackAction
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Scaffold
-import top.yukonga.miuix.kmp.basic.ScrollBehavior
+import top.yukonga.miuix.kmp.basic.SmallTopAppBar
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
@@ -52,11 +52,15 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  *
  * 失败兜底：WebView 加载失败（断网 / CDN 异常）时给出「用浏览器打开」入口，
  * 用户仍可跳到落雪网页播放。
+ *
+ * 顶栏：本页自带 miuix 普通 [SmallTopAppBar]（实色、固定不塌缩），不走外层
+ * GlassTopAppBar——WebView 不是 LazyColumn，玻璃取景层也采样不到有效背景，
+ * 只会渲染出一块纯透明；内容区消费 Scaffold padding，不会顶穿顶栏。
  */
 @Composable
 fun ChartPreviewScreen(
     url: String,
-    scrollBehavior: ScrollBehavior,
+    onBack: () -> Unit,
 ) {
     val context = LocalContext.current
     var loading by remember(url) { mutableStateOf(true) }
@@ -117,10 +121,14 @@ fun ChartPreviewScreen(
     }
 
     Scaffold(
-        modifier = Modifier
-            .fillMaxSize()
-            .nestedScroll(scrollBehavior.nestedScrollConnection),
+        modifier = Modifier.fillMaxSize(),
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        topBar = {
+            SmallTopAppBar(
+                title = "谱面预览",
+                navigationIcon = { KibaBackAction(onClick = onBack) },
+            )
+        },
     ) { padding ->
         Box(
             modifier = Modifier
