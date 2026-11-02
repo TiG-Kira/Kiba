@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -56,20 +57,27 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  * 顶栏：本页自带 miuix 普通 [SmallTopAppBar]（实色、固定不塌缩），不走外层
  * GlassTopAppBar——WebView 不是 LazyColumn，玻璃取景层也采样不到有效背景，
  * 只会渲染出一块纯透明；内容区消费 Scaffold padding，不会顶穿顶栏。
+ *
+ * 后台播放：返回/离开本页时若还在播，WebView 由 [ChartPreviewPlayer] 保留常播，
+ * 控制入口走系统媒体通知（[com.kira.kiba.core.playback.ChartPlaybackService]）。
  */
 @Composable
 fun ChartPreviewScreen(
     url: String,
+    title: String,
+    subtitle: String,
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
-    var loading by remember(url) { mutableStateOf(true) }
+    // 后台播放器是否留有同 url 的 WebView（mini 播放中返回同谱面）：复用则不在加载态
+    val isReused = ChartPreviewPlayer.current(url) != null
+    var loading by remember(url) { mutableStateOf(!isReused) }
     var failed by remember(url) { mutableStateOf(false) }
     // 网页的 Fullscreen API 全屏视图（视频/画布），不接 onShowCustomView 的话全屏按钮无效
     var customView by remember { mutableStateOf<View?>(null) }
 
     val webView = remember(url) {
-        WebView(context).apply {
+        ChartPreviewPlayer.current(url) ?: WebView(context).apply {
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -79,6 +87,12 @@ fun ChartPreviewScreen(
             // 播放器由用户点播放键触发，保留手势要求即可；媒体不自动开声
             settings.mediaPlaybackRequiresUserGesture = true
             webViewClient = object : WebViewClient() {
+                override fun onPageStarted(view: WebView, u: String, favicon: android.graphics.Bitmap?) {
+                    super.onPageStarted(view, u, favicon)
+                    // 赶在页面 bundle 执行前给 AudioContext 打补丁，捕获音乐源供后台探测
+                    view.evaluateJavascript(ChartPreviewPlayer.PATCH_JS, null)
+                }
+
                 override fun onPageFinished(view: WebView, u: String) {
                     loading = false
                     injectKibaStyle(view)
@@ -103,6 +117,14 @@ fun ChartPreviewScreen(
             WebChromeClientHost.attach(this, onShow = { customView = it }, onHide = { customView = null })
             loadUrl(url)
         }
+    }
+
+    DisposableEffect(url) {
+        // 注册到后台播放器中枢：同 url 复用保留实例（播放进度不丢），
+        // 手里留着别的谱面则销毁旧实例。离开本页时探测播放态——
+        // 在播则保留 WebView + 弹 mini 播放器；未播直接销毁，不漏后台音频。
+        ChartPreviewPlayer.register(url, webView, title, subtitle)
+        onDispose { ChartPreviewPlayer.onScreenDispose() }
     }
 
     val cv = customView

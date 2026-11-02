@@ -324,6 +324,8 @@ dependencies {
     ksp("androidx.room:room-compiler:2.7.0")
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.6.1")
+    // 谱面后台播放：MediaStyle 媒体通知（framework MediaSession 的通知模板）
+    implementation("androidx.media:media:1.7.0")
     implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.webkit:webkit:1.12.1")
     implementation("androidx.preference:preference-ktx:1.2.1")

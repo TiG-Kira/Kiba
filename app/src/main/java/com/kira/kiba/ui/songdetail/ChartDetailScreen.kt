@@ -71,7 +71,7 @@ fun ChartDetailScreen(
     songId: Int,
     difficultyOrdinal: Int,
     scrollBehavior: ScrollBehavior,
-    onOpenPreview: (url: String) -> Unit = {},
+    onOpenPreview: (url: String, title: String, subtitle: String) -> Unit = { _, _, _ -> },
 ) {
     val db = remember { AppDataBase.getInstance() }
 
@@ -140,7 +140,13 @@ fun ChartDetailScreen(
                         title = "谱面预览（落雪）",
                         summary = "加载落雪官方谱面确认播放页，可随音乐查看每拍物量分布",
                         startAction = { PrefIcon(MiuixGlassIcons.Regular.Play) },
-                        onClick = { onOpenPreview(chartPreviewUrl(currentChart)) },
+                        onClick = {
+                            onOpenPreview(
+                                chartPreviewUrl(currentChart),
+                                song?.title ?: "未知曲目",
+                                difficultyLabel(currentChart.difficultyType),
+                            )
+                        },
                     )
                 }
             }

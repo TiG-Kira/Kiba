@@ -157,8 +157,9 @@ sealed interface KibaSubPage {
         override val title: String = "谱面详情"
     }
 
-    /** 落雪谱面预览（WebView 加载落雪官方谱面确认播放页，舞萌专用）。 */
-    data class ChartPreview(val url: String) : KibaSubPage {
+    /** 落雪谱面预览（WebView 加载落雪官方谱面确认播放页，舞萌专用）。
+     *  songTitle/songSubtitle 透传给后台媒体通知展示曲名与难度。 */
+    data class ChartPreview(val url: String, val songTitle: String, val songSubtitle: String) : KibaSubPage {
         override val title: String = "谱面预览"
     }
 
@@ -550,10 +551,12 @@ fun KibaMainScreen() {
                                   songId = target.songId,
                                   difficultyOrdinal = target.difficultyOrdinal,
                                   scrollBehavior = scrollBehavior,
-                                  onOpenPreview = { url -> pushPage(KibaSubPage.ChartPreview(url)) },
+                                  onOpenPreview = { url, t, s -> pushPage(KibaSubPage.ChartPreview(url, t, s)) },
                               )
                               is KibaSubPage.ChartPreview -> ChartPreviewScreen(
                                   url = target.url,
+                                  title = target.songTitle,
+                                  subtitle = target.songSubtitle,
                                   onBack = { popPage() },
                               )
                               is KibaSubPage.ChuniSongDetail -> ChuniSongDetailScreen(
@@ -682,6 +685,9 @@ fun KibaMainScreen() {
                       }
                       }
                   }
+
+                  // 后台谱面播放的控制入口在系统媒体通知（ChartPlaybackService），
+                  // 应用内不再挂常驻控制条。
               }
           }
       }

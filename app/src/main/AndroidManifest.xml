@@ -9,6 +9,8 @@
     <uses-permission android:name="android.permission.BIND_VPN_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- 谱面后台播放：媒体通知前台服务（mediaPlayback 类型） -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
         <!-- WeChatJump 仅需拉起微信，声明包名查询即可，替代 QUERY_ALL_PACKAGES 全盘可见 -->
     <queries>
@@ -68,6 +70,15 @@
 
         <!-- 历史遗留：HTTP 跳转服务现由 LocalVpnService 内联托管，这里保留声明仅为兼容 -->
         <service android:name=".core.vpn.server.HttpServerService" />
+
+        <!--
+            谱面后台播放：预览页（WebView）返回后仍在播时保留 WebView 并拉起本服务，
+            以媒体通知提供 播放-暂停/快退/快进/停止。mediaPlayback 是官方专用 FGS 类型。
+        -->
+        <service
+            android:name=".core.playback.ChartPlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
 
         <!-- 应用内更新：私有目录更新包的 FileProvider（updates/） -->
         <provider
