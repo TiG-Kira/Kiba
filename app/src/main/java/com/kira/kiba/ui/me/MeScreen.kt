@@ -24,7 +24,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import android.widget.Toast
 import com.kira.kiba.core.account.DivingFishAccount
 import com.kira.kiba.core.account.LxnsAccount
 import com.kira.kiba.core.data.ChuniRecordSync
@@ -71,6 +70,7 @@ private fun PrefIcon(icon: androidx.compose.ui.graphics.vector.ImageVector) {
 fun MeScreen(
     scrollBehavior: ScrollBehavior,
     onOpenLogin: () -> Unit,
+    onOpenLxnsLogin: () -> Unit,
     onOpenBest50: () -> Unit,
     onOpenScoreQuery: () -> Unit,
     onOpenDxConverter: () -> Unit,
@@ -98,6 +98,10 @@ fun MeScreen(
     val chuniNoData = (chuniSyncState as? ChuniRecordSync.SyncState.Done)?.empty == true
     val chuniJwtPresent = remember { SpUtil.getDivingFishJwt().isNotBlank() }
     // 数据源就绪判定：落雪看登录凭据（OAuth 或个人 API Key），水鱼看各自凭据
+    val lxnsState by LxnsAccount.state.collectAsState()
+    val lxnsBound = lxnsState.bound
+    val lxnsName = lxnsState.name
+    val lxnsOauth = lxnsState.oauth
     val maimaiSource = remember { SpUtil.getScoreSource(GameType.MAIMAI) }
     val chuniSource = remember { SpUtil.getScoreSource(GameType.CHUNITHM) }
     val chuniReady = remember(chuniSource, chuniJwtPresent) {
@@ -140,9 +144,9 @@ fun MeScreen(
                             },
                             summary = when {
                                 !chuniReady && chuniSource == ScoreSource.LXNS ->
-                                    "落雪源需要先登录落雪账号：设置 → 查分器数据源 → 登录落雪账号"
+                                    "落雪源需要先登录落雪账号：点击进入落雪账户登录"
                                 !chuniReady ->
-                                    "水鱼 OAuth 暂不支持中二节奏，请使用账号密码登录"
+                                    "水鱼 OAuth 暂不支持中二节奏，请使用水鱼账号密码登录"
                                 chuniSyncing -> "正在同步中二成绩…"
                                 chuniError != null -> "$chuniError（点击重试）"
                                 chuniRecordCount > 0 ->
@@ -153,11 +157,7 @@ fun MeScreen(
                             },
                             onClick = {
                                 when {
-                                    !chuniReady && chuniSource == ScoreSource.LXNS -> Toast.makeText(
-                                        context,
-                                        "请到「设置 → 查分器数据源」登录落雪账号",
-                                        Toast.LENGTH_LONG,
-                                    ).show()
+                                    !chuniReady && chuniSource == ScoreSource.LXNS -> onOpenLxnsLogin()
                                     !chuniReady -> onOpenLogin()
                                     chuniRecordCount > 0 -> onOpenChuniBest()
                                     else -> scope.launch { runCatching { ChuniRecordSync.refresh() } }
@@ -180,8 +180,8 @@ fun MeScreen(
                             summary = when {
                                 // 舞萌侧选了落雪但没登录：别再把人往水鱼登录页带
                                 !account.bound && maimaiSource == ScoreSource.LXNS ->
-                                    "落雪源需要先登录落雪账号：设置 → 查分器数据源 → 登录落雪账号"
-                                !account.bound -> "账号密码登录，解锁 Best 50 / 推分推荐"
+                                    "落雪源需要先登录落雪账号：点击进入落雪账户登录"
+                                !account.bound -> "水鱼账号密码登录，解锁 Best 50 / 推分推荐"
                                 account.loading -> "正在获取成绩…"
                                 account.error != null -> "${account.error}（点击查看 Best 50）"
                                 else ->
@@ -191,11 +191,7 @@ fun MeScreen(
                             onClick = {
                                 when {
                                     account.bound -> onOpenBest50()
-                                    maimaiSource == ScoreSource.LXNS -> Toast.makeText(
-                                        context,
-                                        "请到「设置 → 查分器数据源」登录落雪账号",
-                                        Toast.LENGTH_LONG,
-                                    ).show()
+                                    maimaiSource == ScoreSource.LXNS -> onOpenLxnsLogin()
                                     else -> onOpenLogin()
                                 }
                             },
@@ -214,19 +210,30 @@ fun MeScreen(
                 Card(modifier = (Modifier.fillMaxWidth())) {
                     ArrowPreference(
                         title = when {
-                            maimaiSource == ScoreSource.LXNS -> "落雪账户（在设置页管理）"
-                            account.bound -> "重新登录 / 切换账户"
-                            else -> "登录查分器账户"
+                            account.bound -> "重新登录水鱼账户"
+                            else -> "水鱼账户登录"
                         },
                         summary = when {
-                            maimaiSource == ScoreSource.LXNS ->
-                                "舞萌当前用落雪源 · 一个落雪账号两个游戏通用，可在「设置 → 查分器数据源」切换"
                             account.bound ->
-                                "当前：${account.nickname.ifBlank { "查分器用户" }}（Rating ${account.rating}）"
-                            else -> "支持水鱼账号密码登录（OAuth 授权已暂时停用）"
+                                "当前水鱼账户：${account.nickname.ifBlank { "水鱼用户" }}（Rating ${account.rating}）· 点击重新登录"
+                            else -> "水鱼源专用：支持水鱼账号密码登录（OAuth 授权已暂时停用）"
                         },
                         startAction = { PrefIcon(MiuixGlassIcons.Regular.Lock) },
                         onClick = onOpenLogin,
+                    )
+                    ArrowPreference(
+                        title = when {
+                            lxnsBound -> "管理落雪账户"
+                            else -> "落雪账户登录"
+                        },
+                        summary = when {
+                            lxnsBound ->
+                                "当前落雪账户：${lxnsName.ifBlank { "落雪玩家" }} · ${if (lxnsOauth) "账号授权" else "个人 API 密钥"} · 点击管理"
+                            else ->
+                                "落雪源专用：推荐用落雪账号授权，一步到位；也可手填个人 API 密钥"
+                        },
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.CloudFill) },
+                        onClick = onOpenLxnsLogin,
                     )
                     if (!isChunithm) {
                         ArrowPreference(
@@ -347,10 +354,18 @@ fun MeScreen(
                     }
                     if (account.bound) {
                         ArrowPreference(
-                            title = "退出登录",
-                            summary = "清除本机成绩缓存与登录凭证；远端授权可在 auth.diving-fish.com/apps 撤销",
+                            title = "退出水鱼登录",
+                            summary = "清除本机水鱼成绩缓存与登录凭证；远端授权可在 auth.diving-fish.com/apps 撤销",
                             startAction = { PrefIcon(MiuixGlassIcons.Regular.Unlock) },
                             onClick = { DivingFishAccount.unbind() },
+                        )
+                    }
+                    if (lxnsBound) {
+                        ArrowPreference(
+                            title = "退出落雪登录",
+                            summary = "清除本机落雪凭据（已同步进本地的成绩保留）",
+                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Unlock) },
+                            onClick = { LxnsAccount.logout() },
                         )
                     }
                 }

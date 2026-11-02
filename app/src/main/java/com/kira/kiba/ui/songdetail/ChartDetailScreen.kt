@@ -33,6 +33,7 @@ import com.kira.kiba.core.db.entity.SongDataEntity
 import com.kira.kiba.core.stats.RelativeDifficulty
 import com.kira.kiba.core.stats.SongRating
 import com.kira.kiba.core.stats.statsLevelIndex
+import com.kira.kiba.core.utils.Constants
 import com.kira.kiba.ui.common.DifficultyChip
 import com.kira.kiba.ui.common.EmptyStateCard
 import com.kira.kiba.ui.common.HGap
@@ -48,6 +49,9 @@ import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
+import top.yukonga.miuix.kmp.icon.glass.*
+import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
@@ -55,6 +59,7 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  *
  * 内容：
  * - 谱面头：难度 / 定数（旧定数对比）/ 谱师 / 歌曲名；
+ * - 落雪谱面预览入口（App 内 WebView 加载落雪官方谱面确认播放页）；
  * - notes 构成与判定权重；
  * - **失分表**：Tap / Hold / Slide / Touch 四类 × Perfect(50/100 落) / Great / Good / Miss，
  *   BREAK 单独成表（含 4x / 3x / 2.5x 大 G 分档与 50/100 落保底），
@@ -67,6 +72,7 @@ fun ChartDetailScreen(
     songId: Int,
     difficultyOrdinal: Int,
     scrollBehavior: ScrollBehavior,
+    onOpenPreview: (url: String) -> Unit = {},
 ) {
     val db = remember { AppDataBase.getInstance() }
 
@@ -128,6 +134,18 @@ fun ChartDetailScreen(
                 ChartHeaderCard(chart = currentChart, song = song, fitDiff = chartStats?.fitDiff)
             }
 
+            // ── 落雪谱面预览入口（App 内 WebView，加载失败可回退浏览器）──
+            item(key = "preview") {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    ArrowPreference(
+                        title = "谱面预览（落雪）",
+                        summary = "加载落雪官方谱面确认播放页，可随音乐查看每拍物量分布",
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Play) },
+                        onClick = { onOpenPreview(chartPreviewUrl(currentChart)) },
+                    )
+                }
+            }
+
             // ── 我的成绩（紧跟谱面信息，谱面构成之前）──
             val record = records.firstOrNull { it.levelIndex == difficultyOrdinal }
             record?.let { r ->
@@ -154,6 +172,40 @@ fun ChartDetailScreen(
             item(key = "rating") { RatingTableCard(chart = currentChart) }
         }
     }
+}
+
+/**
+ * 落雪谱面预览页 URL。
+ *
+ * chart_id 口径（与落雪 CDN 一致）：标准谱 = 曲目 id，DX 谱 = 曲目 id + 10000；
+ * 宴谱曲目 id 本身 ≥ 100000，原样使用。difficulty = 0..4（BASIC..Re:MASTER，
+ * 与本地 level_index 同口径）；宴谱省略，由落雪页面自行选择。
+ */
+fun chartPreviewUrl(chart: ChartEntity): String = buildString {
+    append("https://maimai.lxns.net/chart?chart_id=")
+    val songId = chart.songId
+    append(
+        when {
+            songId >= 100000 -> songId
+            chart.type == Constants.CHART_TYPE_SD -> songId
+            else -> songId + 10000
+        },
+    )
+    if (chart.difficultyType.ordinal <= 4) {
+        append("&difficulty=")
+        append(chart.difficultyType.ordinal)
+    }
+}
+
+/** 谱面详情页 ArrowPreference 的左侧功能图标（与「我」页 / 设置页同款）。 */
+@Composable
+private fun PrefIcon(icon: androidx.compose.ui.graphics.vector.ImageVector) {
+    top.yukonga.miuix.kmp.basic.Icon(
+        imageVector = icon,
+        contentDescription = null,
+        tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+        modifier = Modifier.padding(end = 0.dp),
+    )
 }
 
 @OptIn(ExperimentalLayoutApi::class)

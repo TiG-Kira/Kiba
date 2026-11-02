@@ -42,7 +42,10 @@ import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
- * 查分器登录页（独立二级页，非弹层——miuix OverlayDialog 与软键盘不兼容）。
+ * 水鱼账户登录页（独立二级页，非弹层——miuix OverlayDialog 与软键盘不兼容）。
+ *
+ * 注意本页只服务**水鱼源**：落雪账户登录走 [LxnsLoginScreen]，两个账户互不相通，
+ * 不要拿落雪账号登水鱼。
  *
  * 双通道：
  * 1. 账号密码（原版 MaimaiData 方式，保底可用）：POST username/password
@@ -91,8 +94,8 @@ fun LoginScreen(
             contentPadding = pageContentPadding(withNavBar = false),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // ── 账号密码（原版方式，当前可用）──
-            item(key = "pw_title") { SectionTitle("账号密码登录（原版方式）") }
+            // ── 水鱼账号密码（原版方式，当前可用）──
+            item(key = "pw_title") { SectionTitle("水鱼账号密码登录（原版方式）") }
             item(key = "pw_card") {
                 Card(
                 modifier = (Modifier.fillMaxWidth()),
@@ -161,8 +164,8 @@ fun LoginScreen(
                 }
             }
 
-            // ── OAuth 设备码（推荐通道，公开客户端、已获写权限）──
-            item(key = "oauth_title") { SectionTitle("OAuth 授权登录（推荐）") }
+            // ── 水鱼 OAuth 设备码（推荐通道，公开客户端、已获写权限）──
+            item(key = "oauth_title") { SectionTitle("水鱼 OAuth 授权登录（推荐）") }
             item(key = "oauth_card") {
                 Card(
                     modifier = (Modifier.fillMaxWidth()),

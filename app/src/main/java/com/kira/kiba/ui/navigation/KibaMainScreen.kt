@@ -45,6 +45,7 @@ import com.kira.kiba.ui.me.Best50Screen
 import com.kira.kiba.ui.me.ChuniBestScreen
 import com.kira.kiba.ui.me.FavoritesScreen
 import com.kira.kiba.ui.me.LoginScreen
+import com.kira.kiba.ui.me.LxnsLoginScreen
 import com.kira.kiba.ui.me.EasyMaiAccountScreen
 import com.kira.kiba.ui.me.MeScreen
 import com.kira.kiba.ui.me.ScoreQueryScreen
@@ -52,6 +53,7 @@ import com.kira.kiba.ui.settings.AboutScreen
 import com.kira.kiba.ui.settings.SettingsScreen
 import com.kira.kiba.ui.share.ShareImageAction
 import com.kira.kiba.ui.songdetail.ChartDetailScreen
+import com.kira.kiba.ui.songdetail.ChartPreviewScreen
 import com.kira.kiba.ui.tools.DxConverterScreen
 import com.kira.kiba.ui.tools.FriendQueryScreen
 import com.kira.kiba.ui.tools.HotChartsScreen
@@ -153,6 +155,11 @@ sealed interface KibaSubPage {
         override val title: String = "谱面详情"
     }
 
+    /** 落雪谱面预览（WebView 加载落雪官方谱面确认播放页，舞萌专用）。 */
+    data class ChartPreview(val url: String) : KibaSubPage {
+        override val title: String = "谱面预览"
+    }
+
     /** Best 50（官方口径 sd 35 + dx 15）。 */
     data object Best50 : KibaSubPage {
         override val title: String = "Best 50"
@@ -193,9 +200,14 @@ sealed interface KibaSubPage {
         override val title: String = "模型配置"
     }
 
-    /** 查分器登录（账号密码；OAuth 通道已暂时停用。独立子页避免弹层与软键盘冲突）。 */
+    /** 查分器登录（水鱼；账号密码 + OAuth 设备码。独立子页避免弹层与软键盘冲突）。 */
     data object Login : KibaSubPage {
-        override val title: String = "登录查分器"
+        override val title: String = "水鱼账户登录"
+    }
+
+    /** 落雪账户登录（OAuth 授权 + 个人 API 密钥双通道，舞萌 / 中二通用）。 */
+    data object LxnsLogin : KibaSubPage {
+        override val title: String = "落雪账户登录"
     }
 
     /** 曲目归类分组子页面（按版本 / MASTER 谱师 / 曲师）。 */
@@ -532,6 +544,11 @@ fun KibaMainScreen() {
                                   songId = target.songId,
                                   difficultyOrdinal = target.difficultyOrdinal,
                                   scrollBehavior = scrollBehavior,
+                                  onOpenPreview = { url -> pushPage(KibaSubPage.ChartPreview(url)) },
+                              )
+                              is KibaSubPage.ChartPreview -> ChartPreviewScreen(
+                                  url = target.url,
+                                  scrollBehavior = scrollBehavior,
                               )
                               is KibaSubPage.ChuniSongDetail -> ChuniSongDetailScreen(
                                   songId = target.songId,
@@ -574,6 +591,10 @@ fun KibaMainScreen() {
                               )
                               is KibaSubPage.LlmConfig -> LlmConfigScreen(scrollBehavior = scrollBehavior)
                               is KibaSubPage.Login -> LoginScreen(
+                                  scrollBehavior = scrollBehavior,
+                                  onLoginSuccess = { popPage() },
+                              )
+                              is KibaSubPage.LxnsLogin -> LxnsLoginScreen(
                                   scrollBehavior = scrollBehavior,
                                   onLoginSuccess = { popPage() },
                               )
@@ -628,6 +649,7 @@ fun KibaMainScreen() {
                               KibaTab.Me -> MeScreen(
                                   scrollBehavior = scrollBehavior,
                                   onOpenLogin = { pushPage(KibaSubPage.Login) },
+                                  onOpenLxnsLogin = { pushPage(KibaSubPage.LxnsLogin) },
                                   onOpenBest50 = { pushPage(KibaSubPage.Best50) },
                                   onOpenScoreQuery = { pushPage(KibaSubPage.ScoreQuery) },
                                   onOpenDxConverter = { pushPage(KibaSubPage.DxConverter) },

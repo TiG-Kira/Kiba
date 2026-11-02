@@ -44,6 +44,15 @@
 -dontwarn retrofit2.**
 -dontwarn org.codehaus.mojo.**
 
+# Retrofit 方法泛型签名（1.8.8 实证坑）：
+# R8 会剥掉「被 -keep 的接口」上方法的泛型签名（Observable<JsonElement> → 裸 Observable），
+# RxJava2CallAdapterFactory 运行时按泛型实参解析返回类型，直接抛
+# "Observable return type must be parameterized as Observable<Foo>"。
+# 结果是 chart_stats 同步每次启动都静默失败，热门乐曲排行永远空态（debug 未混淆则一切正常）。
+# 保留 RxJava2 全家 + 接口方法的泛型签名属性。
+-keep class io.reactivex.** { *; }
+-keepattributes Signature, InnerClasses, EnclosingMethod
+
 # ── 枚举：保留 values()/valueOf()，避免被 R8 误删 ──
 -keepclassmembers class * extends java.lang.Enum {
     public static **[] values();
