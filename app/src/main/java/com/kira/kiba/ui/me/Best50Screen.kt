@@ -255,7 +255,7 @@ fun Best50Screen(
                     }
                     itemsIndexed(
                         items = new,
-                        key = { _, r -> "b50_new_${r.songId}_${r.levelIndex}" },
+                        key = { _, r -> "b50_new_${r.songId}_${r.levelIndex}_${r.type}" },
                     ) { index, r ->
                         Best50TileCard(
                             rank = index + 1,
@@ -279,7 +279,7 @@ fun Best50Screen(
                     }
                     itemsIndexed(
                         items = old,
-                        key = { _, r -> "b50_old_${r.songId}_${r.levelIndex}" },
+                        key = { _, r -> "b50_old_${r.songId}_${r.levelIndex}_${r.type}" },
                     ) { index, r ->
                         Best50TileCard(
                             rank = index + 1,

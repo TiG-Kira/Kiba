@@ -82,9 +82,9 @@ fun ChartPreviewScreen(
                 override fun onPageFinished(view: WebView, u: String) {
                     loading = false
                     injectKibaStyle(view)
-                    // SPA 渲染晚于 onPageFinished：延迟补注入一次，
-                    // 此时「谱面预览」h3 才存在，标题区隐藏靠这一波。
-                    // 注意这里只排一次；injectKibaStyle 内部不再自排，避免无限链式调度。
+                    // 标题区隐藏靠注入脚本里的常驻 MutationObserver（标题一挂载即藏）。
+                    // 8 秒补注入只是兜底：万一 observer 因极端时序没挂上还能重挂。
+                    // 这里只排一次；injectKibaStyle 内部不再自排，避免无限链式调度。
                     view.postDelayed({ injectKibaStyle(view) }, 8_000L)
                 }
 
@@ -204,9 +204,11 @@ fun ChartPreviewScreen(
  *
  * 标题区：JSX 是 `Group > (返回按钮 + Title(h3)"谱面预览" + Badge"测试版")`，
  * mantine v7 组件带全局类 `mantine-Group-root`，故按 h3 文本定位后
- * hide 最近的一个 Group。SPA 渲染晚于 onPageFinished，因此除即时执行外
- * 还会在 8 秒后补一次；style 挂在 html（documentElement）上——react-helmet
- * 会重写 head，挂那里会被它清掉。
+ * hide 最近的一个 Group。SPA 渲染晚于 onPageFinished，一次性查找会在标题
+ * 尚未挂载时空手而归（页面上挂约半分钟才消失）——因此挂一个**常驻
+ * MutationObserver**：标题节点一插入 DOM 立刻隐藏，与渲染时机彻底解耦；
+ * React 后续重渲染重建节点也由 observer 兜住。style 挂在 html
+ * （documentElement）上——react-helmet 会重写 head，挂那里会被它清掉。
  */
 private fun injectKibaStyle(view: WebView) {
     val js = """
@@ -219,13 +221,26 @@ private fun injectKibaStyle(view: WebView) {
             }
             s.textContent = ':root { --header-height: 0px !important; --header-bar-height: 0px !important; }'
                 + 'div[class*="_header_"] { display: none !important; }';
-            var hidden = 0;
-            document.querySelectorAll('h3').forEach(function(h) {
-                if ((h.textContent || '').trim() !== '谱面预览') return;
-                var c = h.closest('.mantine-Container-root');
-                if (c && c.firstElementChild) { c.firstElementChild.style.display = 'none'; hidden++; }
-            });
-            return 'alive:' + !!s.parentNode + ',hid:' + hidden;
+            function hideTitle() {
+                var n = 0;
+                var list = document.querySelectorAll('h3');
+                for (var i = 0; i < list.length; i++) {
+                    var h = list[i];
+                    if ((h.textContent || '').trim() !== '谱面预览') continue;
+                    var c = h.closest('.mantine-Container-root');
+                    if (c && c.firstElementChild && c.firstElementChild.style.display !== 'none') {
+                        c.firstElementChild.style.display = 'none';
+                        n++;
+                    }
+                }
+                return n;
+            }
+            var hid = hideTitle();
+            if (!window.__kibaTitleObserver) {
+                window.__kibaTitleObserver = new MutationObserver(function() { hideTitle(); });
+                window.__kibaTitleObserver.observe(document.documentElement, { childList: true, subtree: true });
+            }
+            return 'alive:' + !!s.parentNode + ',hid:' + hid;
         })()
     """.trimIndent().replace("\n", " ")
     view.evaluateJavascript(js) { result ->
