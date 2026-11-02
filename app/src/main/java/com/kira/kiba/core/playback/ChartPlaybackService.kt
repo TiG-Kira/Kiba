@@ -8,6 +8,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.media.AudioManager
 import android.os.Build
 import android.os.IBinder
 import android.support.v4.media.MediaMetadataCompat
@@ -85,6 +86,9 @@ class ChartPlaybackService : Service() {
     /** 谱面封面（后台异步加载，成功后刷一次元数据；拿不到就退化为应用图标）。 */
     @Volatile private var coverBitmap: android.graphics.Bitmap? = null
 
+    /** 系统级音频活动检测（页面无关的「真的在响吗」金标准）。 */
+    private val audioManager by lazy { getSystemService(Context.AUDIO_SERVICE) as AudioManager }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -143,6 +147,23 @@ class ChartPlaybackService : Service() {
         }
     }
 
+    /** 点媒体卡片回到谱面预览页的统一入口（通知 contentIntent 与 sessionActivity 共用）。 */
+    private fun reopenPendingIntent(): PendingIntent {
+        // SINGLE_TOP|CLEAR_TOP 让已存在的 MainActivity 收 onNewIntent 而不是叠新实例；
+        // extras 标记由 MainActivity 转发给 ChartPreviewPlayer.requestReopen()，
+        // KibaMainScreen 消费后 pushPage 回 ChartPreview（复用保留 WebView，进度不丢）。
+        val reopenIntent = Intent(this, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            putExtra(MainActivity.EXTRA_REOPEN_CHART_PREVIEW, true)
+        }
+        return PendingIntent.getActivity(
+            this,
+            0,
+            reopenIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+    }
+
     private fun getOrCreateSession(): MediaSessionCompat {
         session?.let { return it }
         val ms = MediaSessionCompat(this, "KibaChartPlayback")
@@ -153,18 +174,22 @@ class ChartPlaybackService : Service() {
             override fun onFastForward() = ChartPreviewPlayer.seekForward()
 
             override fun onStop() {
-                if (ChartPreviewPlayer.screenVisible) {
-                    // 预览页还挂着：只停声 + 撤通知，**绝不销毁 WebView**——
-                    // 页面还组合着它，销毁会让预览页直接变死页。用户在页面里
-                    // 重新点播放后，页面轮询会重新拉起本服务。
-                    ChartPreviewPlayer.pause()
-                    stopSelf()
-                } else {
-                    // 后台场景：彻底收尾（销毁 WebView、释放内存、撤通知）
-                    ChartPreviewPlayer.release()
-                }
+                // 无论前后台都**只停声、保留 WebView**（谱面停在暂停态）：
+                // - 预览页挂着时销毁会让页面变死页；
+                // - 后台销毁会让用户回页面看谱时进度全丢（Android 17
+                //   HyperOS 4 / ColorOS 17 的媒体控制卡片点击可能触发 onStop，
+                //   若在此 release，症状正是「点卡片 → 回主页 + 播放消失」）。
+                // WebView 由下次 register/release 或页面正常关闭兜底清理，
+                // 不会永久泄漏；重新播放（页面内或通知）后轮询会重拉本服务。
+                ChartPreviewPlayer.pause()
+                stopSelf()
             }
         })
+        // Android 13+ 的媒体控制卡片（通知栏顶部 / 锁屏 / QS）点正文走的是
+        // sessionActivity，**不是**通知的 contentIntent；不设置时系统 fallback
+        // 到 launcher intent（无 reopen 标记）→ 只回主页。HyperOS 4 / ColorOS 17
+        // 实测即此症状，必须显式指向同一 reopen 入口。
+        ms.setSessionActivity(reopenPendingIntent())
         ms.isActive = true
         session = ms
         return ms
@@ -191,8 +216,31 @@ class ChartPlaybackService : Service() {
             if (session != ms) return@probeState // 服务正在销毁
             when (st.state) {
                 "playing" -> {
-                    lastPosMs = st.posMs
-                    applyState(ms, PlaybackStateCompat.STATE_PLAYING, st.posMs)
+                    // **isMusicActive 复核**：页面 JS 探测在「用户于页面内暂停」时
+                    // 会误报 playing——实测（HyperOS 4 / ColorOS 17 的落雪页面）：
+                    // 页面暂停既不 suspend AudioContext 也不可靠置 ended，且播放
+                    // 按钮没有 aria-label，三条探测通道全部失效，pos 还会假增长。
+                    // 系统级音频活动（isMusicActive）是页面无关的金标准：JS 说在播
+                    // 但整机没有任何音频输出 → 页面必然已静，判暂停（pos 冻结）。
+                    // 已知局限：若有别的 App 恰好在放歌，isMusicActive 恒 true，
+                    // 复核失效退回 JS 判定——可接受的边缘场景。
+                    if (audioManager.isMusicActive) {
+                        lastPosMs = st.posMs
+                        applyState(ms, PlaybackStateCompat.STATE_PLAYING, st.posMs)
+                    } else if (st.durMs > 0 && st.posMs >= st.durMs - 1500) {
+                        // 整机无声 + JS pos 已假增长并被 clamp 到曲末 = 自然播完
+                        // （pos = ctx.currentTime - 起点，页面播完会重置音频源但
+                        // ctx 可能还在走，探出的 pos 触底不再动）。
+                        android.util.Log.d(TAG, "silent + pos at track end -> ended")
+                        if (ChartPreviewPlayer.screenVisible) stopSelf()
+                        else ChartPreviewPlayer.release()
+                    } else {
+                        android.util.Log.d(
+                            TAG,
+                            "JS says playing but isMusicActive=false -> treat as paused (pos=${st.posMs})",
+                        )
+                        applyState(ms, PlaybackStateCompat.STATE_PAUSED, lastPosMs)
+                    }
                 }
                 "paused" -> {
                     if (st.posMs > 0) lastPosMs = st.posMs
@@ -275,20 +323,9 @@ class ChartPlaybackService : Service() {
      * action 渲染（播放/暂停、快退、快进、停止），无需在通知里塞自定义 action。
      */
     private fun buildNotification(state: Int, posMs: Long): Notification {
-        // 点卡片正文回到谱面预览页（不回主页）：SINGLE_TOP|CLEAR_TOP 让已存在的
-        // MainActivity 收 onNewIntent 而不是叠一个新实例；extras 标记由 MainActivity
-        // 转发给 ChartPreviewPlayer.requestReopen()，KibaMainScreen 消费后 pushPage
-        // 回 ChartPreview（复用保留 WebView，播放进度不丢）。
-        val reopenIntent = Intent(this, MainActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            putExtra(MainActivity.EXTRA_REOPEN_CHART_PREVIEW, true)
-        }
-        val contentIntent = PendingIntent.getActivity(
-            this,
-            0,
-            reopenIntent,
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
+        // 点通知卡片正文回到谱面预览页（与 sessionActivity 同一入口，见
+        // reopenPendingIntent 注释）。
+        val contentIntent = reopenPendingIntent()
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.kiba_alpha)
             .setContentTitle(ChartPreviewPlayer.title.ifBlank { "谱面播放中" })

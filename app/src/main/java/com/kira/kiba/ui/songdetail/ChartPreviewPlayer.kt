@@ -241,44 +241,51 @@ object ChartPreviewPlayer {
     /**
      * 播放态探测脚本，返回 JSON {state, pos, dur}（pos/dur 单位 ms）。
      * 顺带幂等重挂补丁（兜住 onPageStarted 补丁因时序没挂上的情况）。
-     * 判定矩阵：
-     * - 音源 live：ctx suspended → paused；按钮「播放」→ paused；否则 playing；
-     * - 音源已结束（引擎 pause 即 stop / 自然播完）：按钮「暂停」→ playing（罕见）；
-     *   按钮「播放」→ paused，但位置贴着曲末（<1.5s）判 ended（自然播完）。
+     *
+     * 判定层级：
+     * 1. **ctx suspended** → paused（我们的通知控制走 ctx.suspend，状态必然同步）；
+     * 2. **音源 ended === true**（音乐轨真放完）→ pos 贴曲末判 ended，否则 paused；
+     * 3. 音源 live → playing（pos = ctx 时钟 - start 锚点，音乐轨真实位置）；
+     * 4. 兜底 paused。
+     *
+     * **页面内暂停不在此判定**（AVD 实测：落雪暂停按钮只停谱面演出、音频整轨
+     * 继续播，pos 仍真实增长——JS 层「在播」符合听觉事实）：「页面内暂停后通知
+     * 是否转暂停」由服务端用系统级 AudioManager.isMusicActive 复核——真机上若
+     * 页面暂停连带音乐停（引擎版本行为不同），isMusicActive=false 会把 JS 的
+     * playing 误报纠正为 paused；演出停但音乐还响时通知保持播放中同样符合听觉。
+     * 其他不可用信号（实测记录，勿再踩）：
+     * - 播放按钮无 aria-label（26 个 button 全查过）；
+     * - 音源暂停后 ended 读出 undefined（页面疑似 stop 旧源+建新源不 start）；
+     * - 谱面位置文本（m:d.d [n/N]）是 canvas 绘制，DOM 文本通道拿不到；
+     * - JS 体内不能写 // 注释——脚本会被单行化，第二行注释会吞掉后续代码。
      */
     internal val STATE_JS = """
         (function(){
             try { kibaHookAudio(); } catch(e) {}
             var out = {state:'idle', pos:0, dur:0};
             var s = window.__kibaMusicSource;
-            var label = null;
-            try {
-                var b = document.querySelectorAll('button[aria-label]');
-                for (var i = 0; i < b.length; i++) {
-                    var l = b[i].getAttribute('aria-label');
-                    if (l === '暂停') { label = 'playing'; break; }
-                    if (l === '播放') { label = 'paused'; break; }
-                }
-            } catch(e) {}
             try { if (s && s.buffer) out.dur = Math.round(s.buffer.duration * 1000); } catch(e) {}
+            var ctxSuspended = !!(s && s.context && s.context.state === 'suspended');
             var st = window.__kibaMusicStart;
-            if (s && !s.ended) {
+            if (ctxSuspended) {
+                out.pos = window.__kibaLastPos || 0;
+                out.state = 'paused';
+            } else if (s && s.ended === true) {
+                out.pos = window.__kibaLastPos || 0;
+                if (out.dur > 0 && out.pos >= out.dur - 1500) out.state = 'ended';
+                else out.state = 'paused';
+            } else if (s && !s.ended) {
                 try {
                     var p = (s.context.currentTime - st.t + st.off) * 1000;
                     out.pos = Math.max(0, Math.round(p));
                     if (out.dur > 0 && out.pos > out.dur) out.pos = out.dur;
                     window.__kibaLastPos = out.pos;
                 } catch(e) { out.pos = window.__kibaLastPos || 0; }
-                if (s.context.state === 'suspended') out.state = 'paused';
-                else if (label === 'paused') out.state = 'paused';
-                else out.state = 'playing';
+                out.state = 'playing';
             } else {
                 out.pos = window.__kibaLastPos || 0;
-                if (label === '暂停') out.state = 'playing';
-                else if (label === '播放') {
-                    out.state = 'paused';
-                    if (out.dur > 0 && out.pos >= out.dur - 1500) out.state = 'ended';
-                }
+                if (out.dur > 0 && out.pos >= out.dur - 1500) out.state = 'ended';
+                else out.state = 'paused';
             }
             return JSON.stringify(out);
         })()
