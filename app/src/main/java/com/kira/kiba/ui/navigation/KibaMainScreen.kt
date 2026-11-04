@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import com.kira.kiba.core.data.ChuniRecordSync
 import com.kira.kiba.core.data.SongDataSync
 import com.kira.kiba.core.agent.KibaAgent
+import com.kira.kiba.core.playback.SongPlaybackController
 import com.kira.kiba.core.share.ShareService
 import com.kira.kiba.core.state.KibaState
 import com.kira.kiba.core.model.GameType
@@ -66,6 +67,7 @@ import com.kira.kiba.ui.tools.QrImportScreen
 import com.kira.kiba.ui.tools.RatingCalcScreen
 import com.kira.kiba.ui.tools.VersionMapScreen
 import com.kira.kiba.ui.songdetail.SongDetailScreen
+import com.kira.kiba.ui.songplayer.SongPlayerScreen
 import com.kira.kiba.ui.songdetail.SongDetailTopBarSlot
 import com.kira.kiba.ui.songdetail.ChuniSongDetailTopBarSlot
 import com.kira.kiba.ui.songdetail.ChuniSongDetailScreen
@@ -169,6 +171,11 @@ sealed interface KibaSubPage {
         val songImageUrl: String,
     ) : KibaSubPage {
         override val title: String = "谱面预览"
+    }
+
+    /** 乐曲播放页（曲目列表悬浮底栏 / 曲目详情「播放乐曲」/ 媒体通知 进入）。 */
+    data object SongPlayer : KibaSubPage {
+        override val title: String = "正在播放"
     }
 
     /** Best 50（官方口径 sd 35 + dx 15）。 */
@@ -375,11 +382,21 @@ fun KibaMainScreen() {
         )
     }
 
+    // 点媒体通知「回到播放页」：与谱面 reopen 同款双通道。已在播放页时忽略。
+    fun reopenSongPlayer() {
+        val top = subStack.lastOrNull()
+        if (top is KibaSubPage.SongPlayer) return
+        pushPage(KibaSubPage.SongPlayer)
+    }
+
     LaunchedEffect(Unit) {
-        // onCreate 的 Intent 早于本订阅挂上：先消费一次 pending 标记兜时序，
-        // 再订阅流接住 onNewIntent 的活跃转发。
         if (ChartPreviewPlayer.consumePendingReopen()) reopenChartPreview()
         ChartPreviewPlayer.reopenFlow.collect { reopenChartPreview() }
+    }
+
+    LaunchedEffect(Unit) {
+        if (SongPlaybackController.consumePendingReopen()) reopenSongPlayer()
+        SongPlaybackController.reopenFlow.collect { reopenSongPlayer() }
     }
 
     // 顶栏搜索按钮：每次点击 +1，曲目页据此聚焦搜索框
@@ -580,6 +597,11 @@ fun KibaMainScreen() {
                                   onOpenChart = { songId, difficultyOrdinal ->
                                       pushPage(KibaSubPage.ChartDetail(songId, difficultyOrdinal))
                                   },
+                                  onOpenPlayer = { pushPage(KibaSubPage.SongPlayer) },
+                              )
+                              is KibaSubPage.SongPlayer -> SongPlayerScreen(
+                                  scrollBehavior = scrollBehavior,
+                                  onBack = { popPage() },
                               )
                               is KibaSubPage.ChartDetail -> ChartDetailScreen(
                                   songId = target.songId,
@@ -680,6 +702,7 @@ fun KibaMainScreen() {
                                   onOpenGroup = { mode, key ->
                                       pushPage(KibaSubPage.SongGroup(mode, key))
                                   },
+                                  onOpenPlayer = { pushPage(KibaSubPage.SongPlayer) },
                               )
                               KibaTab.Agent -> AgentScreen(
                                   scrollBehavior = scrollBehavior,

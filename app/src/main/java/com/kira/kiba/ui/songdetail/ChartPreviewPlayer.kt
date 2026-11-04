@@ -192,10 +192,41 @@ object ChartPreviewPlayer {
         ctx("suspend()")
     }
 
-    /** 恢复播放：先派发 Space，再无条件 resume（对 running 态的 ctx 调 resume 无害）。 */
+    /** 恢复播放：**状态感知**——只在页面确实处于暂停态时才派发 Space。
+     *
+     * ## 为什么不能盲发 Space
+     * Space 是网页的「播放/暂停切换键」。应用外（桌面/锁屏）点媒体通知的播放键时，
+     * 页面状态可能已经是在播（例如 ROM 冻结延迟导致上一次切换没生效、或页面暂停
+     * 只停演出不停声的引擎版本）——盲发 Space 会把播放切成暂停，症状正是
+     * 「点继续播放反而一点声音都没有」。
+     *
+     * ## 三步走
+     * 1. `webView.onResume()`：部分 ROM 在应用退后台时会顺手 pause WebView，
+     *    先解锁（对没 pause 的实例无害），避免后续 JS 派发被冻住；
+     * 2. 探测页面真实状态：非 playing 才补发 Space（切换到播放），
+     *    无论哪种状态都追加幂等的 `ctx.resume()`（对 running 态调用无害）；
+     * 3. 探测 900ms 无响应（渲染器被冻结的典型症状）→ 盲发 Space + resume 兜底，
+     *    死马当活马医。 */
     fun resume() {
-        dispatchKey(" ", shift = false)
-        ctx("resume()")
+        val view = webView ?: return
+        runCatching { view.onResume() }
+        var answered = false
+        val fallback = Runnable {
+            if (!answered) {
+                android.util.Log.w(TAG, "resume: probe timeout, blind dispatch")
+                dispatchKey(" ", shift = false)
+                ctx("resume()")
+            }
+        }
+        view.postDelayed(fallback, 900)
+        view.evaluateJavascript(STATE_JS) { result ->
+            answered = true
+            view.removeCallbacks(fallback)
+            val st = parseSnapshot(result)
+            android.util.Log.d(TAG, "resume: probe=${st.state} -> ${if (st.state != "playing") "dispatch Space + resume" else "ctx resume only"}")
+            if (st.state != "playing") dispatchKey(" ", shift = false)
+            ctx("resume()")
+        }
     }
 
     /** 快退一小节（等价网页 Shift+←）。 */
@@ -203,6 +234,16 @@ object ChartPreviewPlayer {
 
     /** 快进一小节（等价网页 Shift+→）。 */
     fun seekForward() = dispatchKey("ArrowRight", shift = true)
+
+    /** 只解冻 AudioContext + 唤醒 WebView（幂等，无切换风险）。
+     *
+     * 播放恢复复核重试专用：Space 是切换键，重发有把播放切成暂停的风险；
+     * `AudioContext.resume()` 对 running 态调用无害，重发永远安全。 */
+    fun resumeCtxOnly() {
+        val view = webView ?: return
+        runCatching { view.onResume() }
+        ctx("resume()")
+    }
 
     /** 探测播放态（state/pos/dur），回调在主线程。无 WebView 时返回 idle。 */
     fun probeState(onResult: (Snapshot) -> Unit) {

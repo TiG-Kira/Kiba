@@ -36,6 +36,9 @@ class MainActivity : ComponentActivity(), NavigationEventDispatcherOwner {
     companion object {
         /** 媒体通知点正文 → 回到谱面预览页（ChartPlaybackService 塞入，转发给 ChartPreviewPlayer）。 */
         const val EXTRA_REOPEN_CHART_PREVIEW = "kiba.reopen.CHART_PREVIEW"
+
+        /** 媒体通知点正文 → 回到乐曲播放页（SongPlaybackService 塞入，转发给 SongPlaybackController）。 */
+        const val EXTRA_REOPEN_SONG_PLAYER = "kiba.reopen.SONG_PLAYER"
     }
 
     private val navEventDispatcher = NavigationEventDispatcher()
@@ -81,6 +84,9 @@ class MainActivity : ComponentActivity(), NavigationEventDispatcherOwner {
     private fun forwardReopen(intent: Intent?) {
         if (intent?.getBooleanExtra(EXTRA_REOPEN_CHART_PREVIEW, false) == true) {
             com.kira.kiba.ui.songdetail.ChartPreviewPlayer.requestReopen()
+        }
+        if (intent?.getBooleanExtra(EXTRA_REOPEN_SONG_PLAYER, false) == true) {
+            com.kira.kiba.core.playback.SongPlaybackController.requestReopen()
         }
     }
 

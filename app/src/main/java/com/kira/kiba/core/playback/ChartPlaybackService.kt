@@ -83,6 +83,12 @@ class ChartPlaybackService : Service() {
     private var lastPosMs = 0L
     /** onStartCommand 幂等闸：重复 start（页面内轮询 + 离页拉起双重触发）不重跑引导。 */
     private var bootstrapped = false
+
+    // ---- 播放恢复复核（应用外点「继续播放」无声的自愈）----
+    // onPlay 后先宽限 2 个轮询（音频拉起有延迟，别急着重发），之后每轮检查
+    // isMusicActive：仍在播 → 清零；仍无声 → 重发幂等的 ctx.resume()，最多 3 次。
+    private var playVerifyGrace = 0
+    private var playVerifyRetries = 0
     /** 谱面封面（后台异步加载，成功后刷一次元数据；拿不到就退化为应用图标）。 */
     @Volatile private var coverBitmap: android.graphics.Bitmap? = null
 
@@ -168,7 +174,14 @@ class ChartPlaybackService : Service() {
         session?.let { return it }
         val ms = MediaSessionCompat(this, "KibaChartPlayback")
         ms.setCallback(object : MediaSessionCompat.Callback() {
-            override fun onPlay() = ChartPreviewPlayer.resume()
+            override fun onPlay() {
+                // 复核窗口：onPlay 后 2s 宽限 + 最多 3 次重发（见 refresh 的复核逻辑）。
+                // 真机（HyperOS 4 / ColorOS 17）实证：应用外点媒体通知的播放键，
+                // WebView/渲染器可能还在冻结恢复中，单次派发会石沉大海。
+                playVerifyGrace = 2
+                playVerifyRetries = 3
+                ChartPreviewPlayer.resume()
+            }
             override fun onPause() = ChartPreviewPlayer.pause()
             override fun onRewind() = ChartPreviewPlayer.seekBack()
             override fun onFastForward() = ChartPreviewPlayer.seekForward()
@@ -211,6 +224,23 @@ class ChartPlaybackService : Service() {
             // 保留的 WebView 没了（App 重建 / release 异常）：通知没有存在意义
             stopSelf()
             return
+        }
+        // 播放恢复复核：刚请求过播放但整机仍无声 → 重发幂等的 ctx.resume()。
+        // 只解冻、不派发 Space —— Space 是切换键，重发有把播放切成暂停的风险。
+        if (playVerifyGrace > 0) {
+            playVerifyGrace--
+        } else if (playVerifyRetries > 0) {
+            if (audioManager.isMusicActive) {
+                playVerifyGrace = 0
+                playVerifyRetries = 0
+            } else {
+                playVerifyRetries--
+                android.util.Log.d(
+                    TAG,
+                    "play verify: still silent, re-issue ctx resume (left=$playVerifyRetries)",
+                )
+                ChartPreviewPlayer.resumeCtxOnly()
+            }
         }
         ChartPreviewPlayer.probeState { st ->
             if (session != ms) return@probeState // 服务正在销毁
@@ -327,7 +357,7 @@ class ChartPlaybackService : Service() {
         // reopenPendingIntent 注释）。
         val contentIntent = reopenPendingIntent()
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.kiba_alpha)
+            .setSmallIcon(R.drawable.ic_kiba_notification)
             .setContentTitle(ChartPreviewPlayer.title.ifBlank { "谱面播放中" })
             .setContentText(ChartPreviewPlayer.subtitle.ifBlank { "落雪谱面预览" })
             .setContentIntent(contentIntent)

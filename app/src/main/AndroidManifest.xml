@@ -80,6 +80,15 @@
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
 
+        <!--
+            乐曲播放：曲目详情「播放乐曲」/ 播放页（MediaPlayer 整轨）在后台时拉起本服务，
+            以媒体通知提供 播放-暂停/上一首/下一首/停止/拖动进度。mediaPlayback 是官方专用 FGS 类型。
+        -->
+        <service
+            android:name=".core.playback.SongPlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
         <!-- 应用内更新：私有目录更新包的 FileProvider（updates/） -->
         <provider
             android:name="androidx.core.content.FileProvider"

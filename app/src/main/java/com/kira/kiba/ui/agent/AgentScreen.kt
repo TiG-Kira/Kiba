@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -85,6 +86,7 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  * - 会话记录持久化（[AgentSession]），重启后恢复；
  * - 布局：顶部顶栏 clearance（防遮挡）+ 消息列表 + 底部输入栏（含悬浮底栏留白与键盘避让）。
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AgentScreen(
     scrollBehavior: ScrollBehavior,
@@ -108,6 +110,13 @@ fun AgentScreen(
 
     val clearance = LocalTopBarClearance.current
     val navBarBottom = LocalNavBarBottomPadding.current
+    // 输入行贴键盘上沿：Column 的 imePadding 已把内容顶起 IME 高度，让位里
+    // 把已顶起的部分扣掉（下限 12dp 贴边）。直接用 isImeVisible 二选一会在
+    // **浮动键盘**（AVD/无障碍模式，ime inset = 0）下翻车：键在弹着但 inset
+    // 为零， imePadding 顶不动内容，输入框反而沉底撞上悬浮底栏。
+    val density = LocalDensity.current
+    val imeBottomDp = with(density) { WindowInsets.ime.getBottom(density).toDp() }
+    val inputRowBottom = (navBarBottom + 22.dp - imeBottomDp).coerceAtLeast(12.dp)
     // 已配置 LLM 才允许自由提问；否则只能点技能卡
     val llmReady = remember {
         SpUtil.isLlmEnabled() && (SpUtil.getLlmApiKey().isNotBlank() || SpUtil.getLlmBaseUrl().isNotBlank())
@@ -302,7 +311,7 @@ fun AgentScreen(
                 guessing -> Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = navBarBottom + 22.dp),
+                        .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = inputRowBottom),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     TextField(
@@ -323,7 +332,7 @@ fun AgentScreen(
                 llmReady -> Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = navBarBottom + 22.dp),
+                        .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = inputRowBottom),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     TextField(

@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -25,6 +26,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.asFlow
@@ -32,7 +34,9 @@ import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.db.entity.ChartEntity
 import com.kira.kiba.core.db.entity.RecordEntity
 import com.kira.kiba.core.db.entity.SongDataEntity
+import com.kira.kiba.core.playback.SongPlaybackController
 import com.kira.kiba.core.stats.SongRating
+import com.kira.kiba.core.utils.CoverSources
 import com.kira.kiba.ui.common.ChartTypeChip
 import com.kira.kiba.ui.common.DifficultyChip
 import com.kira.kiba.ui.common.EmptyStateCard
@@ -50,6 +54,8 @@ import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
+import top.yukonga.miuix.kmp.icon.glass.*
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.utils.PressFeedbackType
 
@@ -65,8 +71,10 @@ fun SongDetailScreen(
     songId: Int,
     scrollBehavior: ScrollBehavior,
     onOpenChart: (songId: Int, difficultyOrdinal: Int) -> Unit,
+    onOpenPlayer: () -> Unit = {},
 ) {
     val db = remember { AppDataBase.getInstance() }
+    val context = LocalContext.current
 
     // 歌曲 + 谱面：一次性挂载加载（详情页粒度）
     val song by produceState<SongDataEntity?>(initialValue = null) {
@@ -138,6 +146,61 @@ fun SongDetailScreen(
                         InfoRow("BPM", "${currentSong.bpm}")
                         InfoRow("流派", currentSong.genre)
                         InfoRow("版本", currentSong.from)
+                    }
+                }
+            }
+
+            // ── 乐曲播放（音源：落雪整轨 mp3，详见 SongPlaybackController）──
+            item(key = "play") {
+                val playerState by SongPlaybackController.state.collectAsState()
+                val isCurrent = playerState.track?.songId == currentSong.id
+                val isPlayingThis = isCurrent && playerState.playing
+                Card(
+                    modifier = (Modifier.fillMaxWidth()),
+                    onClick = {
+                        SongPlaybackController.play(
+                            context,
+                            SongPlaybackController.Track(
+                                songId = currentSong.id,
+                                title = currentSong.title,
+                                artist = currentSong.artist,
+                                // imageUrl 是官网镜像的相对路径口径，UI 侧经 CoverFrame
+                                // 候选链加载（与列表/详情页封面同源同款回退）。
+                                imageUrl = currentSong.imageUrl,
+                                genre = currentSong.genre,
+                                coverCandidates = CoverSources.candidates(currentSong.id, currentSong.imageUrl),
+                                audioUrl = SongPlaybackController.audioUrlFor(currentSong.id),
+                            ),
+                        )
+                        onOpenPlayer()
+                    },
+                    pressFeedbackType = PressFeedbackType.Sink,
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        androidx.compose.material3.Icon(
+                            imageVector = if (isPlayingThis) MiuixGlassIcons.Regular.Pause else MiuixGlassIcons.Regular.Play,
+                            contentDescription = if (isPlayingThis) "正在播放" else "播放乐曲",
+                            tint = MiuixTheme.colorScheme.primary,
+                            modifier = Modifier.size(22.dp),
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (isPlayingThis) "正在播放本曲" else "播放乐曲",
+                                style = MiuixTheme.textStyles.body1,
+                                color = MiuixTheme.colorScheme.onSurface,
+                            )
+                            Text(
+                                text = "整轨试听 · 音源来自落雪",
+                                style = MiuixTheme.textStyles.footnote2,
+                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            )
+                        }
                     }
                 }
             }
