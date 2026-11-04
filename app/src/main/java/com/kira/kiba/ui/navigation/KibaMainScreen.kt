@@ -10,9 +10,11 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
@@ -67,6 +69,7 @@ import com.kira.kiba.ui.tools.QrImportScreen
 import com.kira.kiba.ui.tools.RatingCalcScreen
 import com.kira.kiba.ui.tools.VersionMapScreen
 import com.kira.kiba.ui.songdetail.SongDetailScreen
+import com.kira.kiba.ui.songplayer.NowPlayingBar
 import com.kira.kiba.ui.songplayer.SongPlayerScreen
 import com.kira.kiba.ui.songdetail.SongDetailTopBarSlot
 import com.kira.kiba.ui.songdetail.ChuniSongDetailTopBarSlot
@@ -480,6 +483,28 @@ fun KibaMainScreen() {
                               }
                           },
                       )
+                  } else if (sub is KibaSubPage.SongPlayer) {
+                      // 播放页复用歌曲详情页魔改顶栏（封面背景 + 歌名/艺术家 + 收藏/分享）。
+                      // 播放页内容不挂 nestedScroll，contentOffset 恒 0 → 顶栏永不折叠收窄；
+                      // pushPage 已 resetTopBar，从详情页折叠态进入也是展开态。
+                      // 换曲随 track.songId 变化自动刷新（切歌时顶栏跟着换封面标题）。
+                      // 必须 collectAsState 订阅——读 .value 不会因切歌触发重组，
+                      // 顶栏会停留在上一首的封面/标题（AVD 实证）。
+                      val playingTrack by SongPlaybackController.state.collectAsState()
+                      val playingId = playingTrack.track?.songId
+                      if (playingId != null) {
+                          SongDetailTopBarSlot(
+                              songId = playingId,
+                              scrollBehavior = scrollBehavior,
+                              onBack = { popPage() },
+                          )
+                      } else {
+                          KibaTopBar(
+                              title = sub.title,
+                              scrollBehavior = scrollBehavior,
+                              navigationIcon = { KibaBackAction { popPage() } },
+                          )
+                      }
                   } else if (sub is KibaSubPage.SongDetail) {
                       // 歌曲详情页魔改顶栏：封面背景 + 歌名/艺术家 + 收藏 star（详见 SongDetailTopBar）
                       SongDetailTopBarSlot(
@@ -525,28 +550,47 @@ fun KibaMainScreen() {
           },
           bottomBar = {
               if (subStack.isEmpty()) {
-                  // Termux Ultra 默认悬浮底栏：GlassNavigationBar
-                  // 左右各 24dp 内缩成浮动胶囊，底部贴系统导航栏上边缘
-                  // 真·高级材质开启时垫一层实色背景板，显著提高底栏实感
                   val advanced = LocalAdvancedMaterialEnabled.current
-                  GlassNavigationBar(
-                      items = tabs.map { GlassNavigationItem(icon = tabIcon(it), label = it.title) },
-                      selectedIndex = selectedTab.ordinal,
-                      onSelect = { index ->
-                          val target = tabs.getOrElse(index) { selectedTab }
-                          if (target != selectedTab) {
-                              // 切 Tab = 进新页面：目标页残留状态清掉，列表回顶 + 顶栏展开
-                              // （同样必须用 pageKey() 字符串，否则匹配不到已保存的状态）
-                              pageStateHolder.removeState(pageKey(target))
-                              topBarMemory.remove(pageKey(target))
-                              selectedTab = target
-                              resetTopBar()
-                          }
-                      },
-                      backdrop = glassNavBackdrop,
-                      backgroundBoard = if (advanced) MiuixTheme.colorScheme.surface.copy(alpha = 0.55f) else null,
-                      modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = systemNavBarsHeight),
-                  )
+                  val playerState by SongPlaybackController.state.collectAsState()
+                  Column(
+                      modifier = Modifier
+                          .fillMaxWidth()
+                          .padding(start = 24.dp, end = 24.dp, bottom = systemNavBarsHeight),
+                  ) {
+                      // 曲目页「正在播放」悬浮底栏：玻璃胶囊，压在导航栏上方 8dp。
+                      // 放在 bottomBar 槽（取景层子树外）而非页面内容里，玻璃采样
+                      // 不会成环。backdrop 无条件传（与 GlassNavigationBar 同款口径，
+                      // 首版按 advanced 开关条件传导致底栏实色、导航栏玻璃不一致）。
+                      if (selectedTab == KibaTab.Songs && playerState.track != null) {
+                          NowPlayingBar(
+                              state = playerState,
+                              backdrop = glassNavBackdrop,
+                              backgroundBoard = if (advanced) MiuixTheme.colorScheme.surface.copy(alpha = 0.55f) else null,
+                              onOpenPlayer = { pushPage(KibaSubPage.SongPlayer) },
+                          )
+                          Spacer(Modifier.height(8.dp))
+                      }
+                      // Termux Ultra 默认悬浮底栏：GlassNavigationBar
+                      // 左右各 24dp 内缩成浮动胶囊，底部贴系统导航栏上边缘
+                      // 真·高级材质开启时垫一层实色背景板，显著提高底栏实感
+                      GlassNavigationBar(
+                          items = tabs.map { GlassNavigationItem(icon = tabIcon(it), label = it.title) },
+                          selectedIndex = selectedTab.ordinal,
+                          onSelect = { index ->
+                              val target = tabs.getOrElse(index) { selectedTab }
+                              if (target != selectedTab) {
+                                  // 切 Tab = 进新页面：目标页残留状态清掉，列表回顶 + 顶栏展开
+                                  // （同样必须用 pageKey() 字符串，否则匹配不到已保存的状态）
+                                  pageStateHolder.removeState(pageKey(target))
+                                  topBarMemory.remove(pageKey(target))
+                                  selectedTab = target
+                                  resetTopBar()
+                              }
+                          },
+                          backdrop = glassNavBackdrop,
+                          backgroundBoard = if (advanced) MiuixTheme.colorScheme.surface.copy(alpha = 0.55f) else null,
+                      )
+                  }
               }
           }
       ) { padding ->
@@ -683,6 +727,7 @@ fun KibaMainScreen() {
                                   onOpenChuniSong = { chuni ->
                                       pushPage(KibaSubPage.ChuniSongDetail(chuni.song.id))
                                   },
+                                  onOpenPlayer = { pushPage(KibaSubPage.SongPlayer) },
                               )
                               is KibaSubPage.About -> AboutScreen(scrollBehavior = scrollBehavior)
                           }
@@ -702,7 +747,6 @@ fun KibaMainScreen() {
                                   onOpenGroup = { mode, key ->
                                       pushPage(KibaSubPage.SongGroup(mode, key))
                                   },
-                                  onOpenPlayer = { pushPage(KibaSubPage.SongPlayer) },
                               )
                               KibaTab.Agent -> AgentScreen(
                                   scrollBehavior = scrollBehavior,

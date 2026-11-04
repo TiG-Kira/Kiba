@@ -1,7 +1,9 @@
 package com.kira.kiba.ui.navigation
 
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import top.yukonga.miuix.kmp.basic.Icon
@@ -38,7 +40,8 @@ fun KibaTopBar(
     )
 }
 
-/** 顶栏返回按钮（glass 系，二级页面用）。[tint] 供封面背景等自定义底色场景切换字色。 */
+/** 顶栏返回按钮（glass 系，二级页面用）。[tint] 供封面背景等自定义底色场景切换字色。
+ *  图标对齐 Termux Ultra 的 BackButton 口径：ChevronBackward · 24dp · onSurface。 */
 @Composable
 fun KibaBackAction(
     tint: Color = MiuixTheme.colorScheme.onSurface,
@@ -46,8 +49,9 @@ fun KibaBackAction(
 ) {
     GlassIconButton(onClick = onClick) {
         Icon(
-            MiuixGlassIcons.Regular.Back,
+            MiuixGlassIcons.Regular.ChevronBackward,
             contentDescription = "返回",
+            modifier = Modifier.size(24.dp),
             tint = tint,
         )
     }

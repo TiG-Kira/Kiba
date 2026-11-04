@@ -62,7 +62,6 @@ import com.kira.kiba.core.db.entity.SongWithChartsEntity
 import com.kira.kiba.core.model.ChuniDiffType
 import com.kira.kiba.core.model.GameType
 import com.kira.kiba.core.model.SongGroupMode
-import com.kira.kiba.core.playback.SongPlaybackController
 import com.kira.kiba.core.repository.ChuniSongWithChartRepository
 import com.kira.kiba.core.repository.SongWithChartRepository
 import com.kira.kiba.core.state.KibaState
@@ -92,7 +91,6 @@ import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.icon.glass.*
 import com.kira.kiba.ui.material.KibaGlassDialog
-import com.kira.kiba.ui.navigation.LocalNavBarBottomPadding
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.utils.PressFeedbackType
 
@@ -142,7 +140,6 @@ fun SongsScreen(
     onSongClick: (SongWithChartsEntity) -> Unit = {},
     onChuniSongClick: (ChuniSongWithCharts) -> Unit = {},
     onOpenGroup: (mode: SongGroupMode, key: String) -> Unit = { _, _ -> },
-    onOpenPlayer: () -> Unit = {},
 ) {
     val context = LocalContext.current
     var query by remember { mutableStateOf("") }
@@ -304,8 +301,6 @@ fun SongsScreen(
             .nestedScroll(scrollBehavior.nestedScrollConnection),
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
     ) { padding ->
-        val playerState by SongPlaybackController.state.collectAsState()
-        Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
             modifier = Modifier
@@ -456,21 +451,6 @@ fun SongsScreen(
                     }
                 }
             }
-        }
-
-        // ── 「正在播放」悬浮底栏：悬浮在玻璃导航栏之上，点击进播放页 ──
-        // 只在会话播过乐曲（track 有值）后出现，不挡列表初始态。
-        if (playerState.track != null) {
-            val navBottom = LocalNavBarBottomPadding.current
-            NowPlayingBar(
-                state = playerState,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(horizontal = 24.dp)
-                    .padding(bottom = navBottom + 8.dp),
-                onOpenPlayer = onOpenPlayer,
-            )
-        }
         }
     }
 
@@ -880,72 +860,6 @@ fun SongCard(
                 fontSize = MiuixTheme.textStyles.body2.fontSize,
                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
             )
-        }
-    }
-}
-
-/**
- * 「正在播放」悬浮底栏：封面 + 曲名 + 播放/暂停。
- * 悬浮在玻璃导航栏之上（位置由调用方对齐 + padding 控制），点击整栏进播放页。
- * 会话内播过乐曲（track 有值）才出现，初始列表不受影响。
- */
-@Composable
-private fun NowPlayingBar(
-    state: SongPlaybackController.PlayerState,
-    modifier: Modifier = Modifier,
-    onOpenPlayer: () -> Unit,
-) {
-    val track = state.track ?: return
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        onClick = onOpenPlayer,
-        pressFeedbackType = PressFeedbackType.Sink,
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            CoverFrame(
-                songId = track.songId,
-                imageUrl = track.imageUrl,
-                genre = track.genre,
-                size = 40.dp,
-            )
-            Spacer(Modifier.width(10.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = track.title,
-                    style = MiuixTheme.textStyles.body2,
-                    color = MiuixTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                )
-                Text(
-                    text = when {
-                        state.error != null -> state.error
-                        !state.prepared -> "加载音源中…"
-                        else -> track.artist
-                    },
-                    style = MiuixTheme.textStyles.footnote2,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    maxLines = 1,
-                )
-            }
-            Spacer(Modifier.width(8.dp))
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .clickable { SongPlaybackController.toggle() },
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    if (state.playing) MiuixGlassIcons.Regular.Pause else MiuixGlassIcons.Regular.Play,
-                    contentDescription = if (state.playing) "暂停" else "播放",
-                    tint = MiuixTheme.colorScheme.primary,
-                )
-            }
         }
     }
 }

@@ -36,7 +36,8 @@ import kotlinx.coroutines.channels.BufferOverflow
  * ## 队列口径
  * 没有曲库级队列（随机/循环不在本期）。[state.queue] 是「本次会话播放过的曲目」，
  * 从详情页每播一首追加一首；上一首/下一首在此队列内移动，播完自动下一首，
- * 队尾播完即停。够支撑媒体通知和播放页的前后切换，后续要做歌单再扩。
+ * 队尾播完回到停止态（[PlayerState.ended]，列表与曲目信息保留）。够支撑媒体
+ * 通知和播放页的前后切换，后续要做歌单再扩。
  */
 object SongPlaybackController {
 
@@ -67,6 +68,8 @@ object SongPlaybackController {
         /** 本次会话播放队列（历史口径，见类注释）。 */
         val queue: List<Track> = emptyList(),
         val queueIndex: Int = -1,
+        /** 队列自然播完后的停止态：track/queue 保留，点播放从头重播当前曲。 */
+        val ended: Boolean = false,
     )
 
     private val _state = MutableStateFlow(PlayerState())
@@ -117,6 +120,36 @@ object SongPlaybackController {
         startTrack(queue, index)
     }
 
+    /**
+     * 详情页「加入播放列表」：插到当前曲目之后（当前曲播完轮到它）；
+     * 无播放会话时等同直接开播。已在队列里的曲目不重复插入。
+     */
+    fun queueTrack(context: Context, track: Track) {
+        appContext = context.applicationContext
+        val st = _state.value
+        if (st.track == null) {
+            play(context, track)
+            return
+        }
+        if (st.queue.any { it.songId == track.songId }) return
+        val queue = st.queue.toMutableList().apply { add(st.queueIndex + 1, track) }
+        _state.value = st.copy(queue = queue)
+    }
+
+    /**
+     * 一键播放整份列表（收藏列表「播放全部」）：以给定曲目列表**新建会话**，
+     * 从第一首开播。与 [play] 的「追加/跳转」语义不同——播歌单的意图明确是
+     * 「连播这整份列表」，旧会话的队列不保留、直接整队替换。
+     */
+    fun playAll(context: Context, tracks: List<Track>) {
+        if (tracks.isEmpty()) return
+        appContext = context.applicationContext
+        if (audioManager == null) {
+            audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        }
+        startTrack(tracks, 0)
+    }
+
     /** 播放/暂停切换（播放页大按钮、通知按钮、悬浮底栏共用）。 */
     fun toggle() {
         if (_state.value.playing) pause() else resume()
@@ -131,11 +164,21 @@ object SongPlaybackController {
 
     fun resume() {
         val st = _state.value
-        val player = mp ?: return
-        if (!st.prepared) return
-        runCatching { player.start() }
-        requestFocus()
-        _state.value = st.copy(playing = true, error = null)
+        if (st.track == null) return
+        val player = mp
+        when {
+            // 停止态（队尾播完 mp 已释放）：点播放从头重播当前曲
+            player == null -> startTrack(st.queue, st.queueIndex)
+            // 加载失败：再点播放 = 重试当前曲
+            st.error != null -> startTrack(st.queue, st.queueIndex)
+            // 音源加载中：等 onPrepared 自动开播
+            !st.prepared -> return
+            else -> {
+                runCatching { player.start() }
+                requestFocus()
+                _state.value = _state.value.copy(playing = true, error = null)
+            }
+        }
     }
 
     /** 拖动进度（毫秒，绝对位置）。 */
@@ -157,6 +200,9 @@ object SongPlaybackController {
             jumpTo(st.queueIndex - 1)
         }
     }
+
+    /** 跳到队列内指定曲目（播放列表点选）。 */
+    fun playAt(index: Int) = jumpTo(index)
 
     private fun jumpTo(index: Int) {
         val st = _state.value
@@ -229,6 +275,7 @@ object SongPlaybackController {
             positionMs = 0,
             durationMs = 0,
             error = null,
+            ended = false,
             queue = queue,
             queueIndex = index,
         )
@@ -236,13 +283,21 @@ object SongPlaybackController {
         SongPlaybackService.start(context)
     }
 
-    /** 曲末统一出口：队列内自动下一首；队尾播完即停（清状态、收通知）。 */
+    /** 曲末统一出口：队列内自动下一首；队尾自然播完回到停止态（保留播放列表）。 */
     private fun onTrackEnded() {
         val st = _state.value
         if (st.queueIndex + 1 < st.queue.size) {
             startTrack(st.queue, st.queueIndex + 1)
         } else {
-            stop()
+            // 队尾播完：不清空状态——播放页/悬浮底栏继续展示曲目与列表，
+            // 通知撤掉（没有可继续的播放），点播放从头重播当前曲
+            pollJob?.cancel()
+            pollJob = null
+            abandonFocus()
+            runCatching { mp?.release() }
+            mp = null
+            _state.value = st.copy(playing = false, prepared = false, positionMs = 0, ended = true)
+            appContext?.let { SongPlaybackService.stop(it) }
         }
     }
 
@@ -255,6 +310,10 @@ object SongPlaybackController {
                 val st = _state.value
                 if (player != null && st.prepared && st.playing) {
                     runCatching {
+                        // MediaPlayer 是金标准：用户刚点了暂停就跳过本轮，
+                        // 绝不把轮询开局快照里的 playing=true 写回状态流
+                        // （暂停按钮“不好使”的元凶：500ms 内被过期快照打回播放态）。
+                        if (!player.isPlaying) return@runCatching
                         val pos = player.currentPosition.toLong()
                         val dur = player.duration.toLong()
                         // 贴尾兑底：http Range 流播到曲末时 onCompletion 偶发不回调
@@ -270,7 +329,8 @@ object SongPlaybackController {
                         } else {
                             endTicks = 0
                         }
-                        _state.value = st.copy(positionMs = pos, durationMs = dur)
+                        // 只覆写位置/时长两个字段，基底取最新状态（勿用快照 st 整体覆盖）
+                        _state.value = _state.value.copy(positionMs = pos, durationMs = dur)
                     }
                 }
                 delay(500)

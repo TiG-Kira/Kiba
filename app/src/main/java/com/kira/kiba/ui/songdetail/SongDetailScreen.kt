@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -34,7 +35,9 @@ import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.db.entity.ChartEntity
 import com.kira.kiba.core.db.entity.RecordEntity
 import com.kira.kiba.core.db.entity.SongDataEntity
+import android.widget.Toast
 import com.kira.kiba.core.playback.SongPlaybackController
+import com.kira.kiba.ui.material.KibaGlassDialog
 import com.kira.kiba.core.stats.SongRating
 import com.kira.kiba.core.utils.CoverSources
 import com.kira.kiba.ui.common.ChartTypeChip
@@ -54,6 +57,7 @@ import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
 import top.yukonga.miuix.kmp.icon.glass.*
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -155,24 +159,31 @@ fun SongDetailScreen(
                 val playerState by SongPlaybackController.state.collectAsState()
                 val isCurrent = playerState.track?.songId == currentSong.id
                 val isPlayingThis = isCurrent && playerState.playing
+                var showQueueChoice by remember { mutableStateOf(false) }
+                val buildTrack = {
+                    SongPlaybackController.Track(
+                        songId = currentSong.id,
+                        title = currentSong.title,
+                        artist = currentSong.artist,
+                        // imageUrl 是官网镜像的相对路径口径，UI 侧经 CoverFrame
+                        // 候选链加载（与列表/详情页封面同源同款回退）。
+                        imageUrl = currentSong.imageUrl,
+                        genre = currentSong.genre,
+                        coverCandidates = CoverSources.candidates(currentSong.id, currentSong.imageUrl),
+                        audioUrl = SongPlaybackController.audioUrlFor(currentSong.id),
+                    )
+                }
                 Card(
                     modifier = (Modifier.fillMaxWidth()),
                     onClick = {
-                        SongPlaybackController.play(
-                            context,
-                            SongPlaybackController.Track(
-                                songId = currentSong.id,
-                                title = currentSong.title,
-                                artist = currentSong.artist,
-                                // imageUrl 是官网镜像的相对路径口径，UI 侧经 CoverFrame
-                                // 候选链加载（与列表/详情页封面同源同款回退）。
-                                imageUrl = currentSong.imageUrl,
-                                genre = currentSong.genre,
-                                coverCandidates = CoverSources.candidates(currentSong.id, currentSong.imageUrl),
-                                audioUrl = SongPlaybackController.audioUrlFor(currentSong.id),
-                            ),
-                        )
-                        onOpenPlayer()
+                        // 会话进行中且点的是另一首：让用户选「立即切换」还是「加入列表」
+                        val active = playerState.track
+                        if (active != null && active.songId != currentSong.id && playerState.prepared) {
+                            showQueueChoice = true
+                        } else {
+                            SongPlaybackController.play(context, buildTrack())
+                            onOpenPlayer()
+                        }
                     },
                     pressFeedbackType = PressFeedbackType.Sink,
                 ) {
@@ -201,6 +212,35 @@ fun SongDetailScreen(
                                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                             )
                         }
+                    }
+                }
+
+                // 会话进行中点其他曲：「立即切换 / 加入列表」选择弹层
+                KibaGlassDialog(
+                    show = showQueueChoice,
+                    title = "正在播放中",
+                    summary = "《${playerState.track?.title ?: ""}》正在播放，要怎么播放《${currentSong.title}》？",
+                    onDismissRequest = { showQueueChoice = false },
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        TextButton(text = "加入列表", onClick = {
+                            SongPlaybackController.queueTrack(context, buildTrack())
+                            Toast.makeText(
+                                context,
+                                "已加入播放列表，当前曲播完后播放",
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                            showQueueChoice = false
+                        })
+                        Spacer(Modifier.width(12.dp))
+                        TextButton(text = "立即播放", onClick = {
+                            SongPlaybackController.play(context, buildTrack())
+                            onOpenPlayer()
+                            showQueueChoice = false
+                        })
                     }
                 }
             }
