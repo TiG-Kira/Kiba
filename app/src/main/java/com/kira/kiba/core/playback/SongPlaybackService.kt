@@ -20,6 +20,7 @@ import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.kira.kiba.MainActivity
 import com.kira.kiba.R
+import com.kira.kiba.core.utils.SpUtil
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -57,6 +58,7 @@ class SongPlaybackService : Service() {
 
         /** 通知「关闭」按钮的自定义 action（不冲突媒体卡片预设 action）。 */
         const val ACTION_CLOSE = "com.kira.kiba.playback.ACTION_CLOSE"
+        const val ACTION_FAV_TOGGLE = "com.kira.kiba.playback.ACTION_FAV_TOGGLE"
 
         @Volatile
         var isRunning: Boolean = false
@@ -90,6 +92,15 @@ class SongPlaybackService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_FAV_TOGGLE) {
+            // pre-13 通知按钮通道：SP 直写 + 立即刷图标（Android 13+ 走 onCustomAction）
+            val id = SongPlaybackController.state.value.track?.songId?.toString()
+            if (id != null) {
+                SpUtil.setFavorite(id, !SpUtil.isFavorite(id))
+                refresh()
+            }
+            return START_NOT_STICKY
+        }
         if (intent?.action == ACTION_CLOSE) {
             // 通知「关闭」：彻底关播放（释放播放器 + 状态归零），服务随之撤除通知
             SongPlaybackController.closeSession()
@@ -177,6 +188,13 @@ class SongPlaybackService : Service() {
                     SongPlaybackController.closeSession()
                     stopSelf()
                 }
+                // 「收藏」：SP 直写（播放器仅舞萌，详情页顶栏同命名空间），
+                // 立即刷新让卡片图标立刻切换
+                if (action == ACTION_FAV_TOGGLE) {
+                    val id = SongPlaybackController.state.value.track?.songId?.toString() ?: return
+                    SpUtil.setFavorite(id, !SpUtil.isFavorite(id))
+                    refresh()
+                }
             }
         })
         ms.setSessionActivity(reopenPendingIntent())
@@ -233,11 +251,20 @@ class SongPlaybackService : Service() {
             PlaybackStateCompat.ACTION_SEEK_TO or
             PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
             PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS
+        // 收藏态决定按钮图标（空心/实心）：pollLoop 每秒重设 PlaybackState，
+        // 点击后 onCustomAction 里再立即 refresh() 一次，切换无感延迟
+        val fav = st.track != null && SpUtil.isFavorite(st.track.songId.toString())
         return PlaybackStateCompat.Builder()
             .setActions(actions)
-            // 「关闭」作为会话自定义动作：Android 13+ 系统媒体卡片忽略
-            // Notification.addAction，只有这里注册才会出现按钮（点击回调
-            // onCustomAction → closeSession + 撤通知）
+            // 自定义动作：Android 13+ 系统媒体卡片忽略 Notification.addAction，
+            // 只有这里注册才会出现按钮（点击回调 onCustomAction）
+            .addCustomAction(
+                PlaybackStateCompat.CustomAction.Builder(
+                    ACTION_FAV_TOGGLE,
+                    if (fav) "取消收藏" else "收藏",
+                    if (fav) R.drawable.ic_notify_star_filled else R.drawable.ic_notify_star,
+                ).build(),
+            )
             .addCustomAction(
                 PlaybackStateCompat.CustomAction.Builder(
                     ACTION_CLOSE,
@@ -265,6 +292,20 @@ class SongPlaybackService : Service() {
     private fun buildNotification(state: Int): Notification {
         val st = SongPlaybackController.state.value
         val contentIntent = reopenPendingIntent()
+        // pre-13 回退：旧版通知仍用 addAction（Android 13+ 由系统媒体卡片渲染
+        // PlaybackState 自定义动作，这里的 action 会被忽略但不报错）
+        val fav = st.track != null && SpUtil.isFavorite(st.track.songId.toString())
+        val favIntent = PendingIntent.getService(
+            this,
+            3,
+            Intent(this, SongPlaybackService::class.java).apply { action = ACTION_FAV_TOGGLE },
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val favAction = NotificationCompat.Action.Builder(
+            if (fav) R.drawable.ic_notify_star_filled else R.drawable.ic_notify_star,
+            if (fav) "取消收藏" else "收藏",
+            favIntent,
+        ).build()
         // 通知「关闭」按钮：展开态可见，点击 = 关播放 + 撤通知
         val closeIntent = PendingIntent.getService(
             this,
@@ -293,11 +334,12 @@ class SongPlaybackService : Service() {
             .setOnlyAlertOnce(true)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setLargeIcon(coverBitmap)
+            .addAction(favAction)
             .addAction(closeAction)
             .setStyle(
                 androidx.media.app.NotificationCompat.MediaStyle()
                     .setMediaSession(getOrCreateSession().sessionToken)
-                    .setShowActionsInCompactView(0, 1, 2),
+                    .setShowActionsInCompactView(0, 1),
             )
             .build()
     }
