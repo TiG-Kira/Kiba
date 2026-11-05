@@ -34,6 +34,10 @@ import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
 import top.yukonga.miuix.kmp.icon.glass.Pause
 import top.yukonga.miuix.kmp.icon.glass.Play
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+import androidx.compose.ui.unit.Dp
+
+/** 播放底栏悬浮在主屏幕时，页面列表底部需要额外让出的高度（胶囊 58dp + 与导航栏的间距 8dp）。 */
+val NOW_PLAYING_BAR_CLEARANCE: Dp = 66.dp
 
 /**
  * 曲目页「正在播放」悬浮底栏（miuix-glass 玻璃胶囊）。

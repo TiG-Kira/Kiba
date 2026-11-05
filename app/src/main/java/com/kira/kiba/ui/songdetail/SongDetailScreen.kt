@@ -12,17 +12,20 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -31,6 +34,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.asFlow
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.db.entity.ChartEntity
 import com.kira.kiba.core.db.entity.RecordEntity
@@ -241,6 +248,95 @@ fun SongDetailScreen(
                             onOpenPlayer()
                             showQueueChoice = false
                         })
+                    }
+                }
+
+                // ── 加入歌单（「听」页我的歌单的挑歌入口）──
+                Spacer(Modifier.height(8.dp))
+                val playlistScope = rememberCoroutineScope()
+                var showAddPlaylist by remember { mutableStateOf(false) }
+                var playlists by remember { mutableStateOf<List<com.kira.kiba.core.db.entity.PlaylistEntity>>(emptyList()) }
+                LaunchedEffect(showAddPlaylist) {
+                    if (showAddPlaylist) {
+                        playlists = withContext(Dispatchers.IO) {
+                            AppDataBase.getInstance().playlistDao().observeAll().firstOrNull().orEmpty()
+                        }
+                    }
+                }
+                Card(
+                    modifier = (Modifier.fillMaxWidth()),
+                    onClick = { showAddPlaylist = true },
+                    pressFeedbackType = PressFeedbackType.Sink,
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        androidx.compose.material3.Icon(
+                            imageVector = MiuixGlassIcons.Regular.Add,
+                            contentDescription = "加入歌单",
+                            tint = MiuixTheme.colorScheme.primary,
+                            modifier = Modifier.size(22.dp),
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "加入歌单",
+                                style = MiuixTheme.textStyles.body1,
+                                color = MiuixTheme.colorScheme.onSurface,
+                            )
+                            Text(
+                                text = "收进「听」页我的歌单，整单连播",
+                                style = MiuixTheme.textStyles.footnote2,
+                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            )
+                        }
+                    }
+                }
+
+                // 加入歌单弹层：列出全部歌单点选加入（无歌单时引导去「听」页创建）
+                KibaGlassDialog(
+                    show = showAddPlaylist,
+                    title = "加入歌单",
+                    summary = "把《${currentSong.title}》收进哪个歌单？",
+                    onDismissRequest = { showAddPlaylist = false },
+                ) {
+                    Column {
+                        if (playlists.isEmpty()) {
+                            Text(
+                                text = "还没有歌单\n去「听」页点「新建歌单」创建一个",
+                                style = MiuixTheme.textStyles.body2,
+                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            )
+                            Spacer(Modifier.height(12.dp))
+                        } else {
+                            LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp)) {
+                                items(playlists.size) { index ->
+                                    val pl = playlists[index]
+                                    TextButton(
+                                        text = pl.name,
+                                        onClick = {
+                                            playlistScope.launch {
+                                                withContext(Dispatchers.IO) {
+                                                    AppDataBase.getInstance().playlistDao()
+                                                        .appendSong(pl.id, currentSong.id)
+                                                }
+                                                Toast.makeText(
+                                                    context,
+                                                    "已加入「${pl.name}」",
+                                                    Toast.LENGTH_SHORT,
+                                                ).show()
+                                                showAddPlaylist = false
+                                            }
+                                        },
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.height(8.dp))
+                        }
                     }
                 }
             }

@@ -2,6 +2,7 @@ package com.kira.kiba.ui.songs
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
@@ -75,6 +76,8 @@ import com.kira.kiba.ui.common.ListSnapshotCache
 import com.kira.kiba.ui.common.collectAsStateCached
 import com.kira.kiba.ui.common.difficultyColor
 import com.kira.kiba.ui.common.difficultyLabel
+import com.kira.kiba.core.playback.SongPlaybackController
+import com.kira.kiba.ui.songplayer.NOW_PLAYING_BAR_CLEARANCE
 import com.kira.kiba.ui.common.pageContentPadding
 import com.kira.kiba.ui.common.SectionTitle
 import kotlinx.coroutines.flow.filter
@@ -295,6 +298,16 @@ fun SongsScreen(
         )
     }
 
+    // 底部垫高两阶段：无播放底栏 = 悬浮导航栏一档；正在播放 = 再让出 NowPlayingBar
+    // （66dp 胶囊 + 间距），否则列表尾部被底栏+导航栏双层遮挡。播放态切换时平滑过渡。
+    val bottomBarPlayerState by SongPlaybackController.state.collectAsState()
+    val songsBottomExtra by animateDpAsState(
+        targetValue = if (bottomBarPlayerState.track != null) {
+            NOW_PLAYING_BAR_CLEARANCE + 16.dp
+        } else 16.dp,
+        label = "songsBottomExtra",
+    )
+
     Scaffold(
         modifier = Modifier
             .fillMaxSize()
@@ -306,7 +319,7 @@ fun SongsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
-            contentPadding = pageContentPadding(),
+            contentPadding = pageContentPadding(bottomExtra = songsBottomExtra),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             // ── 游戏类型分段开关（顶左，落在 pageContentPadding 的 16dp 区内）──

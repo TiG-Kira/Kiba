@@ -705,4 +705,37 @@ object SpUtil {
     fun setSongGroupMode(mode: String) {
         userInfoPrefs.edit { putString(KEY_SONG_GROUP_MODE, mode) }
     }
+
+    // ================= 听页（Agent 专属歌单）=================
+
+    private const val KEY_AGENT_PLAYLIST = "listen_agent_playlist"
+    private const val KEY_AGENT_GENERATED_AT = "listen_agent_generated_at"
+    private const val KEY_AGENT_INTERVAL_HOURS = "listen_agent_interval_hours"
+
+    /** Agent 歌单刷新间隔（小时），默认 24。 */
+    fun getAgentPlaylistIntervalHours(): Int =
+        userInfoPrefs.getInt(KEY_AGENT_INTERVAL_HOURS, 24).coerceIn(1, 720)
+
+    fun setAgentPlaylistIntervalHours(hours: Int) {
+        userInfoPrefs.edit { putInt(KEY_AGENT_INTERVAL_HOURS, hours.coerceIn(1, 720)) }
+    }
+
+    /** Agent 歌单生成时间（epoch ms，0 = 从未生成）。 */
+    fun getAgentPlaylistGeneratedAt(): Long =
+        userInfoPrefs.getLong(KEY_AGENT_GENERATED_AT, 0L)
+
+    private fun setAgentPlaylistGeneratedAt(ts: Long) {
+        userInfoPrefs.edit { putLong(KEY_AGENT_GENERATED_AT, ts) }
+    }
+
+    /** Agent 歌单 JSON（[com.kira.kiba.core.listen.AgentPlaylist.Saved] 的序列化）。 */
+    fun getAgentPlaylistJson(): String =
+        userInfoPrefs.getString(KEY_AGENT_PLAYLIST, "") ?: ""
+
+    fun setAgentPlaylistJson(json: String, generatedAt: Long) {
+        userInfoPrefs.edit {
+            putString(KEY_AGENT_PLAYLIST, json)
+            putLong(KEY_AGENT_GENERATED_AT, generatedAt)
+        }
+    }
 }

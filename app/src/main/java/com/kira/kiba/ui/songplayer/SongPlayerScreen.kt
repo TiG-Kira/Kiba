@@ -8,6 +8,7 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -24,6 +25,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -45,22 +47,30 @@ import coil.compose.AsyncImage
 import coil.compose.SubcomposeAsyncImage
 import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.db.entity.SongDataEntity
+import com.kira.kiba.core.listen.SongDownloader
 import com.kira.kiba.core.playback.SongPlaybackController
+import com.kira.kiba.core.playback.SongPlaybackController.LoopMode
 import com.kira.kiba.ui.common.CoverFrame
 import com.kira.kiba.ui.common.coverCandidateUrls
 import com.kira.kiba.ui.material.KibaGlassDialog
 import com.kira.kiba.ui.navigation.LocalSystemNavBarBottom
 import com.kira.kiba.ui.navigation.LocalTopBarClearance
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
 import top.yukonga.miuix.kmp.icon.glass.ChevronBackward
 import top.yukonga.miuix.kmp.icon.glass.ChevronForward
+import top.yukonga.miuix.kmp.icon.glass.Download
 import top.yukonga.miuix.kmp.icon.glass.Music
+import top.yukonga.miuix.kmp.icon.glass.Ok
 import top.yukonga.miuix.kmp.icon.glass.Pause
 import top.yukonga.miuix.kmp.icon.glass.Play
 import top.yukonga.miuix.kmp.icon.glass.Playlist
+import top.yukonga.miuix.kmp.icon.glass.Redo
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 // 沉浸式播放页配色（QQ 音乐同款口径）：封面即背景，整页压暗后统一白系文字
@@ -90,6 +100,16 @@ fun SongPlayerScreen(
     var showQueue by remember { mutableStateOf(false) }
     val navBottom = LocalSystemNavBarBottom.current
     val context = LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    // 下载状态：切曲时重查（已下载则按钮变「已下载」提示）
+    var downloaded by remember(track?.songId) { mutableStateOf(false) }
+    var downloading by remember { mutableStateOf(false) }
+    LaunchedEffect(track?.songId) {
+        val id = track?.songId ?: return@LaunchedEffect
+        downloaded = withContext(Dispatchers.IO) {
+            SongDownloader.isDownloaded(context, id)
+        }
+    }
     // 歌曲简要信息（版本/流派/BPM/ID）：从曲库现查，不依赖 Track 结构——
     // 升级前已存在的播放会话（Track 无新增字段）也能完整显示。
     val songInfo by produceState<SongDataEntity?>(initialValue = null, track?.songId) {
@@ -139,129 +159,203 @@ fun SongPlayerScreen(
                     .background(Color.Black.copy(alpha = 0.55f)),
             )
 
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .padding(top = clearance)
-                    .padding(horizontal = 28.dp)
-                    .padding(bottom = navBottom + 20.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                // 封面与曲名/艺术家由顶栏提供（SongDetailTopBarSlot 复用，见 KibaMainScreen），
-                // 页面主体：简要信息卡 → 功能行 → 进度 → 控制，压着顶栏底沿排布。
-                Spacer(Modifier.weight(1f))
+            // ── 分辨率自适应（BoxWithConstraints 拿实际可用宽度）：
+            // < 340dp 隐藏玻璃信息面板；< 280dp 连功能行也隐藏，
+            // 优先保证媒体控制按钮（上一首/播放/下一首）的显示。
+            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                val showInfoCard = maxWidth >= 340.dp
+                val showFuncRow = maxWidth >= 280.dp
+                // 控制区间距：过窄时压缩，控制按钮永远保留（媒体控制可用性优先级最高）
+                val controlGap = if (maxWidth < 280.dp) 16.dp else 40.dp
 
-                // ── 歌曲简要信息卡（深色玻璃观感：半透明黑 + 微高光描边）。
-                // 不能用 backdrop 玻璃：本页在取景层子树内，采样会成环。
-                songInfo?.let { info ->
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(Color.Black.copy(alpha = 0.42f))
-                            .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(20.dp))
-                            .padding(horizontal = 20.dp, vertical = 16.dp),
-                    ) {
-                        Row(modifier = Modifier.fillMaxWidth()) {
-                            SongInfoCell("版本", info.from, Modifier.weight(1f))
-                            SongInfoCell("流派", info.genre, Modifier.weight(1f))
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(padding)
+                        .padding(top = clearance)
+                        .padding(horizontal = 28.dp)
+                        .padding(bottom = navBottom + 20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    // 封面与曲名/艺术家由顶栏提供（SongDetailTopBarSlot 复用，见 KibaMainScreen），
+                    // 页面主体：简要信息卡 → 功能行 → 进度 → 控制，压着顶栏底沿排布。
+                    Spacer(Modifier.weight(1f))
+
+                    // ── 歌曲简要信息卡（深色玻璃观感：半透明黑 + 微高光描边）。
+                    // 不能用 backdrop 玻璃：本页在取景层子树内，采样会成环。
+                    if (showInfoCard) songInfo?.let { info ->
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(Color.Black.copy(alpha = 0.42f))
+                                .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(20.dp))
+                                .padding(horizontal = 20.dp, vertical = 16.dp),
+                        ) {
+                            Row(modifier = Modifier.fillMaxWidth()) {
+                                SongInfoCell("版本", info.from, Modifier.weight(1f))
+                                SongInfoCell("流派", info.genre, Modifier.weight(1f))
+                            }
+                            Spacer(Modifier.height(12.dp))
+                            Row(modifier = Modifier.fillMaxWidth()) {
+                                SongInfoCell("BPM", "${info.bpm}", Modifier.weight(1f))
+                                SongInfoCell("ID", "${info.id}", Modifier.weight(1f))
+                            }
                         }
-                        Spacer(Modifier.height(12.dp))
-                        Row(modifier = Modifier.fillMaxWidth()) {
-                            SongInfoCell("BPM", "${info.bpm}", Modifier.weight(1f))
-                            SongInfoCell("ID", "${info.id}", Modifier.weight(1f))
+                        Spacer(Modifier.height(22.dp))
+                    }
+
+                    // ── 功能行（QQ 音乐铃声/音效/下载位）：下载 + 播放列表 + 音源说明 ──
+                    if (showFuncRow) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Center,
+                        ) {
+                            PlayerFunc(
+                                icon = if (downloaded) MiuixGlassIcons.Regular.Ok else MiuixGlassIcons.Regular.Download,
+                                label = when {
+                                    downloading -> "下载中…"
+                                    downloaded -> "已下载"
+                                    else -> "下载乐曲"
+                                },
+                                onClick = {
+                                    val t = track
+                                    if (downloading) {
+                                        Toast.makeText(context, "正在下载中，稍等", Toast.LENGTH_SHORT).show()
+                                    } else if (downloaded) {
+                                        Toast.makeText(context, "已保存在 Music/Kiba/，可在「听 → 我的下载」管理", Toast.LENGTH_SHORT).show()
+                                    } else if (t != null) {
+                                        downloading = true
+                                        scope.launch {
+                                            val result = runCatching {
+                                                SongDownloader.download(
+                                                    context = context,
+                                                    songId = t.songId,
+                                                    title = t.title,
+                                                    artist = t.artist,
+                                                    audioUrl = t.audioUrl,
+                                                    coverCandidates = t.coverCandidates,
+                                                )
+                                            }
+                                            downloading = false
+                                            result.onSuccess {
+                                                downloaded = true
+                                                Toast.makeText(context, "「${t.title}」已下载（含封面元数据）", Toast.LENGTH_SHORT).show()
+                                            }.onFailure { e ->
+                                                Toast.makeText(context, "下载失败：${e.message}", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                    }
+                                },
+                            )
+                            Spacer(Modifier.width(40.dp))
+                            PlayerFunc(
+                                icon = MiuixGlassIcons.Regular.Music,
+                                label = "音源来自落雪",
+                                onClick = {
+                                    Toast.makeText(context, "整轨音源：assets2.lxns.net（落雪）", Toast.LENGTH_SHORT).show()
+                                },
+                            )
+                        }
+
+                        Spacer(Modifier.height(26.dp))
+                    }
+
+                    // ── 进度条（白系，沉浸背景上可读）──
+                    SeekBar(
+                        positionMs = state.positionMs,
+                        durationMs = state.durationMs,
+                        enabled = state.prepared,
+                        onSeek = { SongPlaybackController.seekTo(it) },
+                    )
+                    Spacer(Modifier.height(22.dp))
+
+                    // ── 控制区：暂停大键绝对居中（唱片 App 惯例），循环居左、
+                    // 播放列表居右（用户口径：暂停按钮居中，播放列表放最右）。
+                    // 宽度不足 280dp 时播放列表退场，只留媒体控制三键。
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        // 中间组：上一首 / 大播放键 / 下一首
+                        Row(
+                            modifier = Modifier.align(Alignment.Center),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            ControlIcon(
+                                icon = MiuixGlassIcons.Regular.ChevronBackward,
+                                contentDescription = "上一首",
+                                enabled = state.queueIndex > 0,
+                                size = 46.dp,
+                                tint = ImmerseText,
+                            ) { SongPlaybackController.prev() }
+                            Spacer(Modifier.width(controlGap))
+                            Box(
+                                modifier = Modifier
+                                    .size(78.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.White)
+                                    .clickable { SongPlaybackController.toggle() }, // 停止态/失败态由 resume 内部兜底重播
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                androidx.compose.material3.Icon(
+                                    imageVector = if (state.playing) MiuixGlassIcons.Regular.Pause else MiuixGlassIcons.Regular.Play,
+                                    contentDescription = if (state.playing) "暂停" else "播放",
+                                    tint = Color.Black,
+                                    modifier = Modifier.size(38.dp),
+                                )
+                            }
+                            Spacer(Modifier.width(controlGap))
+                            ControlIcon(
+                                icon = MiuixGlassIcons.Regular.ChevronForward,
+                                contentDescription = "下一首",
+                                enabled = state.queueIndex < state.queue.lastIndex,
+                                size = 46.dp,
+                                tint = ImmerseText,
+                            ) { SongPlaybackController.next() }
+                        }
+                        // 左：循环模式
+                        Box(modifier = Modifier.align(Alignment.CenterStart)) {
+                            ControlIcon(
+                                icon = MiuixGlassIcons.Regular.Redo,
+                                contentDescription = when (state.loopMode) {
+                                    LoopMode.OFF -> "顺序播放"
+                                    LoopMode.ALL -> "列表循环"
+                                    LoopMode.ONE -> "单曲循环"
+                                },
+                                badge = when (state.loopMode) {
+                                    LoopMode.ONE -> "1"
+                                    else -> null
+                                },
+                                active = state.loopMode != LoopMode.OFF,
+                                enabled = true,
+                                size = 46.dp,
+                                tint = ImmerseText,
+                            ) { SongPlaybackController.cycleLoopMode() }
+                        }
+                        // 右：播放列表（宽屏才显示；窄屏优先保证控制三键的呼吸感）
+                        if (showFuncRow) {
+                            Box(modifier = Modifier.align(Alignment.CenterEnd)) {
+                                ControlIcon(
+                                    icon = MiuixGlassIcons.Regular.Playlist,
+                                    contentDescription = "播放列表 · ${state.queue.size} 首",
+                                    enabled = true,
+                                    size = 46.dp,
+                                    tint = ImmerseText,
+                                ) { showQueue = true }
+                            }
                         }
                     }
-                    Spacer(Modifier.height(22.dp))
-                }
 
-                // ── 功能行（QQ 音乐铃声/音效/下载位）：播放列表 + 音源说明 ──
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center,
-                ) {
-                    PlayerFunc(
-                        icon = MiuixGlassIcons.Regular.Playlist,
-                        label = "播放列表 · ${state.queue.size} 首",
-                        onClick = { showQueue = true },
-                    )
-                    Spacer(Modifier.width(56.dp))
-                    PlayerFunc(
-                        icon = MiuixGlassIcons.Regular.Music,
-                        label = "音源来自落雪",
-                        onClick = {
-                            Toast.makeText(context, "整轨音源：assets2.lxns.net（落雪）", Toast.LENGTH_SHORT).show()
-                        },
-                    )
-                }
-
-                Spacer(Modifier.height(26.dp))
-
-                // ── 进度条（白系，沉浸背景上可读）──
-                SeekBar(
-                    positionMs = state.positionMs,
-                    durationMs = state.durationMs,
-                    enabled = state.prepared,
-                    onSeek = { SongPlaybackController.seekTo(it) },
-                )
-                Spacer(Modifier.height(22.dp))
-
-                // ── 控制区：上一首 / 白色大圆播放键 / 下一首 ──
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    ControlIcon(
-                        icon = MiuixGlassIcons.Regular.ChevronBackward,
-                        contentDescription = "上一首",
-                        enabled = state.queueIndex > 0,
-                        size = 46.dp,
-                        tint = ImmerseText,
-                    ) { SongPlaybackController.prev() }
-                    Spacer(Modifier.width(40.dp))
-                    Box(
-                        modifier = Modifier
-                            .size(78.dp)
-                            .clip(CircleShape)
-                            .background(Color.White)
-                            .clickable { SongPlaybackController.toggle() }, // 停止态/失败态由 resume 内部兜底重播
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        androidx.compose.material3.Icon(
-                            imageVector = if (state.playing) MiuixGlassIcons.Regular.Pause else MiuixGlassIcons.Regular.Play,
-                            contentDescription = if (state.playing) "暂停" else "播放",
-                            tint = Color.Black,
-                            modifier = Modifier.size(38.dp),
+                    // 播完不再提示「列表已播完」：状态收敛到通知与顶栏，页面保持干净
+                    if (!state.prepared && state.error == null) {
+                        Spacer(Modifier.height(14.dp))
+                        Text(
+                            text = "加载音源中…",
+                            style = MiuixTheme.textStyles.footnote1,
+                            color = ImmerseTextDim,
                         )
                     }
-                    Spacer(Modifier.width(40.dp))
-                    ControlIcon(
-                        icon = MiuixGlassIcons.Regular.ChevronForward,
-                        contentDescription = "下一首",
-                        enabled = state.queueIndex < state.queue.lastIndex,
-                        size = 46.dp,
-                        tint = ImmerseText,
-                    ) { SongPlaybackController.next() }
+                    Spacer(Modifier.height(18.dp))
                 }
-
-                if (state.ended && state.error == null) {
-                    Spacer(Modifier.height(14.dp))
-                    Text(
-                        text = "列表已播完 · 点播放重播当前曲目",
-                        style = MiuixTheme.textStyles.footnote1,
-                        color = ImmerseTextDim,
-                    )
-                } else if (!state.prepared && state.error == null) {
-                    Spacer(Modifier.height(14.dp))
-                    Text(
-                        text = "加载音源中…",
-                        style = MiuixTheme.textStyles.footnote1,
-                        color = ImmerseTextDim,
-                    )
-                }
-                Spacer(Modifier.height(18.dp))
             }
         }
     }
@@ -395,11 +489,14 @@ private fun PlayerFunc(
 }
 
 /**
- * 控制图标（上一首/下一首）。
+ * 控制图标（上一首/下一首/循环模式）。
  *
  * onClick 为 null 时不挂 clickable：首版内层挂着默认空 onClick 的 clickable，
  * 会把点击事件消费掉，外层播放键的 toggle 永远收不到 tap——这就是
  * 「播放页暂停不好使」的根因。
+ *
+ * @param badge 右下角小角标（单曲循环的「1」）
+ * @param active 激活态高亮（循环开启时主色点亮）
  */
 @Composable
 private fun ControlIcon(
@@ -408,6 +505,8 @@ private fun ControlIcon(
     enabled: Boolean,
     size: androidx.compose.ui.unit.Dp,
     tint: Color = MiuixTheme.colorScheme.onSurface,
+    badge: String? = null,
+    active: Boolean = false,
     onClick: (() -> Unit)? = null,
 ) {
     Box(
@@ -425,9 +524,21 @@ private fun ControlIcon(
         androidx.compose.material3.Icon(
             imageVector = icon,
             contentDescription = contentDescription,
-            tint = if (enabled) tint else ImmerseTextFaint,
+            tint = when {
+                active -> MiuixTheme.colorScheme.primary
+                enabled -> tint
+                else -> ImmerseTextFaint
+            },
             modifier = Modifier.size(size * 0.6f),
         )
+        badge?.let {
+            Text(
+                text = it,
+                style = MiuixTheme.textStyles.footnote2,
+                color = MiuixTheme.colorScheme.primary,
+                modifier = Modifier.align(Alignment.BottomEnd),
+            )
+        }
     }
 }
 

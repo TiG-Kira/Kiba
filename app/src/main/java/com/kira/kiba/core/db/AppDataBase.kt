@@ -13,6 +13,7 @@ import com.kira.kiba.core.db.dao.ChartDao
 import com.kira.kiba.core.db.dao.ChartStatsDao
 import com.kira.kiba.core.db.dao.ChuniSongWithChartsDao
 import com.kira.kiba.core.db.dao.ChuniRecordDao
+import com.kira.kiba.core.db.dao.PlaylistDao
 import com.kira.kiba.core.db.dao.RecordDao
 import com.kira.kiba.core.db.dao.SongDao
 import com.kira.kiba.core.db.dao.SongWithChartsDao
@@ -23,6 +24,8 @@ import com.kira.kiba.core.db.entity.ChuniSongEntity
 import com.kira.kiba.core.db.entity.ChartEntity
 import com.kira.kiba.core.db.entity.ChartStatsEntity
 import com.kira.kiba.core.db.entity.ListIntConverter
+import com.kira.kiba.core.db.entity.PlaylistEntity
+import com.kira.kiba.core.db.entity.PlaylistSongEntity
 import com.kira.kiba.core.db.entity.RecordEntity
 import com.kira.kiba.core.db.entity.SongDataEntity
 import com.kira.kiba.core.utils.SpUtil
@@ -33,6 +36,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     entities = [
         SongDataEntity::class, ChartEntity::class, AliasEntity::class, RecordEntity::class,
         ChartStatsEntity::class, ChuniSongEntity::class, ChuniChartEntity::class, ChuniRecordEntity::class,
+        PlaylistEntity::class, PlaylistSongEntity::class,
     ],
     version = DATABASE_VERSION
 )
@@ -46,10 +50,11 @@ abstract class AppDataBase : RoomDatabase() {
     abstract fun chartStatsDao(): ChartStatsDao
     abstract fun chuniSongWithChartDao(): ChuniSongWithChartsDao
     abstract fun chuniRecordDao(): ChuniRecordDao
+    abstract fun playlistDao(): PlaylistDao
 
 
     companion object {
-        const val DATABASE_VERSION = 5
+        const val DATABASE_VERSION = 6
         const val DATABASE_NAME = "maimaidata_db"
 
         /** 1 → 2：新增中二节奏三张平行表（chuni_song / chuni_chart / chuni_record），不动舞萌原有表。 */
@@ -176,6 +181,36 @@ abstract class AppDataBase : RoomDatabase() {
             }
         }
 
+        /**
+         * 5 → 6：新增「我的歌单」两张表（playlist / playlist_song）。
+         *
+         * 「听」页自建歌单：歌单只存名称与创建时间，歌曲关系用关联表
+         * （playlist_id + song_id 复合主键，position 记录顺序）。纯新增，
+         * 舞萌 / 中二已有表与数据不动。
+         */
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """CREATE TABLE IF NOT EXISTS `playlist` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `name` TEXT NOT NULL,
+                        `created_at` INTEGER NOT NULL)"""
+                )
+                db.execSQL(
+                    """CREATE TABLE IF NOT EXISTS `playlist_song` (
+                        `playlist_id` INTEGER NOT NULL,
+                        `song_id` INTEGER NOT NULL,
+                        `position` INTEGER NOT NULL,
+                        `added_at` INTEGER NOT NULL,
+                        PRIMARY KEY(`playlist_id`, `song_id`),
+                        FOREIGN KEY(`playlist_id`) REFERENCES `playlist`(`id`)
+                            ON UPDATE NO ACTION ON DELETE CASCADE )"""
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_playlist_song_playlist_id` ON `playlist_song`(`playlist_id`)" )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_playlist_song_song_id` ON `playlist_song`(`song_id`)" )
+            }
+        }
+
         @Volatile
         private lateinit var instance: AppDataBase
 
@@ -194,7 +229,7 @@ abstract class AppDataBase : RoomDatabase() {
                 DATABASE_NAME
             )
                 .fallbackToDestructiveMigration(BuildConfig.DEBUG)
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                 .addCallback(object : Callback() {
                     override fun onDestructiveMigration(connection: SQLiteConnection) {
                         SpUtil.setDataVersion("0")

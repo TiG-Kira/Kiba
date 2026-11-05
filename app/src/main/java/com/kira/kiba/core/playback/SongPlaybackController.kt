@@ -5,6 +5,7 @@ import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.media.MediaPlayer
+import android.widget.Toast
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -57,6 +58,9 @@ object SongPlaybackController {
         val audioUrl: String,
     )
 
+    /** 循环模式：顺序播完即停 → 列表循环 → 单曲循环。 */
+    enum class LoopMode { OFF, ALL, ONE }
+
     data class PlayerState(
         val track: Track? = null,
         val playing: Boolean = false,
@@ -70,6 +74,8 @@ object SongPlaybackController {
         val queueIndex: Int = -1,
         /** 队列自然播完后的停止态：track/queue 保留，点播放从头重播当前曲。 */
         val ended: Boolean = false,
+        /** 循环模式（单曲/列表），会话内有效，切歌不清除。 */
+        val loopMode: LoopMode = LoopMode.OFF,
     )
 
     private val _state = MutableStateFlow(PlayerState())
@@ -181,6 +187,16 @@ object SongPlaybackController {
         }
     }
 
+    /** 循环模式切换（播放页循环键）：顺序 → 列表循环 → 单曲循环。 */
+    fun cycleLoopMode() {
+        val next = when (_state.value.loopMode) {
+            LoopMode.OFF -> LoopMode.ALL
+            LoopMode.ALL -> LoopMode.ONE
+            LoopMode.ONE -> LoopMode.OFF
+        }
+        _state.value = _state.value.copy(loopMode = next)
+    }
+
     /** 拖动进度（毫秒，绝对位置）。 */
     fun seekTo(positionMs: Long) {
         val player = mp ?: return
@@ -208,6 +224,13 @@ object SongPlaybackController {
         val st = _state.value
         if (index in st.queue.indices) startTrack(st.queue, index)
     }
+
+    /**
+     * 彻底关闭会话：释放播放器、清空状态、撤媒体通知。
+     * 媒体通知「关闭」按钮的通道（点后通知消失、不出声）；
+     * 与 [stop] 的区别只是语义命名，行为等同完全关闭。
+     */
+    fun closeSession() = stop(releasePlayer = true)
 
     /** 彻底停止并释放（播放页停止键 / 服务收尾）。通知由服务自行撤除。 */
     fun stop(releasePlayer: Boolean = true) {
@@ -244,7 +267,12 @@ object SongPlaybackController {
                     .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                     .build(),
             )
-            setDataSource(track.audioUrl)
+            // 本地下载文件走 content uri（MediaStore），在线音源走 http 直链
+            if (track.audioUrl.startsWith("content:")) {
+                setDataSource(context, android.net.Uri.parse(track.audioUrl))
+            } else {
+                setDataSource(track.audioUrl)
+            }
             setOnPreparedListener { p ->
                 val st = _state.value
                 if (st.track?.songId != track.songId) return@setOnPreparedListener
@@ -264,6 +292,27 @@ object SongPlaybackController {
                     prepared = false,
                     error = "音源加载失败（该曲目可能暂无落雪音源）",
                 )
+                // 兜底：无音源曲目 Toast 提示后自动跳过到队列下一首
+                // （队尾/单首会话则停在错误态，用户仍可点详情查看曲目）
+                val now = _state.value
+                if (now.queueIndex + 1 < now.queue.size) {
+                    appContext?.let { ctx ->
+                        Toast.makeText(
+                            ctx,
+                            "「${track.title}」暂无音源，已跳过",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                    scope.launch { startTrack(now.queue, now.queueIndex + 1) }
+                } else {
+                    appContext?.let { ctx ->
+                        Toast.makeText(
+                            ctx,
+                            "「${track.title}」暂无音源",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
                 true
             }
             prepareAsync()
@@ -283,21 +332,26 @@ object SongPlaybackController {
         SongPlaybackService.start(context)
     }
 
-    /** 曲末统一出口：队列内自动下一首；队尾自然播完回到停止态（保留播放列表）。 */
+    /** 曲末统一出口：按循环模式分流；顺序模式队尾播完回到停止态（保留播放列表与通知）。 */
     private fun onTrackEnded() {
         val st = _state.value
-        if (st.queueIndex + 1 < st.queue.size) {
-            startTrack(st.queue, st.queueIndex + 1)
-        } else {
-            // 队尾播完：不清空状态——播放页/悬浮底栏继续展示曲目与列表，
-            // 通知撤掉（没有可继续的播放），点播放从头重播当前曲
-            pollJob?.cancel()
-            pollJob = null
-            abandonFocus()
-            runCatching { mp?.release() }
-            mp = null
-            _state.value = st.copy(playing = false, prepared = false, positionMs = 0, ended = true)
-            appContext?.let { SongPlaybackService.stop(it) }
+        when {
+            // 单曲循环：原地重播
+            st.loopMode == LoopMode.ONE -> startTrack(st.queue, st.queueIndex)
+            st.queueIndex + 1 < st.queue.size -> startTrack(st.queue, st.queueIndex + 1)
+            // 列表循环：绕回队首
+            st.loopMode == LoopMode.ALL && st.queue.isNotEmpty() -> startTrack(st.queue, 0)
+            else -> {
+                // 顺序模式队尾播完：不清空状态——播放页/悬浮底栏继续展示曲目与列表，
+                // 媒体通知**保留**（停在暂停态，用户可在通知里重播或点「关闭」彻底收尾），
+                // 点播放从头重播当前曲
+                pollJob?.cancel()
+                pollJob = null
+                abandonFocus()
+                runCatching { mp?.release() }
+                mp = null
+                _state.value = st.copy(playing = false, prepared = false, positionMs = 0, ended = true)
+            }
         }
     }
 

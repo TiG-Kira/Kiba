@@ -3,11 +3,14 @@ package com.kira.kiba.ui.navigation
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -47,6 +50,9 @@ import com.kira.kiba.core.utils.SpUtil
 import com.kira.kiba.core.utils.WeChatJump
 import com.kira.kiba.ui.agent.AgentScreen
 import com.kira.kiba.ui.agent.LlmConfigScreen
+import com.kira.kiba.ui.listen.DownloadsScreen
+import com.kira.kiba.ui.listen.ListenScreen
+import com.kira.kiba.ui.listen.PlaylistDetailScreen
 import com.kira.kiba.ui.me.Best50Screen
 import com.kira.kiba.ui.me.ChuniBestScreen
 import com.kira.kiba.ui.me.FavoritesScreen
@@ -135,6 +141,7 @@ val LocalSystemNavBarBottom = staticCompositionLocalOf<Dp> { 0.dp }
 
 enum class KibaTab(val title: String) {
     Songs("曲目"),
+    Listen("听"),
     Agent("Agent"),
     Me("我"),
     Settings("设置")
@@ -264,6 +271,16 @@ sealed interface KibaSubPage {
         override val title: String = "我的收藏"
     }
 
+    /** 歌单详情（「听」页我的歌单点入）。 */
+    data class ListenPlaylist(val playlistId: Long) : KibaSubPage {
+        override val title: String = "歌单"
+    }
+
+    /** 我的下载（「听」页入口；已下载乐曲的试听与删除）。 */
+    data object ListenDownloads : KibaSubPage {
+        override val title: String = "我的下载"
+    }
+
     /** 关于。 */
     data object About : KibaSubPage {
         override val title: String = "关于"
@@ -272,6 +289,7 @@ sealed interface KibaSubPage {
 
 private fun tabIcon(tab: KibaTab) = when (tab) {
     KibaTab.Songs -> MiuixGlassIcons.Regular.Music
+    KibaTab.Listen -> MiuixGlassIcons.Regular.Album
     KibaTab.Agent -> MiuixGlassIcons.Regular.AiScan
     KibaTab.Me -> MiuixGlassIcons.Regular.Contacts
     KibaTab.Settings -> MiuixGlassIcons.Regular.Settings
@@ -290,6 +308,8 @@ fun KibaMainScreen() {
     var subStack by remember { mutableStateOf<List<KibaSubPage>>(emptyList()) }
     // 导航方向：true=前进入栈，false=后退出栈（驱动页面切换动画方向）
     var navForward by remember { mutableStateOf(true) }
+    // 出发时刻顶栏是否已收窄（resetTopBar 前抓快照）：收窄态出发的顶栏转场跳过下沉动画
+    var topBarWasCollapsed by remember { mutableStateOf(false) }
 
     // 顶栏塌缩行为：rememberSaveable 状态，切 tab / 进程恢复都不丢
     val topAppBarState = rememberTopAppBarState()
@@ -346,6 +366,9 @@ fun KibaMainScreen() {
 
     fun pushPage(page: KibaSubPage) {
         navForward = true
+        // 在 reset 前抓出发页顶栏是否已收窄：收窄态出发的转场不做下沉动画
+        // （收窄态高度与展开态差异大，强行下沉会出现大标题残影跳变，用户实测反馈）
+        topBarWasCollapsed = topAppBarState.heightOffset < -1f
         saveTopBar(subStack.lastOrNull() ?: selectedTab)
         // 进新子页 = 新导航：清掉该页残留的旧状态（比如之前访问过同一首歌）
         // 注意 holder/topBarMemory 实际都以 pageKey() 字符串为 key，必须传转换后的 key，
@@ -359,6 +382,7 @@ fun KibaMainScreen() {
     fun popPage() {
         if (subStack.isNotEmpty()) {
             navForward = false
+            topBarWasCollapsed = topAppBarState.heightOffset < -1f
             val back = subStack.dropLast(1).lastOrNull() ?: selectedTab
             subStack = subStack.dropLast(1)
             // 返回上一页：恢复其滚动位置与顶栏塌缩状态，不强制回顶/展开
@@ -437,7 +461,25 @@ fun KibaMainScreen() {
               // GlassTopAppBar 自动回落为传统纯色默认样式（无模糊、无玻璃描边）。
               // 豁免页：关于页一律普通顶栏。谱面预览页不在这里给顶栏——
               // 它自带 miuix 普通 SmallTopAppBar（页内实色 + 自吃 padding），外层不叠。
-              val sub = subStack.lastOrNull()
+              // 顶栏转场（自然下沉）：进子页 / 切 Tab 时新顶栏从屏幕上方滑落 + 淡入，
+              // 旧顶栏向上滑出。SizeTransform(clip=false) 让不同高度的顶栏（大标题 ↔
+              // 播放页封面栏）高度平滑过渡，Scaffold padding 随动不留空带。
+              AnimatedContent(
+                  targetState = subStack.lastOrNull() ?: selectedTab,
+                  transitionSpec = {
+                      if (topBarWasCollapsed) {
+                          // 收窄态出发：直接切换不做下沉（大标题从收窄态强行展开会残影跳变）
+                          fadeIn(tween(1)).togetherWith(fadeOut(tween(1)))
+                      } else {
+                          (slideInVertically(tween(260)) { -it } + fadeIn(tween(220)))
+                              .togetherWith(slideOutVertically(tween(200)) { -it / 2 } + fadeOut(tween(160)))
+                              .using(SizeTransform(clip = false))
+                      }
+                  },
+                  label = "kiba-topbar",
+              ) { topPage ->
+              val sub = topPage as? KibaSubPage
+              val topTab = topPage as? KibaTab
               val plainTopBarExempt = sub is KibaSubPage.About
               CompositionLocalProvider(
                   LocalGlassTopAppBarBackdrop provides
@@ -449,10 +491,10 @@ fun KibaMainScreen() {
                       Spacer(Modifier.height(0.dp))
                   } else if (sub == null) {
                       KibaTopBar(
-                          title = selectedTab.title,
+                          title = topTab?.title.orEmpty(),
                           scrollBehavior = scrollBehavior,
                           actions = {
-                              when (selectedTab) {
+                              when (topTab) {
                                   KibaTab.Songs -> {
                                       // 曲库检查更新 / 立即更新（原曲目页「曲库数据」卡迁入顶栏）
                                       KibaRefreshAction {
@@ -547,6 +589,7 @@ fun KibaMainScreen() {
                       )
                   }
               }
+              }
           },
           bottomBar = {
               if (subStack.isEmpty()) {
@@ -561,7 +604,7 @@ fun KibaMainScreen() {
                       // 放在 bottomBar 槽（取景层子树外）而非页面内容里，玻璃采样
                       // 不会成环。backdrop 无条件传（与 GlassNavigationBar 同款口径，
                       // 首版按 advanced 开关条件传导致底栏实色、导航栏玻璃不一致）。
-                      if (selectedTab == KibaTab.Songs && playerState.track != null) {
+                      if ((selectedTab == KibaTab.Songs || selectedTab == KibaTab.Listen) && playerState.track != null) {
                           NowPlayingBar(
                               state = playerState,
                               backdrop = glassNavBackdrop,
@@ -730,6 +773,16 @@ fun KibaMainScreen() {
                                   onOpenPlayer = { pushPage(KibaSubPage.SongPlayer) },
                               )
                               is KibaSubPage.About -> AboutScreen(scrollBehavior = scrollBehavior)
+                              is KibaSubPage.ListenPlaylist -> PlaylistDetailScreen(
+                                  playlistId = target.playlistId,
+                                  scrollBehavior = scrollBehavior,
+                                  onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
+                                  onBack = { popPage() },
+                              )
+                              is KibaSubPage.ListenDownloads -> DownloadsScreen(
+                                  scrollBehavior = scrollBehavior,
+                                  onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
+                              )
                           }
 
                           else -> when (target) {
@@ -759,6 +812,12 @@ fun KibaMainScreen() {
                                           }
                                       )
                                   },
+                              )
+                              KibaTab.Listen -> ListenScreen(
+                                  scrollBehavior = scrollBehavior,
+                                  onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
+                                  onOpenPlaylist = { id -> pushPage(KibaSubPage.ListenPlaylist(id)) },
+                                  onOpenDownloads = { pushPage(KibaSubPage.ListenDownloads) },
                               )
                               KibaTab.Me -> MeScreen(
                                   scrollBehavior = scrollBehavior,

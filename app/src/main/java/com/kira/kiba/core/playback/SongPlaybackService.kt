@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.os.Build
+import android.os.Bundle
 import android.os.IBinder
 import android.support.v4.media.MediaMetadataCompat
 import android.support.v4.media.session.MediaSessionCompat
@@ -54,6 +55,9 @@ class SongPlaybackService : Service() {
         private const val CHANNEL_ID = "song_playback"
         private const val NOTIFICATION_ID = 4102
 
+        /** 通知「关闭」按钮的自定义 action（不冲突媒体卡片预设 action）。 */
+        const val ACTION_CLOSE = "com.kira.kiba.playback.ACTION_CLOSE"
+
         @Volatile
         var isRunning: Boolean = false
             private set
@@ -86,6 +90,12 @@ class SongPlaybackService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_CLOSE) {
+            // 通知「关闭」：彻底关播放（释放播放器 + 状态归零），服务随之撤除通知
+            SongPlaybackController.closeSession()
+            stopSelf()
+            return START_NOT_STICKY
+        }
         if (!bootstrapped) {
             bootstrapped = true
             enterForeground()
@@ -160,6 +170,14 @@ class SongPlaybackService : Service() {
             }
 
             override fun onSeekTo(pos: Long) = SongPlaybackController.seekTo(pos)
+
+            override fun onCustomAction(action: String, extras: Bundle?) {
+                // Android 13+ 媒体卡片只渲染 PlaybackState 动作，「关闭」按钮走这里
+                if (action == ACTION_CLOSE) {
+                    SongPlaybackController.closeSession()
+                    stopSelf()
+                }
+            }
         })
         ms.setSessionActivity(reopenPendingIntent())
         ms.isActive = true
@@ -179,7 +197,7 @@ class SongPlaybackService : Service() {
     private fun refresh() {
         val st = SongPlaybackController.state.value
         if (st.track == null) {
-            // 控制器已归零（队列播完 / 用户彻底停止）：通知没有存在意义
+            // 控制器已归零（用户彻底停止 / 通知关闭）：通知没有存在意义
             stopSelf()
             return
         }
@@ -197,7 +215,9 @@ class SongPlaybackService : Service() {
         }
         ms.setPlaybackState(buildState(state, st))
         ms.setMetadata(buildMetadata(st))
-        val sig = "${st.track?.songId}|$state|${st.error != null}"
+        // ended（队列播完停止态）也要进签名：暂停态通知上多出「已播完」文案，
+        // 否则用户看不到状态变化
+        val sig = "${st.track?.songId}|$state|${st.error != null}|${st.ended}"
         if (sig != lastNotifySig) {
             lastNotifySig = sig
             val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
@@ -215,6 +235,16 @@ class SongPlaybackService : Service() {
             PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS
         return PlaybackStateCompat.Builder()
             .setActions(actions)
+            // 「关闭」作为会话自定义动作：Android 13+ 系统媒体卡片忽略
+            // Notification.addAction，只有这里注册才会出现按钮（点击回调
+            // onCustomAction → closeSession + 撤通知）
+            .addCustomAction(
+                PlaybackStateCompat.CustomAction.Builder(
+                    ACTION_CLOSE,
+                    "关闭",
+                    R.drawable.ic_notify_close,
+                ).build(),
+            )
             .setState(state, st.positionMs, if (state == PlaybackStateCompat.STATE_PLAYING) 1f else 0f)
             .build()
     }
@@ -235,16 +265,35 @@ class SongPlaybackService : Service() {
     private fun buildNotification(state: Int): Notification {
         val st = SongPlaybackController.state.value
         val contentIntent = reopenPendingIntent()
+        // 通知「关闭」按钮：展开态可见，点击 = 关播放 + 撤通知
+        val closeIntent = PendingIntent.getService(
+            this,
+            2,
+            Intent(this, SongPlaybackService::class.java).apply { action = ACTION_CLOSE },
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val closeAction = NotificationCompat.Action.Builder(
+            R.drawable.ic_kiba_notification,
+            "关闭",
+            closeIntent,
+        ).build()
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_kiba_notification)
             .setContentTitle(st.track?.title ?: "Kiba")
-            .setContentText(st.track?.artist ?: "乐曲播放")
+            .setContentText(
+                when {
+                    st.error != null -> st.error ?: "播放出错"
+                    st.ended -> "已播完 · 点播放重播"
+                    else -> st.track?.artist ?: "乐曲播放"
+                },
+            )
             .setContentIntent(contentIntent)
             .setOngoing(state == PlaybackStateCompat.STATE_PLAYING)
             .setSilent(true)
             .setOnlyAlertOnce(true)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setLargeIcon(coverBitmap)
+            .addAction(closeAction)
             .setStyle(
                 androidx.media.app.NotificationCompat.MediaStyle()
                     .setMediaSession(getOrCreateSession().sessionToken)

@@ -14,6 +14,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -245,6 +246,23 @@ fun SettingsScreen(
                         },
                         startAction = { PrefIcon(MiuixGlassIcons.Regular.AiScan) },
                         onClick = onOpenLlmConfig,
+                    )
+                    // 「听」页 Agent 专属歌单的自动刷新间隔（进听页时检查过期）
+                    val intervalOptions = listOf(6, 12, 24, 48, 72)
+                    var agentInterval by remember {
+                        mutableIntStateOf(SpUtil.getAgentPlaylistIntervalHours())
+                    }
+                    OverlaySpinnerPreference(
+                        items = intervalOptions.map { DropdownItem(text = "$it 小时") },
+                        selectedIndex = intervalOptions.indexOf(agentInterval).coerceAtLeast(0),
+                        title = "Agent 歌单刷新间隔",
+                        summary = "「听」页专属歌单每 $agentInterval 小时自动重新生成",
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Refresh) },
+                        onSelectedIndexChange = { idx ->
+                            val hours = intervalOptions.getOrElse(idx) { 24 }
+                            agentInterval = hours
+                            SpUtil.setAgentPlaylistIntervalHours(hours)
+                        },
                     )
                 }
             }
