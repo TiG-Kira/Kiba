@@ -19,11 +19,25 @@ UI 采用 [miuix](https://github.com/miuix-kotlin-multiplatform/miuix) 玻璃拟
 ## 功能
 
 - **曲库**：全量曲库本地同步（Room），支持按流派/版本/等级筛选、别名搜索；断网可查。
-- **歌曲详情**：玻璃拟态魔改顶栏（封面作背景、亮度自适应字色）、谱面定数一览、收藏。
+- **听**（乐曲中枢页）：
+  - **智能推荐**：基于 Best 成绩与收藏画像选曲，点击即播，无需手动建队列；
+  - **收藏连播**：收藏曲目一键串烧；
+  - **我的歌单**：自建歌单（曲目详情页一键入单），点歌即播 / 整单播放；
+  - **Agent 专属歌单**：配置 LLM 后按你的口味从候选曲池精选（≤15 首，默认 24h 自动刷新、可调）；
+  - **我的下载**：歌曲下载到本地存储（含 ID3 标题/艺术家/封面对齐详情口径），随时试听或删除；
+  - 无音源曲目自动提示并跳过，不打断播放链。
+- **乐曲播放器**：QQ 音乐式沉浸页（封面即背景、控制区五键等距分布），单曲/列表循环，
+  窄屏自适应（优先保证媒体控制可用）；媒体通知带真时长进度条、上下曲、
+  **快速收藏**与关闭按钮（Android 13+ 媒体卡片原生渲染），播完不撤通知。
+- **歌曲详情**：玻璃拟态魔改顶栏（封面作背景、亮度自适应字色）、谱面定数一览、收藏、
+  谱面预览（落雪官方谱面播放器）。
+- **查分双源**：水鱼查分器 / 落雪 API 二选一（设置页切换），落雪另提供官方代理同步与
+  OAuth 登录通道；NET/代打口径对齐 maimaidx-prober。
 - **Best 50**：绑定[水鱼查分器](https://www.diving-fish.com/maimaidx/prober/)后一键生成成绩单图片（B50），坐标与样式对齐 KibaBot。
 - **Agent**：接入任意 OpenAI 兼容 LLM（流式输出 + 深度思考分卡展示），可调用内置本地技能：
   推分推荐 / 随机选曲 / 定数查歌 / 分数线 / 随机条件曲 / 猜歌 / 今日运势……（技能逻辑移植自 [KibaBot](https://github.com/KilluaSakata/Kiba)，宴会场谱面自动排除）。
 - **进度统计**：版本进度 / 等级进度，下钻明细支持判定筛选（极 / 将 / 神 / 评级细档），未完成置顶、已完成垫底。
+- **中二节奏**：平行曲库 / 成绩 / 进度体系（谱面物量补全、落雪封面源），与舞萌侧数据互不干扰。
 - **桌面小组件**：曲库速查。
 - **应用内更新**：检查 GitHub Releases 下载 APK（SHA-256 / 包名 / 版本 / 签名多重校验），Markdown 渲染更新日志。
 
@@ -51,7 +65,8 @@ Room · Coil（256MB 磁盘缓存）· OkHttp · Coroutines · DataStore/SpUtil�
 
 ## 数据来源与免责声明
 
-- 曲库数据：MaimaiData 更新源；封面：水鱼 CDN / maimai 官网图床；成绩：水鱼查分器。
+- 曲库数据：MaimaiData 更新源；封面：落雪 lxns / 水鱼 CDN / 官网图床多级候选；
+  成绩：水鱼查分器 / 落雪 API；乐曲音源：落雪整轨 CDN。
 - 本项目与世嘉（SEGA）、华立科技无关，仅供学习交流，请勿用于商业用途。
 - 游玩记录与账号信息仅存储在本地。
 
@@ -60,4 +75,4 @@ Room · Coil（256MB 磁盘缓存）· OkHttp · Coroutines · DataStore/SpUtil�
 - [MaimaiData](https://github.com/PaperPig/MaimaiData) —— 数据核心与交互蓝本
 - [KibaBot](https://github.com/KilluaSakata/Kiba) —— Agent 技能与 B50 图片逻辑来源
 - [miuix](https://github.com/miuix-kotlin-multiplatform/miuix) —— UI 组件库
-- [水鱼查分器](https://www.diving-fish.com/maimaidx/prober/) —— 成绩数据
+- [水鱼查分器](https://www.diving-fish.com/maimaidx/prober/) / [落雪 API](https://maimai.lxns.net/) —— 成绩与音源数据
