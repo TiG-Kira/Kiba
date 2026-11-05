@@ -162,11 +162,10 @@ fun SongPlayerScreen(
             // ── 分辨率自适应（BoxWithConstraints 拿实际可用宽度）：
             // < 340dp 隐藏玻璃信息面板；< 280dp 连功能行也隐藏，
             // 优先保证媒体控制按钮（上一首/播放/下一首）的显示。
+            // 控制区改 SpaceBetween 等距分布后间距自适应，无需手动 gap。
             BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
                 val showInfoCard = maxWidth >= 340.dp
                 val showFuncRow = maxWidth >= 280.dp
-                // 控制区间距：过窄时压缩，控制按钮永远保留（媒体控制可用性优先级最高）
-                val controlGap = if (maxWidth < 280.dp) 16.dp else 40.dp
 
                 Column(
                     modifier = Modifier
@@ -270,70 +269,68 @@ fun SongPlayerScreen(
                     )
                     Spacer(Modifier.height(22.dp))
 
-                    // ── 控制区：暂停大键绝对居中（唱片 App 惯例），循环居左、
-                    // 播放列表居右（用户口径：暂停按钮居中，播放列表放最右）。
-                    // 宽度不足 280dp 时播放列表退场，只留媒体控制三键。
-                    Box(modifier = Modifier.fillMaxWidth()) {
-                        // 中间组：上一首 / 大播放键 / 下一首
-                        Row(
-                            modifier = Modifier.align(Alignment.Center),
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            ControlIcon(
-                                icon = MiuixGlassIcons.Regular.ChevronBackward,
-                                contentDescription = "上一首",
-                                enabled = state.queueIndex > 0,
-                                size = 46.dp,
-                                tint = ImmerseText,
-                            ) { SongPlaybackController.prev() }
-                            Spacer(Modifier.width(controlGap))
-                            Box(
-                                modifier = Modifier
-                                    .size(78.dp)
-                                    .clip(CircleShape)
-                                    .background(Color.White)
-                                    .clickable { SongPlaybackController.toggle() }, // 停止态/失败态由 resume 内部兜底重播
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                androidx.compose.material3.Icon(
-                                    imageVector = if (state.playing) MiuixGlassIcons.Regular.Pause else MiuixGlassIcons.Regular.Play,
-                                    contentDescription = if (state.playing) "暂停" else "播放",
-                                    tint = Color.Black,
-                                    modifier = Modifier.size(38.dp),
-                                )
-                            }
-                            Spacer(Modifier.width(controlGap))
-                            ControlIcon(
-                                icon = MiuixGlassIcons.Regular.ChevronForward,
-                                contentDescription = "下一首",
-                                enabled = state.queueIndex < state.queue.lastIndex,
-                                size = 46.dp,
-                                tint = ImmerseText,
-                            ) { SongPlaybackController.next() }
-                        }
+                    // ── 控制区：五元素等距分布（SpaceBetween + 左右对称槽位，
+                    // 暂停大键自然正中），循环居左、播放列表居右。窄屏（<280dp）
+                    // 播放列表退场但保留 46dp 右槽占位——左右对称被破坏会让空隙
+                    // 全挤到中间两侧（此前 Box 分层布局的窄屏聚簇问题）。
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
                         // 左：循环模式
-                        Box(modifier = Modifier.align(Alignment.CenterStart)) {
-                            ControlIcon(
-                                icon = MiuixGlassIcons.Regular.Redo,
-                                contentDescription = when (state.loopMode) {
-                                    LoopMode.OFF -> "顺序播放"
-                                    LoopMode.ALL -> "列表循环"
-                                    LoopMode.ONE -> "单曲循环"
-                                },
-                                badge = when (state.loopMode) {
-                                    LoopMode.ONE -> "1"
-                                    else -> null
-                                },
-                                active = state.loopMode != LoopMode.OFF,
-                                enabled = true,
-                                size = 46.dp,
-                                tint = ImmerseText,
-                            ) { SongPlaybackController.cycleLoopMode() }
+                        ControlIcon(
+                            icon = MiuixGlassIcons.Regular.Redo,
+                            contentDescription = when (state.loopMode) {
+                                LoopMode.OFF -> "顺序播放"
+                                LoopMode.ALL -> "列表循环"
+                                LoopMode.ONE -> "单曲循环"
+                            },
+                            badge = when (state.loopMode) {
+                                LoopMode.ONE -> "1"
+                                else -> null
+                            },
+                            active = state.loopMode != LoopMode.OFF,
+                            enabled = true,
+                            size = 46.dp,
+                            tint = ImmerseText,
+                        ) { SongPlaybackController.cycleLoopMode() }
+                        // 中间组：上一首 / 大播放键 / 下一首
+                        ControlIcon(
+                            icon = MiuixGlassIcons.Regular.ChevronBackward,
+                            contentDescription = "上一首",
+                            enabled = state.queueIndex > 0,
+                            size = 46.dp,
+                            tint = ImmerseText,
+                        ) { SongPlaybackController.prev() }
+                        Box(
+                            modifier = Modifier
+                                .size(78.dp)
+                                .clip(CircleShape)
+                                .background(Color.White)
+                                .clickable { SongPlaybackController.toggle() }, // 停止态/失败态由 resume 内部兜底重播
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            androidx.compose.material3.Icon(
+                                imageVector = if (state.playing) MiuixGlassIcons.Regular.Pause else MiuixGlassIcons.Regular.Play,
+                                contentDescription = if (state.playing) "暂停" else "播放",
+                                tint = Color.Black,
+                                modifier = Modifier.size(38.dp),
+                            )
                         }
-                        // 右：播放列表（宽屏才显示；窄屏优先保证控制三键的呼吸感）
-                        if (showFuncRow) {
-                            Box(modifier = Modifier.align(Alignment.CenterEnd)) {
+                        ControlIcon(
+                            icon = MiuixGlassIcons.Regular.ChevronForward,
+                            contentDescription = "下一首",
+                            enabled = state.queueIndex < state.queue.lastIndex,
+                            size = 46.dp,
+                            tint = ImmerseText,
+                        ) { SongPlaybackController.next() }
+                        // 右：播放列表（宽屏才显示；窄屏保留空槽占位保对称）
+                        Box(
+                            modifier = Modifier.width(46.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (showFuncRow) {
                                 ControlIcon(
                                     icon = MiuixGlassIcons.Regular.Playlist,
                                     contentDescription = "播放列表 · ${state.queue.size} 首",

@@ -461,19 +461,28 @@ fun KibaMainScreen() {
               // GlassTopAppBar 自动回落为传统纯色默认样式（无模糊、无玻璃描边）。
               // 豁免页：关于页一律普通顶栏。谱面预览页不在这里给顶栏——
               // 它自带 miuix 普通 SmallTopAppBar（页内实色 + 自吃 padding），外层不叠。
-              // 顶栏转场（自然下沉）：进子页 / 切 Tab 时新顶栏从屏幕上方滑落 + 淡入，
-              // 旧顶栏向上滑出。SizeTransform(clip=false) 让不同高度的顶栏（大标题 ↔
+              // 顶栏转场（自然下沉）：**仅**曲目详情/播放页（含中二详情）进出时
+              // 新顶栏从屏幕上方滑落 + 淡入，旧顶栏向上滑出——其余转场（切 Tab、
+              // 普通子页）保持淡切，避免下沉动画蔓延到所有顶栏（用户实证反馈）。
+              // SizeTransform(clip=false) 让不同高度的顶栏（大标题 ↔
               // 播放页封面栏）高度平滑过渡，Scaffold padding 随动不留空带。
               AnimatedContent(
                   targetState = subStack.lastOrNull() ?: selectedTab,
                   transitionSpec = {
-                      if (topBarWasCollapsed) {
+                      val sinkPage: (Any?) -> Boolean = {
+                          it is KibaSubPage.SongPlayer ||
+                              it is KibaSubPage.SongDetail ||
+                              it is KibaSubPage.ChuniSongDetail
+                      }
+                      when {
                           // 收窄态出发：直接切换不做下沉（大标题从收窄态强行展开会残影跳变）
-                          fadeIn(tween(1)).togetherWith(fadeOut(tween(1)))
-                      } else {
-                          (slideInVertically(tween(260)) { -it } + fadeIn(tween(220)))
-                              .togetherWith(slideOutVertically(tween(200)) { -it / 2 } + fadeOut(tween(160)))
-                              .using(SizeTransform(clip = false))
+                          topBarWasCollapsed ->
+                              fadeIn(tween(1)).togetherWith(fadeOut(tween(1)))
+                          sinkPage(initialState) || sinkPage(targetState) ->
+                              (slideInVertically(tween(260)) { -it } + fadeIn(tween(220)))
+                                  .togetherWith(slideOutVertically(tween(200)) { -it / 2 } + fadeOut(tween(160)))
+                                  .using(SizeTransform(clip = false))
+                          else -> fadeIn(tween(200)).togetherWith(fadeOut(tween(140)))
                       }
                   },
                   label = "kiba-topbar",
