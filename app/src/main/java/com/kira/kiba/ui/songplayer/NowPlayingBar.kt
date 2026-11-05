@@ -19,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import com.kira.kiba.core.playback.SongPlaybackController
 import com.kira.kiba.ui.common.CoverFrame
 import top.yukonga.miuix.kmp.basic.Icon
@@ -40,6 +41,33 @@ import androidx.compose.ui.unit.Dp
 val NOW_PLAYING_BAR_CLEARANCE: Dp = 66.dp
 
 /**
+ * 底栏视角的播放状态快照：只保留 NowPlayingBar 渲染所需字段，**不含 positionMs/durationMs**。
+ *
+ * 播放中位置每 500ms 刷新一次完整 PlayerState；若让它直接流进 bottomBar 组合，两条玻璃
+ * 底栏会被拖进同频重组——glass() 修饰符的 effects lambda 每次重组都是新实例，元素判等
+ * 失败触发 invalidateDrawCache，整套「全屏取景重录 → 降采样 → 模糊 → 上采样」管线随之
+ * 重跑。静止时掉帧不可见，滚动中则表现为玻璃底栏细微抖动（GPU 尖峰顶掉滚动帧）。
+ * 由 KibaMainScreen 用 derivedStateOf 按结构相等过滤后传入。
+ */
+data class PlayerBarSnapshot(
+    val track: SongPlaybackController.Track?,
+    val playing: Boolean,
+    val prepared: Boolean,
+    val ended: Boolean,
+    val error: String?,
+) {
+    companion object {
+        fun of(s: SongPlaybackController.PlayerState) = PlayerBarSnapshot(
+            track = s.track,
+            playing = s.playing,
+            prepared = s.prepared,
+            ended = s.ended,
+            error = s.error,
+        )
+    }
+}
+
+/**
  * 曲目页「正在播放」悬浮底栏（miuix-glass 玻璃胶囊）。
  *
  * 由 KibaMainScreen 在 bottomBar 槽渲染（曲目 Tab 专属）：玻璃取景层记录的是
@@ -50,7 +78,7 @@ val NOW_PLAYING_BAR_CLEARANCE: Dp = 66.dp
  */
 @Composable
 fun NowPlayingBar(
-    state: SongPlaybackController.PlayerState,
+    state: PlayerBarSnapshot,
     backdrop: Backdrop?,
     onOpenPlayer: () -> Unit,
     backgroundBoard: Color? = null,
@@ -58,8 +86,11 @@ fun NowPlayingBar(
 ) {
     val track = state.track ?: return
     val isDark = MiuixTheme.colorScheme.background.luminance() < 0.5f
-    // 胶囊轮廓（与玻璃导航栏同款 percent-50 圆角）
-    val shape = GlassShape(29.dp)
+    // 胶囊轮廓（与玻璃导航栏同款 percent-50 圆角）；材质/描边按主题记忆，
+    // 避免每次重组都生成新对象（对象身份变化同样会把玻璃拖进重录）。
+    val shape = remember { GlassShape(29.dp) }
+    val material = remember(isDark) { GlassMaterials.puredThinGlass(isDark) }
+    val stroke = remember(isDark) { GlassStrokes.forTheme(isDark) }
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -77,8 +108,8 @@ fun NowPlayingBar(
                             backdrop = backdrop,
                             shape = shape,
                             style = GlassDefaults.Style,
-                            material = GlassMaterials.puredThinGlass(isDark),
-                            stroke = GlassStrokes.forTheme(isDark),
+                            material = material,
+                            stroke = stroke,
                             shadow = GlassShadows.Float,
                             shading = false,
                         )

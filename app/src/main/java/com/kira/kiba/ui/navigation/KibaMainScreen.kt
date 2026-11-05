@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -76,6 +77,7 @@ import com.kira.kiba.ui.tools.RatingCalcScreen
 import com.kira.kiba.ui.tools.VersionMapScreen
 import com.kira.kiba.ui.songdetail.SongDetailScreen
 import com.kira.kiba.ui.songplayer.NowPlayingBar
+import com.kira.kiba.ui.songplayer.PlayerBarSnapshot
 import com.kira.kiba.ui.songplayer.SongPlayerScreen
 import com.kira.kiba.ui.songdetail.SongDetailTopBarSlot
 import com.kira.kiba.ui.songdetail.ChuniSongDetailTopBarSlot
@@ -603,7 +605,15 @@ fun KibaMainScreen() {
           bottomBar = {
               if (subStack.isEmpty()) {
                   val advanced = LocalAdvancedMaterialEnabled.current
-                  val playerState by SongPlaybackController.state.collectAsState()
+                  // 底栏状态快照：只投影 NowPlayingBar 需要的字段。播放中 positionMs
+                  // 每 500ms 刷新完整 PlayerState，直接 collect 会把两条玻璃底栏拖进
+                  // 同频重组（glass 修饰符 effects lambda 每次重组都是新实例 →
+                  // invalidateDrawCache → 全套取景重录+重模糊），滚动时表现为底栏
+                  // 细微抖动。derivedStateOf 按结构相等过滤，位置刷新不再触发重组。
+                  val playerStateSource = SongPlaybackController.state.collectAsState()
+                  val playerState by remember(playerStateSource) {
+                      derivedStateOf { PlayerBarSnapshot.of(playerStateSource.value) }
+                  }
                   Column(
                       modifier = Modifier
                           .fillMaxWidth()
