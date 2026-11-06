@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -39,6 +40,11 @@ import com.kira.kiba.core.db.entity.SongDataEntity
 import com.kira.kiba.core.share.ShareService
 import com.kira.kiba.core.utils.SpUtil
 import com.kira.kiba.ui.common.coverCandidateUrls
+import com.kira.kiba.ui.material.LocalAdvancedMaterialEnabled
+import com.kira.kiba.ui.material.LocalMaterialFamily
+import com.kira.kiba.ui.material.MaterialFamily
+import com.kira.kiba.ui.material.liquid.LocalInLiquidTopBar
+import com.kira.kiba.ui.navigation.KibaActionButton
 import com.kira.kiba.ui.navigation.KibaBackAction
 import com.kira.kiba.ui.navigation.LocalGlassTopAppBarBackdrop
 import com.kira.kiba.ui.share.ShareImageAction
@@ -46,7 +52,6 @@ import kotlinx.coroutines.delay
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.TopAppBarDefaults
-import top.yukonga.miuix.kmp.glass.GlassIconButton
 import top.yukonga.miuix.kmp.glass.GlassTopAppBar
 import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
 import top.yukonga.miuix.kmp.icon.glass.*
@@ -167,64 +172,71 @@ fun SongDetailTopBarSlot(
     val collapsedPx = with(density) { TopAppBarDefaults.CollapsedHeight.roundToPx() }
     val minExpansionPx = (screenWidthPx - statusBarPx - collapsedPx).coerceAtLeast(0)
 
-    GlassTopAppBar(
-        title = current?.title ?: "",
-        largeTitle = current?.title ?: "",
-        subtitle = current?.artist ?: "",
-        titleColor = onCoverColor,
-        largeTitleColor = onCoverColor,
-        subtitleColor = onCoverColor.copy(alpha = 0.72f),
-        backdrop = LocalGlassTopAppBarBackdrop.current,
-        scrollBehavior = scrollBehavior,
-        navigationIcon = { KibaBackAction(onClick = onBack, tint = onCoverColor) },
-        actions = {
-            GlassIconButton(onClick = {
-                favor = !favor
-                SpUtil.setFavorite(songId.toString(), favor)
-            }) {
-                // 注意：miuix-glass 图标库命名与形状相反——Starred 画的是空心星（双轮廓），
-                // Unstar 画的是实心星（单轮廓），这里按实际形状取用。
-                Icon(
-                    if (favor) MiuixGlassIcons.Regular.Unstar else MiuixGlassIcons.Regular.Starred,
-                    contentDescription = if (favor) "取消收藏" else "收藏",
+    // 液态玻璃模式下：封面还在时按钮保持 miuix（裸图标压在封面上才对），
+    // 折叠后顶栏变成一条玻璃带 → 按钮随之换成液态玻璃圆钮（见 KibaActionButton）。
+    val liquidActions = LocalMaterialFamily.current == MaterialFamily.LIQUID &&
+        LocalAdvancedMaterialEnabled.current && collapsed
+
+    CompositionLocalProvider(LocalInLiquidTopBar provides liquidActions) {
+        GlassTopAppBar(
+            title = current?.title ?: "",
+            largeTitle = current?.title ?: "",
+            subtitle = current?.artist ?: "",
+            titleColor = onCoverColor,
+            largeTitleColor = onCoverColor,
+            subtitleColor = onCoverColor.copy(alpha = 0.72f),
+            backdrop = LocalGlassTopAppBarBackdrop.current,
+            scrollBehavior = scrollBehavior,
+            navigationIcon = { KibaBackAction(onClick = onBack, tint = onCoverColor) },
+            actions = {
+                KibaActionButton(onClick = {
+                    favor = !favor
+                    SpUtil.setFavorite(songId.toString(), favor)
+                }) {
+                    // 注意：miuix-glass 图标库命名与形状相反——Starred 画的是空心星（双轮廓），
+                    // Unstar 画的是实心星（单轮廓），这里按实际形状取用。
+                    Icon(
+                        if (favor) MiuixGlassIcons.Regular.Unstar else MiuixGlassIcons.Regular.Starred,
+                        contentDescription = if (favor) "取消收藏" else "收藏",
+                        tint = onCoverColor,
+                    )
+                }
+                // 分享歌曲详情图（生成后可选保存相册 / 分享给好友）
+                ShareImageAction(
+                    fileName = ShareService.defaultName("song_$songId"),
+                    build = { ShareService.buildSongPng(context, songId) },
                     tint = onCoverColor,
                 )
-            }
-            // 分享歌曲详情图（生成后可选保存相册 / 分享给好友）
-            ShareImageAction(
-                fileName = ShareService.defaultName("song_$songId"),
-                build = { ShareService.buildSongPng(context, songId) },
-                tint = onCoverColor,
-            )
-        },
-        background = {
-            Box(modifier = Modifier.fillMaxSize()) {
-                // 封面显示走候选链 SubcomposeAsyncImage：与列表 CoverFrame 同机制，
-                // 加载完成由 Coil 自身状态立刻刷新（无需任何滑动交互），且不触碰滚动状态。
-                // 列表加载过的封面直接命中内存/磁盘缓存，进入详情页秒显。
-                TopBarCoverImage(
-                    candidates = candidates,
-                    placeholder = placeholder,
-                    modifier = Modifier.fillMaxSize(),
-                )
-                // 统一压暗 15%（含占位图与加载中状态），保证白底封面上的白字也可读；
-                // 字色判定按 luminance × [COVER_DARKEN_FACTOR] 与此对齐。
-                Box(
-                    modifier = Modifier
-                        .matchParentSize()
-                        .background(Color.Black.copy(alpha = 1f - COVER_DARKEN_FACTOR)),
-                )
-            }
-        },
-        minExpansionPx = minExpansionPx,
-        // 展开态：歌名加粗，标题/副标题贴到顶栏底部（封面下部），距底边留空白
-        largeTitleBottomAligned = true,
-        largeTitleFontWeight = FontWeight.Bold,
-        // 关闭大标题折叠模糊：模糊半径随折叠进度逐帧变化，首帧要创建
-        // RenderEffect（shader 编译/分层分配），在滑动中正好撞上封面渐隐，
-        // 表现成「渐隐替换瞬间卡一下再继续流畅」；标题本身有位移+渐隐，无需模糊。
-        largeTitleBlurRadius = 0.dp,
-    )
+            },
+            background = {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    // 封面显示走候选链 SubcomposeAsyncImage：与列表 CoverFrame 同机制，
+                    // 加载完成由 Coil 自身状态立刻刷新（无需任何滑动交互），且不触碰滚动状态。
+                    // 列表加载过的封面直接命中内存/磁盘缓存，进入详情页秒显。
+                    TopBarCoverImage(
+                        candidates = candidates,
+                        placeholder = placeholder,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    // 统一压暗 15%（含占位图与加载中状态），保证白底封面上的白字也可读；
+                    // 字色判定按 luminance × [COVER_DARKEN_FACTOR] 与此对齐。
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .background(Color.Black.copy(alpha = 1f - COVER_DARKEN_FACTOR)),
+                    )
+                }
+            },
+            minExpansionPx = minExpansionPx,
+            // 展开态：歌名加粗，标题/副标题贴到顶栏底部（封面下部），距底边留空白
+            largeTitleBottomAligned = true,
+            largeTitleFontWeight = FontWeight.Bold,
+            // 关闭大标题折叠模糊：模糊半径随折叠进度逐帧变化，首帧要创建
+            // RenderEffect（shader 编译/分层分配），在滑动中正好撞上封面渐隐，
+            // 表现成「渐隐替换瞬间卡一下再继续流畅」；标题本身有位移+渐隐，无需模糊。
+            largeTitleBlurRadius = 0.dp,
+        )
+    }
 }
 
 /** 封面统一压暗系数（黑色 15% 叠层）：字色判定与视觉压暗共用，保证一致。 */

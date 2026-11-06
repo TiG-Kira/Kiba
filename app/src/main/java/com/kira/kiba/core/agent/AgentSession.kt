@@ -31,6 +31,8 @@ object AgentSession {
         val reasoning: String = "",
         /** 流式输出中：正文还没收尾。 */
         val streaming: Boolean = false,
+        /** 这一轮真正调用过的工具（WorkBuddy 式「技能调用」展示）。 */
+        val calls: List<KibaAgent.ToolInvocation> = emptyList(),
     )
 
     private val gson = Gson()

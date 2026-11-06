@@ -295,6 +295,10 @@ dependencies {
     implementation("top.yukonga.miuix.kmp:miuix-icons-android:$miuixVersion")
     implementation("top.yukonga.miuix.kmp:miuix-preference-android:$miuixVersion")
 
+    // 液态玻璃（Kyant0/AndroidLiquidGlass，Maven Central 发布）：真·高级材质「液态玻璃」档
+    implementation("io.github.kyant0:backdrop:2.0.1")
+    implementation("io.github.kyant0:shapes:1.2.1")
+
     // miuix-glass 弹层控件需要 NavigationBackHandler / rememberNavigationEventState（1.1.2 起提供）
     implementation("androidx.navigationevent:navigationevent-compose-android:1.1.2")
     // 根 owner 装配（ViewTreeNavigationEventDispatcherOwner / OnBackInvokedDefaultInput）在

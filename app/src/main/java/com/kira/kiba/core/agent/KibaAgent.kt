@@ -101,6 +101,28 @@ class KibaAgent(private val context: Context) {
         val b50: Best50Info? = null,
         /** 梗图类技能产出的图片 Uri（已存相册），用于在对话里直接展示。 */
         val imageUri: String = "",
+        /** 本次回复里**真正调用过**的工具（供对话流里做技能调用展示）。 */
+        val calls: List<ToolInvocation> = emptyList(),
+    )
+
+    /**
+     * 一次真实的技能调用记录（对话流里以「技能调用」卡片展示）。
+     *
+     * 和 [AgentSkill] 的区别：AgentSkill 是**技能目录**（点卡片用），
+     * ToolInvocation 是**这一次实际发生了什么**——模型点了哪个技能、带了什么参数、
+     * 成没成功、拿到什么。WorkBuddy 那种「调用了 X」的展示就是这层信息。
+     */
+    data class ToolInvocation(
+        /** 技能 id（对应 [AgentSkill.id]）。 */
+        val id: String,
+        /** 展示名（技能标题）。 */
+        val title: String,
+        /** 参数摘要，一行（无参数为空串）。 */
+        val args: String = "",
+        /** 是否成功。 */
+        val ok: Boolean = true,
+        /** 结果摘要，一行（过长会截断）。 */
+        val summary: String = "",
     )
 
     private val client = OkHttpClient.Builder()
@@ -256,6 +278,9 @@ class KibaAgent(private val context: Context) {
             "web_search" -> webSearch(
                 args["query"] ?: args["q"] ?: args["keyword"] ?: fallbackText
             )
+            "moegirl_kb" -> moegirlKb(
+                args["query"] ?: args["q"] ?: args["keyword"] ?: fallbackText
+            )
             "random_filtered" -> randomFiltered(
                 args["condition"] ?: args["filter"] ?: fallbackText
             )
@@ -305,8 +330,39 @@ class KibaAgent(private val context: Context) {
         // 这种情况下加额重试一次，而不是把思考当答案。
         var budget = SpUtil.getLlmMaxTokens()
         var budgetRetried = false
-        // 已经兜底执行过的技能，避免重复调用
+        // 已兜底执行过的技能，避免重复调用
         val executed = mutableSetOf<String>()
+        // 本次回复里真正执行过的工具（对话流「技能调用」展示用）
+        val invocations = mutableListOf<ToolInvocation>()
+        // finish_reason == "length" 的续写次数（续写到的正文用 accumulated 累积，
+        // 流式路径下 onChunk 已在追加，这里只保证非流式路径拼得出来）
+        var accumulated = ""
+        var continuations = 0
+
+        /**
+         * 轮次用尽时的收尾：**不再把原始数据甩给用户**，也不再让模型继续调工具，
+         * 而是把已拿到的真实数据塞回去，让它用一句自然语言把结论说完整。
+         * 这是「维持会话直到 LLM 主动结束」的兜底——只有模型自己收不了尾时才用。
+         */
+        suspend fun finalAnswer(): AgentReply {
+            val nudge = messages + KibaLlm.Message.user(
+                "工具调用轮次已到上限。请立刻基于上面已经拿到的真实数据，" +
+                    "用自然语言完整回答用户最初的问题，不要再调用任何工具，也不要解释流程。"
+            )
+            val r = if (onChunk != null) {
+                KibaLlm.chatStream(nudge, emptyList(), maxTokens = budget, onChunk = onChunk).getOrNull()
+                    ?: KibaLlm.chat(nudge, emptyList(), maxTokens = budget).getOrNull()
+            } else {
+                KibaLlm.chat(nudge, emptyList(), maxTokens = budget).getOrNull()
+            }
+            val tail = r?.text?.trim().orEmpty()
+            return collected.copy(
+                text = (accumulated + tail).ifBlank {
+                    collected.text.ifBlank { "技能已执行完，数据在上面几张卡里。" }
+                },
+                calls = collected.calls + invocations,
+            )
+        }
 
         for (round in 0 until MAX_ROUNDS) {
             val result = if (onChunk != null) {
@@ -336,6 +392,7 @@ class KibaAgent(private val context: Context) {
                     collected = collected.merge(reply)
                     results[call] = reply.text
                     executed += call.name
+                    invocations += invocationOf(call.name, call.arguments, reply)
                 }
 
                 if (nativeCalls.isNotEmpty()) {
@@ -374,8 +431,8 @@ class KibaAgent(private val context: Context) {
                 }
 
                 if (round == MAX_ROUNDS - 1) {
-                    // 轮次用尽：把已拿到的真实数据直接给用户，不再让模型继续空转
-                    return collected.copy(text = collected.text.ifBlank { "已完成技能调用。" })
+                    // 轮次用尽：让模型基于已拿到的数据把话说完整，而不是甩原始数据
+                    return finalAnswer()
                 }
                 continue
             }
@@ -397,6 +454,7 @@ class KibaAgent(private val context: Context) {
                     collected = collected.merge(reply)
                     results[name] = reply.text
                     executed += name
+                    invocations += invocationOf(name, "", reply)
                 }
                 messages.add(KibaLlm.Message.assistant("[已执行技能 ${picked.joinToString("、")}]"))
                 picked.forEach { name ->
@@ -408,7 +466,7 @@ class KibaAgent(private val context: Context) {
                     )
                 }
                 if (round == MAX_ROUNDS - 1) {
-                    return collected.copy(text = collected.text.ifBlank { "已完成技能调用。" })
+                    return finalAnswer()
                 }
                 continue
             }
@@ -416,7 +474,7 @@ class KibaAgent(private val context: Context) {
             if (narration.isNotEmpty() && answer.isBlank() && collected.text.isNotBlank()) {
                 // 模型反复空谈「我要调用 X」但 X 都已执行过、正文始终空白：
                 // 手里已有真实数据，直接交付，不再让模型空转到底
-                return collected
+                return collected.copy(calls = collected.calls + invocations)
             }
 
             if (answer.isBlank() && result.reasoning.isNotBlank() && !budgetRetried) {
@@ -427,9 +485,26 @@ class KibaAgent(private val context: Context) {
                 continue
             }
 
+            // 输出被 max_tokens 截断（finish_reason == "length"）：之前会当成正常收尾，
+            // 用户看到的就是「说到一半自己停了」。这里接上断点续写，直到模型自然结束。
+            if (result.truncated && answer.isNotBlank() && continuations < MAX_CONTINUATIONS) {
+                continuations++
+                accumulated += answer
+                messages.add(KibaLlm.Message.assistant(result.text))
+                messages.add(
+                    KibaLlm.Message.user(
+                        "上一条回复被输出长度上限截断了。请**紧接断点继续写完**：" +
+                            "不要重复已经输出的内容，不要重新开头，不要加任何前言或客套。"
+                    )
+                )
+                // 续写往往还需要输出空间：顺手把预算抬到下一个档
+                budget = (budget * 2).coerceAtMost(MAX_TOKENS_CAP)
+                continue
+            }
+
             // 有答案 → 这一轮就是最终答复
             return collected.copy(
-                text = answer.ifBlank {
+                text = (accumulated + answer).ifBlank {
                     collected.text.ifBlank {
                         if (result.reasoning.isNotBlank()) {
                             "模型只输出了思考过程，没有给出结论。可以换个说法再问一次，或点上方技能卡直接使用。"
@@ -437,10 +512,12 @@ class KibaAgent(private val context: Context) {
                             "（模型没有返回内容）"
                         }
                     }
-                }
+                },
+                calls = collected.calls + invocations,
             )
         }
-        return collected
+        // 循环自然走完（理论上到不了）：按收尾处理，保证永远有自然语言答复
+        return finalAnswer()
     }
 
     /**
@@ -465,7 +542,29 @@ class KibaAgent(private val context: Context) {
         skills = (skills + other.skills).distinctBy { it.id },
         b50 = b50 ?: other.b50,
         imageUri = imageUri.ifBlank { other.imageUri },
+        calls = calls + other.calls,
     )
+
+    /** 把一次工具调用记成可展示的 [ToolInvocation]（参数与结果各压成一行）。 */
+    private fun invocationOf(name: String, argsJson: String, reply: AgentReply): ToolInvocation {
+        val meta = SKILLS.firstOrNull { it.id == name } ?: LLM_ONLY_TOOLS.firstOrNull { it.id == name }
+        val args = runCatching {
+            val map = KibaLlm.parseArguments(argsJson)
+            map.entries
+                .filter { it.value.isNotBlank() }
+                .joinToString("、") { (k, v) -> "$k=$v" }
+        }.getOrDefault("")
+        return ToolInvocation(
+            id = name,
+            title = meta?.title ?: name,
+            args = args.take(60),
+            ok = !reply.text.startsWith("出错了") && !reply.text.startsWith("未知技能"),
+            summary = reply.text.lineSequence()
+                .firstOrNull { it.isNotBlank() }
+                .orEmpty()
+                .take(80),
+        )
+    }
 
     /** 给 LLM 的技能说明（含每个技能的入参与调用示例）。 */
     private fun skillHint(): String = buildString {
@@ -631,11 +730,12 @@ class KibaAgent(private val context: Context) {
         val candidates = charts
             .filter { !isUtageChart(it, utageIds) }
             .mapNotNull { c ->
-                val songType = typeById[c.songId] ?: return@mapNotNull null
+                // 谱面类型只用于过滤「曲库没登记类型的谱面」；档位乘数 SD/DX 共用一套
+                if (typeById[c.songId] == null) return@mapNotNull null
                 val isNew = isNewById[c.songId] ?: return@mapNotNull null
                 val floor = (if (isNew) b15Floor else b35Floor) ?: return@mapNotNull null
                 val current = recordByKey[c.songId to c.difficultyType.ordinal]
-                val target = (if (songType == Constants.CHART_TYPE_DX) RA_TIERS_DX else RA_TIERS_SD)
+                val target = RA_TIERS
                     .firstOrNull { (boundary, mult) ->
                         tierRa(c.ds, boundary, mult) > floor &&
                             (current == null || current.achievements < boundary - 1e-9)
@@ -786,16 +886,18 @@ class KibaAgent(private val context: Context) {
         val current: RecordEntity?,
     )
 
-    /** 单曲 Rating 档位表（与上游 diving-fish computeRa 完全一致，floor 口径）：达成率下限 → 乘数。 */
-    private val RA_TIERS_DX = listOf(
+    /**
+     * 单曲 Rating 档位表：达成率下限 → 乘数（机台口径，floor 计算）。
+     *
+     * 与上游 MaimaiData `ConvertUtils.achievementToRating` 的档位对齐。
+     * **SD / DX 谱共用同一张表** —— 机台对标准谱与 DX 谱用同一套系数，
+     * 之前这里给 SD 单列了一套「14.0 / 13.5 / …」的低档表（来源不明），
+     * 会让 Agent 把标准谱的潜在 ra 严重低估（推分建议偏保守）。
+     */
+    private val RA_TIERS = listOf(
         100.5 to 22.4, 100.0 to 21.6, 99.5 to 21.1, 99.0 to 20.8,
-        98.0 to 20.0, 97.0 to 20.0, 94.0 to 16.8, 90.0 to 15.2,
+        98.0 to 20.3, 97.0 to 20.0, 94.0 to 16.8, 90.0 to 15.2,
         80.0 to 13.6, 75.0 to 12.0, 70.0 to 11.2, 60.0 to 9.6, 50.0 to 8.0,
-    )
-    private val RA_TIERS_SD = listOf(
-        100.5 to 14.0, 100.0 to 13.5, 99.5 to 13.2, 99.0 to 13.0,
-        98.0 to 12.7, 97.0 to 12.5, 94.0 to 10.5, 90.0 to 9.5,
-        80.0 to 8.5, 75.0 to 7.5, 70.0 to 7.0, 60.0 to 6.0, 50.0 to 5.0,
     )
 
     /** 档位达成率下限 → 达成率（floor 口径）：floor(定数 × 达成率/100 × 乘数)。 */
@@ -1513,6 +1615,26 @@ class KibaAgent(private val context: Context) {
      * 联网搜索：Bing 为主（国内直连可用），DuckDuckGo 兜底（有代理时更准）；
      * 再抓前 2 条结果页正文，一并回灌给模型总结。
      */
+    /**
+     * 萌娘百科内置知识库检索（舞萌 / 舞萌DX / 中二节奏三篇）。
+     *
+     * 定位：**机制类问题的第一优先来源**。内容随 APK 固化，离线可用、零延迟、
+     * 不会像模型自由发挥那样编造定数/公式。检索不到时明确返回「没命中」，
+     * 让模型改用 web_search，而不是硬拿一段不相关正文凑答案。
+     */
+    private suspend fun moegirlKb(query: String): AgentReply = withContext(Dispatchers.IO) {
+        val q = query.trim()
+        if (q.isEmpty()) return@withContext AgentReply("moegirl_kb 需要一个 query 参数。")
+        val hit = runCatching { MoegirlKb.search(context, q) }.getOrDefault("")
+        if (hit.isBlank()) {
+            return@withContext AgentReply(
+                "本地知识库（萌娘百科：舞萌DX / maimai 系列 / CHUNITHM）里没有检索到「$q」相关小节。\n" +
+                    "可以换更核心的名词再查一次，或改用 web_search 联网确认。",
+            )
+        }
+        AgentReply(hit)
+    }
+
     private suspend fun webSearch(query: String): AgentReply {
         val q = query.trim()
         if (q.isEmpty()) return AgentReply("web_search 需要一个 query 参数。")
@@ -1983,7 +2105,20 @@ class KibaAgent(private val context: Context) {
          * 一轮 = 模型决策 + 执行技能 + 回灌；3 轮足够覆盖
          * 「先 best50 再 push_rating 再总结」这类多技能组合。
          */
-        private const val MAX_ROUNDS = 3
+        /**
+         * 工具链最大轮次。
+         *
+         * 原来是 3：模型多查一步（例如先 best50 再 push_rating 再查曲目）就到顶，
+         * 于是「莫名其妙自己停了」。现在放到 8，正常对话根本碰不到；
+         * 真撞到上限也不再甩原始数据，而是走 finalAnswer() 让模型收尾。
+         */
+        private const val MAX_ROUNDS = 8
+
+        /**
+         * 输出被 max_tokens 截断时最多续写几次。
+         * 3 次 × 每次预算翻倍，足够写完一篇长回答；再长就是模型自己没完了。
+         */
+        private const val MAX_CONTINUATIONS = 3
 
         /** 游戏标记（[AgentSong.game]）：决定卡片点开哪个详情页。 */
         const val GAME_MAIMAI = "maimai"
@@ -2186,6 +2321,19 @@ class KibaAgent(private val context: Context) {
          * 查到的结果回灌后由模型总结给用户——不允许 agent 对 maimai 的事完全不知道。
          */
         private val LLM_ONLY_TOOLS = listOf(
+            AgentSkill(
+                "moegirl_kb", "萌娘百科知识库",
+                "查舞萌 / 舞萌DX / 中二节奏的**机制与设定**（定数、Rating 公式、判定、音符种类、" +
+                    "段位、模式、术语、版本差异、联动）。回答机制类问题**先用它**，比联网快且不会编造；" +
+                    "本地没检索到再用 web_search。",
+                params = listOf(
+                    KibaLlm.ToolParam(
+                        "query", "string",
+                        "要查的名词或短句，例：单曲 Rating 公式 / 判定档位 / 段位认定 / 宴会场 / 金框体",
+                        required = true,
+                    ),
+                ),
+            ),
             AgentSkill(
                 "web_search", "网络搜索",
                 "联网搜索并抓取网页正文（maimai 新模式玩法 / 道具获取 / 解谜线索 / 活动情报等游戏机制类问题必查）",

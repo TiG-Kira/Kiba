@@ -184,6 +184,24 @@ object SpUtil {
     /** 任一通道有效即视为已登录：OAuth 绑定（KEY_DF_BOUND）或原版 jwt。 */
     fun isDivingFishLoggedIn(): Boolean = isDivingFishBound() || getDivingFishJwt().isNotBlank()
 
+    /**
+     * 水鱼**成绩导入令牌**（网页版「个人资料」页可查看/重置）。
+     *
+     * 常驻本机：它是「上传钥匙」，与账号口令不同 —— 只能写成绩，不能读账号信息，
+     * 且随时可在水鱼站内重置。以前只在二维码导入页的内存里用一次，用户每次导入都得
+     * 重新去网页翻一遍，体验极差（用户反馈第 3 条）。
+     *
+     * 仍然只存在私有 SP、只在登录态页面上展示，解绑水鱼账号时一并清空。
+     */
+    private const val KEY_DF_IMPORT_TOKEN = "diving_fish_import_token"
+
+    fun getDivingFishImportToken(): String =
+        userInfoPrefs.getString(KEY_DF_IMPORT_TOKEN, "") ?: ""
+
+    fun setDivingFishImportToken(token: String) {
+        userInfoPrefs.edit { putString(KEY_DF_IMPORT_TOKEN, token.trim()) }
+    }
+
     // ================= 二维码取数网关账号（仅存本机） =================
 
     fun getQrGatewayUsername(): String =
@@ -389,6 +407,25 @@ object SpUtil {
     }
 
     fun hasLxnsOAuth(): Boolean = getLxnsOAuthRefresh().isNotBlank()
+
+    /**
+     * 落雪账号里是否已经绑定了玩家（好友码）。
+     *
+     * 落雪的数据挂在「玩家」上：账号没同步过游戏数据时，所有成绩接口都是
+     * `404 player not found`。这个标记决定「我」页要不要提示「还没绑定玩家」。
+     *
+     * **必须落盘**：只存在内存里的话，冷启动时 `LxnsAccount` 的初始状态恒为
+     * `playerFound=false`，探活失败/还没跑完的那几秒里，界面就会对已绑定玩家的账号
+     * 报「尚未绑定玩家」（用户实测反馈的假告警）。默认 true —— 宁可晚一点提示，
+     * 也不要冤枉一个已经绑好的账号。
+     */
+    private const val KEY_LXNS_PLAYER_FOUND = "lxns_player_found"
+
+    fun getLxnsPlayerFound(): Boolean = userInfoPrefs.getBoolean(KEY_LXNS_PLAYER_FOUND, true)
+
+    fun setLxnsPlayerFound(found: Boolean) {
+        userInfoPrefs.edit { putBoolean(KEY_LXNS_PLAYER_FOUND, found) }
+    }
 
     // ── 落雪好友码 ──
     //
@@ -681,7 +718,7 @@ object SpUtil {
      * 存名字而非序号，枚举顺序变化时不会串味。
      */
     fun getMaterialFamily(): String =
-        userInfoPrefs.getString(KEY_MATERIAL_FAMILY, "LIQUID") ?: "LIQUID"
+        userInfoPrefs.getString(KEY_MATERIAL_FAMILY, "SOFT") ?: "SOFT"
 
     fun setMaterialFamily(family: String) {
         userInfoPrefs.edit { putString(KEY_MATERIAL_FAMILY, family) }

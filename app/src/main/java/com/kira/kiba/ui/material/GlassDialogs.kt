@@ -17,6 +17,8 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.kira.kiba.ui.material.liquid.LiquidGlassDialog
+import com.kira.kiba.ui.material.liquid.LocalLiquidBackdrop
 import com.kira.kiba.ui.navigation.LocalGlassDialogBackdrop
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.glass.GlassDefaults
@@ -63,8 +65,14 @@ fun KibaGlassDialog(
     content: @Composable () -> Unit,
 ) {
     val enabled = LocalAdvancedMaterialEnabled.current && !forceDefault
+    val family = LocalMaterialFamily.current
+    val liquidBackdrop = LocalLiquidBackdrop.current
     val backdrop = LocalGlassDialogBackdrop.current
-    if (!enabled || backdrop == null) {
+
+    val fallback = !enabled ||
+        (family == MaterialFamily.LIQUID && liquidBackdrop == null) ||
+        (family != MaterialFamily.LIQUID && backdrop == null)
+    if (fallback) {
         OverlayDialog(
             show = show,
             title = title,
@@ -76,7 +84,7 @@ fun KibaGlassDialog(
         return
     }
 
-    // 返回键（与预测式返回手势互补：GlassDialog 内部处理手势，这里处理按键）
+    // 返回键（与预测式返回手势互补：*GlassDialog 内部处理手势，这里处理按键）
     BackHandler(enabled = show) { onDismissRequest?.invoke() }
 
     // 与 miuix OverlayDialog 同款：先以 false 起步，避免首帧直接以终态出现
@@ -94,49 +102,72 @@ fun KibaGlassDialog(
         renderInRootScaffold = true,
         onDismissFinished = if (onDismissFinished == null) null else finish,
     ) {
-        val isDark = MiuixTheme.colorScheme.background.luminance() < 0.5f
-        GlassDialog(
-            visible = show,
-            onDismissRequest = dismiss,
-            backdrop = backdrop,
-            alignment = Alignment.BottomCenter,
-            scrimAlpha = if (isDark) {
-                GlassOverlayDefaults.ScrimAlphaDark
-            } else {
-                GlassOverlayDefaults.ScrimAlphaLight
-            },
-            style = GlassDefaults.style(isDark),
-            // 与 miuix 对话框一致的 32dp 圆角（不是 glass 默认的 28dp）
-            shape = GlassShape(DialogDefaults.CornerRadius),
-            stroke = GlassStrokes.BigLight,
-            shadow = GlassShadows.ExtraHigh,
-        ) {
-            Column(modifier = Modifier.widthIn(max = maxWidth)) {
-                if (title != null) {
-                    Text(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 12.dp),
-                        text = title,
-                        fontSize = MiuixTheme.textStyles.title4.fontSize,
-                        fontWeight = FontWeight.Medium,
-                        textAlign = TextAlign.Center,
-                        color = DialogDefaults.titleColor(),
-                    )
-                }
-                if (summary != null) {
-                    Text(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 12.dp),
-                        text = summary,
-                        style = MiuixTheme.textStyles.body1,
-                        textAlign = TextAlign.Center,
-                        color = DialogDefaults.summaryColor(),
-                    )
-                }
-                content()
+        if (family == MaterialFamily.LIQUID) {
+            // 液态玻璃弹层：32dp 大圆角 + 强折射色散（Kyant0/AndroidLiquidGlass）
+            LiquidGlassDialog(
+                visible = show,
+                onDismissRequest = dismiss,
+                backdrop = liquidBackdrop!!,
+                alignment = Alignment.BottomCenter,
+            ) {
+                DialogBody(title = title, summary = summary, maxWidth = maxWidth, content = content)
+            }
+        } else {
+            val isDark = MiuixTheme.colorScheme.background.luminance() < 0.5f
+            GlassDialog(
+                visible = show,
+                onDismissRequest = dismiss,
+                backdrop = backdrop!!,
+                alignment = Alignment.BottomCenter,
+                scrimAlpha = if (isDark) {
+                    GlassOverlayDefaults.ScrimAlphaDark
+                } else {
+                    GlassOverlayDefaults.ScrimAlphaLight
+                },
+                style = GlassDefaults.style(isDark),
+                // 与 miuix 对话框一致的 32dp 圆角（不是 glass 默认的 28dp）
+                shape = GlassShape(DialogDefaults.CornerRadius),
+                stroke = GlassStrokes.BigLight,
+                shadow = GlassShadows.ExtraHigh,
+            ) {
+                DialogBody(title = title, summary = summary, maxWidth = maxWidth, content = content)
             }
         }
+    }
+}
+
+/** 弹层正文：标题 / 说明 / 内容，两套材质共用同一套排版（32dp 圆角 + 420dp 上限 + 居中）。 */
+@Composable
+private fun DialogBody(
+    title: String?,
+    summary: String?,
+    maxWidth: Dp,
+    content: @Composable () -> Unit,
+) {
+    Column(modifier = Modifier.widthIn(max = maxWidth)) {
+        if (title != null) {
+            Text(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 12.dp),
+                text = title,
+                fontSize = MiuixTheme.textStyles.title4.fontSize,
+                fontWeight = FontWeight.Medium,
+                textAlign = TextAlign.Center,
+                color = DialogDefaults.titleColor(),
+            )
+        }
+        if (summary != null) {
+            Text(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 12.dp),
+                text = summary,
+                style = MiuixTheme.textStyles.body1,
+                textAlign = TextAlign.Center,
+                color = DialogDefaults.summaryColor(),
+            )
+        }
+        content()
     }
 }

@@ -32,7 +32,7 @@ import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
-import top.yukonga.miuix.kmp.glass.GlassIconButton
+import com.kira.kiba.ui.navigation.KibaActionButton
 import top.yukonga.miuix.kmp.icon.glass.*
 import com.kira.kiba.ui.material.KibaGlassDialog
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -71,9 +71,9 @@ fun ShareImageAction(
         building = false
     }
 
-    GlassIconButton(
+    KibaActionButton(
         onClick = {
-            if (building) return@GlassIconButton
+            if (building) return@KibaActionButton
             building = true
             CacheCleaner.markGenerationActive()
             buildJob = scope.launch {

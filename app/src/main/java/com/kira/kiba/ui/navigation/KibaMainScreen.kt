@@ -85,6 +85,12 @@ import com.kira.kiba.ui.songdetail.ChuniSongDetailScreen
 import com.kira.kiba.ui.songdetail.ChuniChartDetailScreen
 import com.kira.kiba.ui.songs.SongGroupScreen
 import com.kira.kiba.ui.material.LocalAdvancedMaterialEnabled
+import com.kira.kiba.ui.material.LocalMaterialFamily
+import com.kira.kiba.ui.material.MaterialFamily
+import com.kira.kiba.ui.material.liquid.LiquidNavHeight
+import com.kira.kiba.ui.material.liquid.LiquidNavigationBar
+import com.kira.kiba.ui.material.liquid.LiquidNowPlayingBar
+import com.kira.kiba.ui.material.liquid.LocalLiquidBackdrop
 import com.kira.kiba.ui.songs.SongsScreen
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
@@ -94,6 +100,8 @@ import top.yukonga.miuix.kmp.basic.rememberTopAppBarState
 import top.yukonga.miuix.kmp.blur.Backdrop
 import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
+import com.kyant.backdrop.backdrops.layerBackdrop as liquidLayerBackdrop
+import com.kyant.backdrop.backdrops.rememberLayerBackdrop as rememberLiquidLayerBackdrop
 import top.yukonga.miuix.kmp.glass.GlassNavigationBar
 import top.yukonga.miuix.kmp.glass.GlassNavigationItem
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -317,6 +325,14 @@ fun KibaMainScreen() {
     val topAppBarState = rememberTopAppBarState()
     val scrollBehavior: ScrollBehavior = MiuixScrollBehavior(topAppBarState)
 
+    // 材质风格：LIQUID（液态玻璃）走 Kyant0/AndroidLiquidGlass 的独立控件；
+    // SOFT（柔光玻璃+，默认）沿用 miuix-glass，与「未开启真·高级材质」时完全同一套控件。
+    // 必须同时满足「高级材质开关打开」——否则液态玻璃会在开关关闭时仍然生效。
+    // 提前到这里是因为下面的 pushPage/popPage 需要它判断转场动画。
+    val materialFamily = LocalMaterialFamily.current
+    val advancedMaterial = LocalAdvancedMaterialEnabled.current
+    val isLiquid = materialFamily == MaterialFamily.LIQUID && advancedMaterial
+
     // ── 页面状态保留（返回不回顶）──
     // - 页面内容包 SaveableStateProvider：push 子页时列表 state 存入 holder，
     //   返回时原样恢复（滚动位置不丢）；
@@ -370,7 +386,10 @@ fun KibaMainScreen() {
         navForward = true
         // 在 reset 前抓出发页顶栏是否已收窄：收窄态出发的转场不做下沉动画
         // （收窄态高度与展开态差异大，强行下沉会出现大标题残影跳变，用户实测反馈）
-        topBarWasCollapsed = topAppBarState.heightOffset < -1f
+        // 液态玻璃顶栏高度恒定、不靠收缩，不存在「大标题残影」问题，
+        // 也不能用 heightOffset 判定（它只是折叠进度的驱动量）——否则液态模式下
+        // 进出二级页会被误判成「从收窄态出发」而退化成纯淡切，丢掉下沉动画。
+        topBarWasCollapsed = !isLiquid && topAppBarState.heightOffset < -1f
         saveTopBar(subStack.lastOrNull() ?: selectedTab)
         // 进新子页 = 新导航：清掉该页残留的旧状态（比如之前访问过同一首歌）
         // 注意 holder/topBarMemory 实际都以 pageKey() 字符串为 key，必须传转换后的 key，
@@ -384,7 +403,10 @@ fun KibaMainScreen() {
     fun popPage() {
         if (subStack.isNotEmpty()) {
             navForward = false
-            topBarWasCollapsed = topAppBarState.heightOffset < -1f
+            // 液态玻璃顶栏高度恒定、不靠收缩，不存在「大标题残影」问题，
+        // 也不能用 heightOffset 判定（它只是折叠进度的驱动量）——否则液态模式下
+        // 进出二级页会被误判成「从收窄态出发」而退化成纯淡切，丢掉下沉动画。
+        topBarWasCollapsed = !isLiquid && topAppBarState.heightOffset < -1f
             val back = subStack.dropLast(1).lastOrNull() ?: selectedTab
             subStack = subStack.dropLast(1)
             // 返回上一页：恢复其滚动位置与顶栏塌缩状态，不强制回顶/展开
@@ -443,7 +465,11 @@ fun KibaMainScreen() {
     val systemNavBarsHeight = with(density) {
         maxOf(WindowInsets.navigationBars.getBottom(density), 12.dp.roundToPx()).toDp()
     }
-    val navBarBottomPadding = GLASS_NAV_HEIGHT + systemNavBarsHeight
+    // 材质风格 / 液态取景层（isLiquid 已在函数开头算好，供 pushPage/popPage 用）
+    // 液态取景层：与 miuix 的 glassNavBackdrop 并存，只在 LIQUID 时才注册到内容 Box
+    val liquidBackdrop = rememberLiquidLayerBackdrop()
+    val navBarHeight = if (isLiquid) LiquidNavHeight else GLASS_NAV_HEIGHT
+    val navBarBottomPadding = navBarHeight + systemNavBarsHeight
 
     // 顶栏与底栏共用的取景层（miuix-blur）
     val glassNavBackdrop = rememberLayerBackdrop()
@@ -453,7 +479,11 @@ fun KibaMainScreen() {
         popPage()
     }
 
-    CompositionLocalProvider(LocalGlassDialogBackdrop provides glassNavBackdrop) {
+    CompositionLocalProvider(
+        LocalGlassDialogBackdrop provides glassNavBackdrop,
+        // 液态玻璃弹层用同一条内容取景层的 kyant 版本；SOFT 时置 null，弹层回落 miuix glass
+        LocalLiquidBackdrop provides if (isLiquid) liquidBackdrop else null,
+    ) {
       Scaffold(
           modifier = Modifier.fillMaxSize(),
           // 关键：禁用默认 contentWindowInsets，让内容满高铺开
@@ -604,7 +634,6 @@ fun KibaMainScreen() {
           },
           bottomBar = {
               if (subStack.isEmpty()) {
-                  val advanced = LocalAdvancedMaterialEnabled.current
                   // 底栏状态快照：只投影 NowPlayingBar 需要的字段。播放中 positionMs
                   // 每 500ms 刷新完整 PlayerState，直接 collect 会把两条玻璃底栏拖进
                   // 同频重组（glass 修饰符 effects lambda 每次重组都是新实例 →
@@ -614,44 +643,61 @@ fun KibaMainScreen() {
                   val playerState by remember(playerStateSource) {
                       derivedStateOf { PlayerBarSnapshot.of(playerStateSource.value) }
                   }
+                  // 底栏导航项与切页回调：两套材质共用同一份数据，只换渲染控件
+                  val navItems = tabs.map { GlassNavigationItem(icon = tabIcon(it), label = it.title) }
+                  val onSelectTab: (Int) -> Unit = { index ->
+                      val target = tabs.getOrElse(index) { selectedTab }
+                      if (target != selectedTab) {
+                          // 切 Tab = 进新页面：目标页残留状态清掉，列表回顶 + 顶栏展开
+                          // （同样必须用 pageKey() 字符串，否则匹配不到已保存的状态）
+                          pageStateHolder.removeState(pageKey(target))
+                          topBarMemory.remove(pageKey(target))
+                          selectedTab = target
+                          resetTopBar()
+                      }
+                  }
                   Column(
                       modifier = Modifier
                           .fillMaxWidth()
                           .padding(start = 24.dp, end = 24.dp, bottom = systemNavBarsHeight),
                   ) {
-                      // 曲目页「正在播放」悬浮底栏：玻璃胶囊，压在导航栏上方 8dp。
-                      // 放在 bottomBar 槽（取景层子树外）而非页面内容里，玻璃采样
-                      // 不会成环。backdrop 无条件传（与 GlassNavigationBar 同款口径，
-                      // 首版按 advanced 开关条件传导致底栏实色、导航栏玻璃不一致）。
+                      // 「正在播放」悬浮底栏：曲目页 / 听页。放在 bottomBar 槽（取景层子树外）
+                      // 而非页面内容里，玻璃采样不会成环。
+                      // SOFT 与未开启真·高级材质时**完全同一套控件**（miuix glass，无背景板），
+                      // LIQUID 才切到独立的液态玻璃实现。
                       if ((selectedTab == KibaTab.Songs || selectedTab == KibaTab.Listen) && playerState.track != null) {
-                          NowPlayingBar(
-                              state = playerState,
-                              backdrop = glassNavBackdrop,
-                              backgroundBoard = if (advanced) MiuixTheme.colorScheme.surface.copy(alpha = 0.55f) else null,
-                              onOpenPlayer = { pushPage(KibaSubPage.SongPlayer) },
-                          )
+                          if (isLiquid) {
+                              LiquidNowPlayingBar(
+                                  state = playerState,
+                                  backdrop = liquidBackdrop,
+                                  onOpenPlayer = { pushPage(KibaSubPage.SongPlayer) },
+                              )
+                          } else {
+                              NowPlayingBar(
+                                  state = playerState,
+                                  backdrop = glassNavBackdrop,
+                                  onOpenPlayer = { pushPage(KibaSubPage.SongPlayer) },
+                              )
+                          }
                           Spacer(Modifier.height(8.dp))
                       }
-                      // Termux Ultra 默认悬浮底栏：GlassNavigationBar
-                      // 左右各 24dp 内缩成浮动胶囊，底部贴系统导航栏上边缘
-                      // 真·高级材质开启时垫一层实色背景板，显著提高底栏实感
-                      GlassNavigationBar(
-                          items = tabs.map { GlassNavigationItem(icon = tabIcon(it), label = it.title) },
-                          selectedIndex = selectedTab.ordinal,
-                          onSelect = { index ->
-                              val target = tabs.getOrElse(index) { selectedTab }
-                              if (target != selectedTab) {
-                                  // 切 Tab = 进新页面：目标页残留状态清掉，列表回顶 + 顶栏展开
-                                  // （同样必须用 pageKey() 字符串，否则匹配不到已保存的状态）
-                                  pageStateHolder.removeState(pageKey(target))
-                                  topBarMemory.remove(pageKey(target))
-                                  selectedTab = target
-                                  resetTopBar()
-                              }
-                          },
-                          backdrop = glassNavBackdrop,
-                          backgroundBoard = if (advanced) MiuixTheme.colorScheme.surface.copy(alpha = 0.55f) else null,
-                      )
+                      // Termux Ultra 悬浮底栏：左右各 24dp 内缩成浮动胶囊，贴系统导航栏上边缘
+                      if (isLiquid) {
+                          LiquidNavigationBar(
+                              items = navItems,
+                              selectedIndex = selectedTab.ordinal,
+                              onSelect = onSelectTab,
+                              backdrop = liquidBackdrop,
+                              height = LiquidNavHeight,
+                          )
+                      } else {
+                          GlassNavigationBar(
+                              items = navItems,
+                              selectedIndex = selectedTab.ordinal,
+                              onSelect = onSelectTab,
+                              backdrop = glassNavBackdrop,
+                          )
+                      }
                   }
               }
           }
@@ -669,6 +715,9 @@ fun KibaMainScreen() {
                       .fillMaxSize()
                       // 内容注册到取景层：顶栏/底栏透过它折射页面内容
                       .layerBackdrop(glassNavBackdrop)
+                      // 液态玻璃另注册一条 kyant 取景链（两套 Backdrop 类型不通用）。
+                      // 只在 LIQUID 时挂载，SOFT 不做二次录制，滚动开销与改动前一致。
+                      .then(if (isLiquid) Modifier.liquidLayerBackdrop(liquidBackdrop) else Modifier)
               ) {
                   val sub = subStack.lastOrNull()
                   // 页面切换动画：Tab 间淡入淡出 + 轻微横向位移；二级页面从右滑入、返回时滑出
@@ -851,6 +900,9 @@ fun KibaMainScreen() {
                                       WeChatJump.openOfficialAccount(context)
                                   },
                                   onOpenGatewayAccount = { pushPage(KibaSubPage.GatewayAccount) },
+                                  // 2.3.0：设置页「查分器工具」组整组迁入「我」页查分器组
+                                  onOpenMachineUpdate = { pushPage(KibaSubPage.MachineUpdate) },
+                                  onOpenQrImport = { pushPage(KibaSubPage.QrImport) },
                                   onOpenRatingCalc = { pushPage(KibaSubPage.RatingCalc) },
                                   onOpenVersionMap = { pushPage(KibaSubPage.VersionMap) },
                                   onOpenFriendQuery = { pushPage(KibaSubPage.FriendQuery) },
@@ -860,8 +912,6 @@ fun KibaMainScreen() {
                               KibaTab.Settings -> SettingsScreen(
                                   scrollBehavior = scrollBehavior,
                                   onOpenLlmConfig = { pushPage(KibaSubPage.LlmConfig) },
-                                  onOpenMachineUpdate = { pushPage(KibaSubPage.MachineUpdate) },
-                                  onOpenQrImport = { pushPage(KibaSubPage.QrImport) },
                                   onOpenAbout = { pushPage(KibaSubPage.About) },
                               )
                           }

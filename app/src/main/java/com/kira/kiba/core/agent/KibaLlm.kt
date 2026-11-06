@@ -125,6 +125,13 @@ object KibaLlm {
         val toolCalls: List<ToolCall> = emptyList(),
         /** 深度思考（reasoning_content / reasoning）内容，单独展示用。 */
         val reasoning: String = "",
+        /**
+         * `finish_reason == "length"`（输出被 max_tokens 截断）。
+         *
+         * 之前完全不读 finish_reason，模型写长回答写到一半被截断，界面看起来就是
+         * 「说到一半自己停了」。上层据此自动续写，直到模型自然收尾。
+         */
+        val truncated: Boolean = false,
     )
 
     /**
@@ -371,8 +378,26 @@ object KibaLlm {
             val snippet = body.replace(Regex("\\s+"), " ").take(220)
             throw LlmError.Server(code, "响应缺少 content 字段（原文：$snippet）")
         }
-        return ChatResult(text = text, toolCalls = calls, reasoning = reasoning)
+        return ChatResult(
+            text = text,
+            toolCalls = calls,
+            reasoning = reasoning,
+            truncated = readFinishReason(body).equals("length", ignoreCase = true),
+        )
     }
+
+    /** 取非流式响应里的 `choices[0].finish_reason`（取不到返回空串）。 */
+    private fun readFinishReason(body: String): String = runCatching {
+        val root = JsonParser.parseString(body).asJsonObject
+        val choices = root.getAsJsonArray("choices") ?: return@runCatching ""
+        choices.firstOrNull()
+            ?.takeIf { it.isJsonObject }
+            ?.asJsonObject
+            ?.get("finish_reason")
+            ?.takeIf { it.isJsonPrimitive }
+            ?.asString
+            .orEmpty()
+    }.getOrDefault("")
 
     /**
      * 从响应体中提取助手文本，兼容多种非标准结构。
@@ -522,12 +547,14 @@ object KibaLlm {
         val plainLines = mutableListOf<String>()
         var sawData = false
         var pendingData = ""
+        // finish_reason 只有最后一个事件里才有，且取值可能出现在任何一条 choice 上
+        val finishReasons = mutableSetOf<String>()
 
         suspend fun tryProcess(payload: String): Boolean {
             val obj = runCatching { JsonParser.parseString(payload).asJsonObject }.getOrNull()
                 ?: return false
             // 事件结构千奇百怪：解析成功但字段形态异常也不能让整条流挂掉
-            runCatching { consumeStreamEvent(obj, textSb, reasonSb, calls, onChunk) }
+            runCatching { consumeStreamEvent(obj, textSb, reasonSb, calls, finishReasons, onChunk) }
             return true
         }
 
@@ -564,7 +591,7 @@ object KibaLlm {
                 val obj = runCatching { JsonParser.parseString(trimmed).asJsonObject }.getOrNull()
                     ?: continue
                 if (obj.has("choices") || obj.has("delta") || obj.has("content")) {
-                    runCatching { consumeStreamEvent(obj, textSb, reasonSb, calls, onChunk) }
+                    runCatching { consumeStreamEvent(obj, textSb, reasonSb, calls, finishReasons, onChunk) }
                     lineEvents++
                 }
             }
@@ -589,7 +616,12 @@ object KibaLlm {
         text = stripReasoningEcho(text, reasoning)
         val inline = parseInlineToolCalls(text, tools.map { it.name }.toSet())
         text = inline.cleanedText
-        return ChatResult(text = text, toolCalls = toolCalls + inline.calls, reasoning = reasoning)
+        return ChatResult(
+            text = text,
+            toolCalls = toolCalls + inline.calls,
+            reasoning = reasoning,
+            truncated = finishReasons.any { it.equals("length", ignoreCase = true) },
+        )
     }
 
     /**
@@ -601,6 +633,7 @@ object KibaLlm {
         textSb: StringBuilder,
         reasonSb: StringBuilder,
         calls: LinkedHashMap<Int, MutableMap<String, String>>,
+        finishReasons: MutableSet<String>,
         onChunk: suspend (StreamChunk) -> Unit,
     ) {
         val choices = obj.get("choices") as? JsonArray
@@ -608,6 +641,10 @@ object KibaLlm {
             for (c in choices) {
                 if (!c.isJsonObject) continue
                 val co = c.asJsonObject
+                // finish_reason 单独取：部分网关把它放在没有 delta 的收尾事件里
+                co.get("finish_reason")?.takeIf { it.isJsonPrimitive }?.asString
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { finishReasons += it }
                 val delta = co.get("delta") as? JsonObject
                     ?: co.get("message") as? JsonObject
                     ?: continue

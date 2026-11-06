@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "generatedAt": "2026-11-06",
+  "note": "由 tools/update_moegirl_kb.py 生成；docs 数组里登记的 file 会被 App 载入知识库。",
+  "docs": [
+    {
+      "file": "maimai_dx.md",
+      "title": "舞萌DX",
+      "url": "https://zh.moegirl.org.cn/Maimai%E7%B3%BB%E5%88%97/%E8%88%9E%E8%90%8CDX"
+    },
+    {
+      "file": "maimai_series.md",
+      "title": "maimai 系列",
+      "url": "https://zh.moegirl.org.cn/Maimai%E7%B3%BB%E5%88%97"
+    },
+    {
+      "file": "chunithm.md",
+      "title": "CHUNITHM",
+      "url": "https://zh.moegirl.org.cn/CHUNITHM"
+    }
+  ]
+}

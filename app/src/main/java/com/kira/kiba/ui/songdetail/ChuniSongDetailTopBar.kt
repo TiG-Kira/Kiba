@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -39,13 +40,17 @@ import com.kira.kiba.core.model.GameType
 import com.kira.kiba.core.utils.CoverSources
 import com.kira.kiba.core.utils.SpUtil
 import com.kira.kiba.ui.common.ChuniCoverPlaceholder
+import com.kira.kiba.ui.material.LocalAdvancedMaterialEnabled
+import com.kira.kiba.ui.material.LocalMaterialFamily
+import com.kira.kiba.ui.material.MaterialFamily
+import com.kira.kiba.ui.material.liquid.LocalInLiquidTopBar
+import com.kira.kiba.ui.navigation.KibaActionButton
 import com.kira.kiba.ui.navigation.KibaBackAction
 import com.kira.kiba.ui.navigation.LocalGlassTopAppBarBackdrop
 import kotlinx.coroutines.delay
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.TopAppBarDefaults
-import top.yukonga.miuix.kmp.glass.GlassIconButton
 import top.yukonga.miuix.kmp.glass.GlassTopAppBar
 import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
 import top.yukonga.miuix.kmp.icon.glass.*
@@ -132,45 +137,52 @@ fun ChuniSongDetailTopBarSlot(
     val collapsedPx = with(density) { TopAppBarDefaults.CollapsedHeight.roundToPx() }
     val minExpansionPx = (screenWidthPx - statusBarPx - collapsedPx).coerceAtLeast(0)
 
-    GlassTopAppBar(
-        title = current?.title ?: "",
-        largeTitle = current?.title ?: "",
-        subtitle = current?.artist ?: "",
-        titleColor = onCoverColor,
-        largeTitleColor = onCoverColor,
-        subtitleColor = onCoverColor.copy(alpha = 0.72f),
-        backdrop = LocalGlassTopAppBarBackdrop.current,
-        scrollBehavior = scrollBehavior,
-        navigationIcon = { KibaBackAction(onClick = onBack, tint = onCoverColor) },
-        actions = {
-            GlassIconButton(onClick = {
-                favor = !favor
-                SpUtil.setFavorite(GameType.CHUNITHM, songId.toString(), favor)
-            }) {
-                Icon(
-                    if (favor) MiuixGlassIcons.Regular.Unstar else MiuixGlassIcons.Regular.Starred,
-                    contentDescription = if (favor) "取消收藏" else "收藏",
-                    tint = onCoverColor,
-                )
-            }
-            // 中二节奏不支持分享，不提供分享入口
-        },
-        background = {
-            Box(modifier = Modifier.fillMaxSize()) {
-                ChuniCoverBackground(songId = songId, modifier = Modifier.fillMaxSize())
-                // 统一压暗 15%，保证白底封面上的白字可读（字色判定与视觉压暗共用系数）。
-                Box(
-                    modifier = Modifier
-                        .matchParentSize()
-                        .background(Color.Black.copy(alpha = 1f - CHUNI_COVER_DARKEN_FACTOR)),
-                )
-            }
-        },
-        minExpansionPx = minExpansionPx,
-        largeTitleBottomAligned = true,
-        largeTitleFontWeight = FontWeight.Bold,
-        largeTitleBlurRadius = 0.dp,
-    )
+    // 液态玻璃模式下：封面还在时按钮保持 miuix，折叠后换成液态玻璃圆钮
+    // （与歌曲详情页同一套规则，见 KibaActionButton）。
+    val liquidActions = LocalMaterialFamily.current == MaterialFamily.LIQUID &&
+        LocalAdvancedMaterialEnabled.current && collapsed
+
+    CompositionLocalProvider(LocalInLiquidTopBar provides liquidActions) {
+        GlassTopAppBar(
+            title = current?.title ?: "",
+            largeTitle = current?.title ?: "",
+            subtitle = current?.artist ?: "",
+            titleColor = onCoverColor,
+            largeTitleColor = onCoverColor,
+            subtitleColor = onCoverColor.copy(alpha = 0.72f),
+            backdrop = LocalGlassTopAppBarBackdrop.current,
+            scrollBehavior = scrollBehavior,
+            navigationIcon = { KibaBackAction(onClick = onBack, tint = onCoverColor) },
+            actions = {
+                KibaActionButton(onClick = {
+                    favor = !favor
+                    SpUtil.setFavorite(GameType.CHUNITHM, songId.toString(), favor)
+                }) {
+                    Icon(
+                        if (favor) MiuixGlassIcons.Regular.Unstar else MiuixGlassIcons.Regular.Starred,
+                        contentDescription = if (favor) "取消收藏" else "收藏",
+                        tint = onCoverColor,
+                    )
+                }
+                // 中二节奏不支持分享，不提供分享入口
+            },
+            background = {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    ChuniCoverBackground(songId = songId, modifier = Modifier.fillMaxSize())
+                    // 统一压暗 15%，保证白底封面上的白字可读（字色判定与视觉压暗共用系数）。
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .background(Color.Black.copy(alpha = 1f - CHUNI_COVER_DARKEN_FACTOR)),
+                    )
+                }
+            },
+            minExpansionPx = minExpansionPx,
+            largeTitleBottomAligned = true,
+            largeTitleFontWeight = FontWeight.Bold,
+            largeTitleBlurRadius = 0.dp,
+        )
+    }
 }
 
 /** 封面背景：逐个尝试候选链，全部失败落回流派色占位图。 */

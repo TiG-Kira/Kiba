@@ -41,6 +41,7 @@ import com.kira.kiba.core.utils.DeviceGrade
 import com.kira.kiba.ui.common.SectionTitle
 import com.kira.kiba.ui.common.pageContentPadding
 import com.kira.kiba.ui.material.restartMainActivity
+import com.kira.kiba.ui.material.MaterialFamily
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
@@ -87,8 +88,6 @@ private fun tierLabel(score: Int): String = when {
 fun SettingsScreen(
     scrollBehavior: ScrollBehavior,
     onOpenLlmConfig: () -> Unit,
-    onOpenMachineUpdate: () -> Unit,
-    onOpenQrImport: () -> Unit,
     onOpenAbout: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -103,6 +102,7 @@ fun SettingsScreen(
     // ── 真·高级材质 ──
     // 评分在启动时评测并落盘，这里只做展示与手动重评
     var advancedOn by remember { mutableStateOf(SpUtil.isAdvancedMaterialEnabled()) }
+    var materialFamily by remember { mutableStateOf(SpUtil.getMaterialFamily()) }
     var score by remember { mutableStateOf(SpUtil.getDeviceScore()) }
     var passes by remember { mutableStateOf(SpUtil.getDeviceScore() >= DeviceGrade.PASS_SCORE) }
     var scoring by remember { mutableStateOf(false) }
@@ -210,11 +210,31 @@ fun SettingsScreen(
                         title = "启用真·高级材质",
                         summary = when {
                             !passes -> "设备评分不足 ${DeviceGrade.PASS_SCORE} 分，暂不可用"
-                            advancedOn -> "已开启 · 超级柔光（弹层为玻璃材质）"
+                            advancedOn ->
+                                "已开启 · ${MaterialFamily.of(materialFamily).label}（弹层为玻璃材质）"
                             else -> "已关闭 · 沿用标准 miuix 质感"
                         },
                         enabled = passes,
                         startAction = { PrefIcon(MiuixGlassIcons.Regular.Layers) },
+                    )
+                    // 风格选择：两档实现差异很大（液态是胶囊 + 透镜着色器，柔光是取景柔化），
+                    // 都涉及全局 CompositionLocal，改完同样走 Activity 重启落地。
+                    val families = MaterialFamily.entries
+                    OverlaySpinnerPreference(
+                        items = families.map { DropdownItem(text = it.label) },
+                        selectedIndex = families.indexOf(MaterialFamily.of(materialFamily))
+                            .coerceAtLeast(0),
+                        title = "材质风格",
+                        summary = MaterialFamily.of(materialFamily).summary,
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Filter) },
+                        enabled = passes && advancedOn,
+                        onSelectedIndexChange = { index ->
+                            val picked = families.getOrNull(index) ?: return@OverlaySpinnerPreference
+                            if (picked.name == materialFamily) return@OverlaySpinnerPreference
+                            materialFamily = picked.name
+                            SpUtil.setMaterialFamily(picked.name)
+                            context.restartMainActivity()
+                        },
                     )
                 }
             }
@@ -306,35 +326,9 @@ fun SettingsScreen(
                 }
             }
 
-            item(key = "tool_title") { SectionTitle("查分器工具") }
-            item(key = "tool_card") {
-                Card(modifier = (Modifier.fillMaxWidth())) {
-                    ArrowPreference(
-                        title = "机台成绩更新（VPN）",
-                        summary = "在机台 WiFi 下抓包，按各游戏当前选的数据源上传（水鱼 / 落雪）",
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Update) },
-                        onClick = onOpenMachineUpdate,
-                    )
-                    ArrowPreference(
-                        title = "二维码导入成绩",
-                        summary = "免 VPN：官方登录二维码 + 导入令牌直接同步",
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Scan) },
-                        onClick = onOpenQrImport,
-                    )
-                    if (maimaiSource == ScoreSource.LXNS || chuniSource == ScoreSource.LXNS) {
-                        // 落雪官方的同步方式是「代理同步」：把 WLAN 代理指向他们的服务器，
-                        // 由落雪代抓。它和本 App 的本地 VPN 抢同一块网络接管，只能二选一，
-                        // 所以这里只做备选入口 —— App 内抓包走不通时用户还有路可走。
-                        ArrowPreference(
-                            title = "落雪官方同步（备选）",
-                            summary = "App 内抓包走不通时用这条：把 WLAN 代理设为 proxy.maimai.lxns.net:8080，" +
-                                "由落雪服务器代抓（与 App 的 VPN 不能同时开）",
-                            startAction = { PrefIcon(MiuixGlassIcons.Regular.CloudFill) },
-                            onClick = { BrowserJump.openUrl(context, LxnsAccount.SYNC_URL) },
-                        )
-                    }
-                }
-            }
+            // ── 查分器工具已整组迁至「我」页查分器组（2.3.0）──
+            // 设置页只保留「数据源」这种纯配置项：登录态 + 机台更新 / 二维码导入放在同一处，
+            // 用户不必在两页之间来回找「上传成绩该从哪进」。
 
             // ── 数据 ──
             item(key = "data_title") { SectionTitle("数据") }

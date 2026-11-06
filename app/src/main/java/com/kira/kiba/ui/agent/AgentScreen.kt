@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.foundation.lazy.LazyColumn
@@ -44,6 +45,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -66,6 +68,7 @@ import com.kira.kiba.ui.material.KibaGlassDialog
 import com.kira.kiba.ui.navigation.LocalNavBarBottomPadding
 import com.kira.kiba.ui.navigation.LocalTopBarClearance
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.Button
@@ -138,21 +141,43 @@ fun AgentScreen(
                         "· 中二查歌 / 中二定数 / 中二随机 / 我的中二 Rating / 中二推分 —— 中二节奏专用技能\n" +
                         "配置 LLM 后还可以直接提问，我会自动调用对应技能；\n" +
                         "问「我该怎么推分」这类问题时，我会先读你的 Best 50 再给针对性结论。\n" +
+                        "机制类问题（定数 / Rating 公式 / 判定档位 / 段位 / 宴会场 / 术语）我会先查" +
+                        "**内置的萌娘百科知识库**（舞萌DX / 舞萌系列 / CHUNITHM），查不到才联网。\n" +
                         "（Best 50 / 推分需要先在「我」页面登录查分器）",
                 )
             )
         }
     }
 
-    // 流式输出视口跟随：最后一条正在流式且其内容已在视野内（用户贴底阅读）时，
-    // 正文/思考每有增量就贴底；用户手动上滑翻历史时不再抢滚动。
-    val lastTurn = messages.lastOrNull()
-    LaunchedEffect(lastTurn?.text?.length, lastTurn?.reasoning?.length, lastTurn?.streaming) {
-        val turn = messages.lastOrNull() ?: return@LaunchedEffect
-        if (!turn.streaming) return@LaunchedEffect
-        val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: return@LaunchedEffect
-        if (lastVisible >= messages.lastIndex - 1) {
-            listState.scrollToItem(messages.lastIndex)
+    // 流式输出视口跟随。
+    //
+    // 旧实现有两个坑（用户实测「流式过程中划不动」）：
+    // ① LaunchedEffect 的 key 是正文长度 → 每来一个 chunk 就重启一次副作用，
+    //    里面的 scrollToItem 又走 scroll 互斥锁，会把用户正在进行的拖拽**直接取消**，
+    //    表现为整段流式期间完全滑不动；
+    // ② 无条件贴底 → 用户想上翻看历史时被强行拽回底部。
+    // 现在：一个常驻副作用订阅增量（collectLatest，不重建协程），且只在
+    // 「用户没有在滑动 + 视口还贴在底部」时才跟随。
+    var autoFollow by remember { mutableStateOf(true) }
+    LaunchedEffect(listState) {
+        snapshotFlow {
+            val t = AgentSession.turns.value.lastOrNull()
+            Triple(t?.text?.length ?: 0, t?.reasoning?.length ?: 0, t?.streaming == true)
+        }.collectLatest { (_, _, streaming) ->
+            if (!streaming || !autoFollow) return@collectLatest
+            // 用户手指按着屏幕时绝不抢滚动（scrollToItem 会取消手势）
+            if (listState.isScrollInProgress) return@collectLatest
+            val last = AgentSession.turns.value.lastIndex
+            if (last >= 0) listState.scrollToItem(last)
+        }
+    }
+    // 用户手势期间判定是否还该跟随：只在贴底时继续跟随，上滑即脱钩
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.isScrollInProgress }.collect { dragging ->
+            if (!dragging) return@collect
+            val info = listState.layoutInfo
+            val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: return@collect
+            autoFollow = lastVisible >= AgentSession.turns.value.lastIndex - 1
         }
     }
 
@@ -206,6 +231,7 @@ fun AgentScreen(
                         skills = reply.skills,
                         b50 = reply.b50,
                         imageUri = reply.imageUri,
+                        calls = reply.calls,
                     )
                 )
                 val idx = AgentSession.turns.value.lastIndex
@@ -242,6 +268,7 @@ fun AgentScreen(
                         skills = reply.skills,
                         b50 = reply.b50,
                         imageUri = reply.imageUri.ifBlank { last.imageUri },
+                        calls = reply.calls,
                     )
                 )
             }
@@ -496,6 +523,12 @@ private fun ChatBubble(msg: AgentSession.Turn, onOpenSong: (Int, String) -> Unit
                 msg.text
             }
         }
+        // 技能调用展示（WorkBuddy 风格）：这一轮真正跑过的工具，成组展示在正文上方。
+        // 与下方 msg.skills（技能目录卡，点一下直接执行）不是一回事。
+        if (msg.calls.isNotEmpty()) {
+            SkillInvocationCard(calls = msg.calls, streaming = msg.streaming)
+            Spacer(Modifier.height(8.dp))
+        }
         // 深度思考单独成卡，不和正文混在一起
         if (msg.reasoning.isNotBlank()) {
             ReasoningCard(text = msg.reasoning, streaming = msg.streaming)
@@ -585,9 +618,115 @@ private fun ChatBubble(msg: AgentSession.Turn, onOpenSong: (Int, String) -> Unit
     }
 }
 
-/** 深度思考（reasoning）：弱化样式的独立卡片，标题「深度思考」。 */
+/**
+ * 技能调用展示卡（WorkBuddy 风格）。
+ *
+ * 一个折叠式的分组卡：标题行说「调用了 N 个技能」，展开后逐条列出
+ * 「技能名 · 参数 · 结果摘要」。技能执行中（流式还没收尾）时标题显示「正在调用」。
+ *
+ * 为什么不做成每技能一张大卡：模型一轮可能连调 3~4 个工具（best50 → push_rating →
+ * song_query），铺开会把正文挤到屏幕外，反而不像「过程展示」而像刷屏。
+ */
+@Composable
+private fun SkillInvocationCard(
+    calls: List<KibaAgent.ToolInvocation>,
+    streaming: Boolean,
+) {
+    var expanded by remember(calls.size) { mutableStateOf(true) }
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(18.dp)
+                        .clip(RoundedCornerShape(5.dp))
+                        .background(MiuixTheme.colorScheme.primary.copy(alpha = 0.16f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "技",
+                        style = MiuixTheme.textStyles.footnote2,
+                        color = MiuixTheme.colorScheme.primary,
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = buildString {
+                        append(if (streaming) "正在调用 " else "调用了 ")
+                        append(calls.size)
+                        append(" 个技能")
+                    },
+                    style = MiuixTheme.textStyles.footnote1,
+                    color = MiuixTheme.colorScheme.primary,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    text = if (expanded) "收起" else "展开",
+                    style = MiuixTheme.textStyles.footnote2,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                )
+            }
+            if (expanded) {
+                calls.forEach { call ->
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.Top) {
+                        // 状态点：成功 = 主色，失败 = error 色
+                        Box(
+                            modifier = Modifier
+                                .padding(top = 5.dp)
+                                .size(6.dp)
+                                .clip(RoundedCornerShape(percent = 50))
+                                .background(
+                                    if (call.ok) MiuixTheme.colorScheme.primary
+                                    else MiuixTheme.colorScheme.onSurfaceVariantSummary
+                                ),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = buildString {
+                                    append(call.title)
+                                    if (call.args.isNotBlank()) {
+                                        append("（")
+                                        append(call.args)
+                                        append("）")
+                                    }
+                                },
+                                style = MiuixTheme.textStyles.footnote1,
+                                color = MiuixTheme.colorScheme.onSurface,
+                            )
+                            if (call.summary.isNotBlank()) {
+                                Text(
+                                    text = call.summary,
+                                    style = MiuixTheme.textStyles.footnote2,
+                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                    maxLines = 2,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 深度思考（reasoning）：弱化样式的独立卡片。
+ *
+ * 之前流式期间用 `maxLines = 12` 硬切，用户看到的就是「思考到一半被截断」。
+ * 现在：流式中**完整显示**（跟随列表滚动），收尾后长内容折叠到 6 行并给「展开」，
+ * 既不截断信息，也不会让十几屏的思考把正文顶走。
+ */
 @Composable
 private fun ReasoningCard(text: String, streaming: Boolean) {
+    var expanded by remember { mutableStateOf(false) }
+    val lineCount = remember(text) { text.count { it == '\n' } + 1 }
     Card(
         modifier = (Modifier
             .fillMaxWidth()
@@ -597,17 +736,33 @@ private fun ReasoningCard(text: String, streaming: Boolean) {
             )),
     ) {
         Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-            Text(
-                text = if (streaming) "深度思考中…" else "深度思考",
-                style = MiuixTheme.textStyles.footnote1,
-                color = MiuixTheme.colorScheme.primary,
-            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = !streaming) { expanded = !expanded },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = if (streaming) "深度思考中…" else "深度思考",
+                    style = MiuixTheme.textStyles.footnote1,
+                    color = MiuixTheme.colorScheme.primary,
+                    modifier = Modifier.weight(1f),
+                )
+                if (!streaming && lineCount > 6) {
+                    Text(
+                        text = if (expanded) "收起" else "展开",
+                        style = MiuixTheme.textStyles.footnote2,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    )
+                }
+            }
             Spacer(Modifier.height(4.dp))
             Text(
                 text = text,
                 style = MiuixTheme.textStyles.footnote2,
                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                maxLines = if (streaming) 12 else Int.MAX_VALUE,
+                // 流式中不设上限（截断就是这次要修的问题）；收尾后默认折叠到 6 行可展开
+                maxLines = if (!streaming && !expanded) 6 else Int.MAX_VALUE,
             )
         }
     }
