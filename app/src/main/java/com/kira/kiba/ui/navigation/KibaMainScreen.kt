@@ -659,6 +659,8 @@ fun KibaMainScreen() {
                   Column(
                       modifier = Modifier
                           .fillMaxWidth()
+                          // 底栏左右留白与柔光玻璃+（24dp）对齐：两套材质的长宽完全一致，
+                          // 切换材质时页面布局零跳动。
                           .padding(start = 24.dp, end = 24.dp, bottom = systemNavBarsHeight),
                   ) {
                       // 「正在播放」悬浮底栏：曲目页 / 听页。放在 bottomBar 槽（取景层子树外）
