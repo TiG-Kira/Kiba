@@ -199,7 +199,7 @@ private fun ChuniChartCard(
                 // 曲库缺 combo 时不显示 0，明确写「连击数据暂缺」。
                 when {
                     record == null -> ChuniMetaChip("暂未游玩")
-                    chart.combo > 0 -> ChuniMetaChip("历史游玩最大连击 ${chuniComboText(chart.combo)}")
+                    chart.combo > 0 -> ChuniMetaChip("最大连击 ${chuniComboText(chart.combo)}")
                     else -> ChuniMetaChip("连击数据暂缺")
                 }
             }
