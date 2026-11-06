@@ -191,6 +191,39 @@ LaunchedEffect(damped) {
 
 三条路径最终都汇入同一条流，动画与 `onSelect` 上报各只发生一次。
 
+**手势统一收归底栏本体**（关键重构）：胶囊布局区只占 1/tabCount，挂在胶囊上的
+`detectDragGestures` 收不到「点在其它 tab」的手势——down 迁移后手指继续移动就
+无人处理。正确做法是底栏本体上**一个** `awaitEachGesture` 完整接管：
+
+```kotlin
+awaitEachGesture {
+    val down = awaitFirstDown()
+    damped.pressDown()                                  // 玻璃在当前 tag 浮现
+    val hit = (down.position.x / tabWidth).toInt()...   // down 命中的 tab
+    if (hit != navSettle.index) {
+        holdPressUntilUp = true
+        navSettle = NavSettle(hit, serial + 1)          // 按下瞬间开始迁移
+    }
+    while (true) {                                      // move：跟手拖动
+        val change = ...awaitPointerEvent()...
+        if (超 touchSlop) { change.consume(); damped.updateValue(从**当前视觉位置**起跳 + dx) }
+        if (!change.pressed) break
+    }
+    navSettle = NavSettle(round(damped.value), serial + 1)  // up：按视觉位置吸附
+    damped.pressUpDelayed()
+}
+```
+
+三个易错点：
+- **move 首帧从 `damped.value`（实际视觉位置）起跳**，不是 pendingTarget——
+  迁移动画可能已飞出半程，从 pendingTarget 起跳会回跳；
+- **up 吸附目标用 `round(damped.value)`**——点击迁移场景 pendingTarget 已与
+  动画终点对齐、拖动场景它与视觉同步，但迁移被按住打断时 value 才是唯一事实；
+- **onSelect 上报必须在动画之前**：collectLatest 的新值会取消上一协程，
+  上报排在动画后，「动画完成 + 立刻松手」的窗口会把上报一起取消——
+  页面不切但胶囊已飞到目标（恶性竞态，AVD 实证）。页面切换与液滴飞行解耦：
+  点按即时换页，液滴随后跟上。
+
 **按下立刻浮现**（对齐酷安：玻璃从当前 tag 诞生）：底栏本体另挂一个
 `awaitEachGesture { awaitFirstDown → pressDown(); waitForUpOrCancellation → pressUpDelayed() }`——
 down 时刻 `press.animateTo(1f, StiffnessHigh)` 立即让玻璃在当前选中 tab 浮现，
