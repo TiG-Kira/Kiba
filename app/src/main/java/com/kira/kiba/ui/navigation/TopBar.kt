@@ -3,13 +3,20 @@ package com.kira.kiba.ui.navigation
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import com.kira.kiba.ui.material.LocalMaterialFamily
 import com.kira.kiba.ui.material.MaterialFamily
 import com.kira.kiba.ui.material.liquid.LiquidIconButton
-import com.kira.kiba.ui.material.liquid.LiquidTopAppBar
+import com.kira.kiba.ui.material.liquid.LiquidTopBarSkin
 import com.kira.kiba.ui.material.liquid.LocalInLiquidTopBar
 import com.kira.kiba.ui.material.liquid.LocalLiquidBackdrop
 import top.yukonga.miuix.kmp.basic.Icon
@@ -28,7 +35,7 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  * 保证两套材质的启用/豁免矩阵完全一致。
  */
 @Composable
-private fun useLiquidBar(): Boolean =
+internal fun useLiquidBar(): Boolean =
     LocalMaterialFamily.current == MaterialFamily.LIQUID &&
         LocalGlassTopAppBarBackdrop.current != null &&
         LocalLiquidBackdrop.current != null
@@ -37,7 +44,8 @@ private fun useLiquidBar(): Boolean =
  * Kiba 顶栏：按材质风格分派。
  * - 柔光玻璃+（默认）：原生 miuix-glass 的 [GlassTopAppBar]，backdrop 取自
  *   [LocalGlassTopAppBarBackdrop]（MainScreen 共享的 miuix-blur 取景层）；
- * - 液态玻璃：自建 [LiquidTopAppBar]（单行 + 滚动后整块玻璃包住状态栏），采样 [LocalLiquidBackdrop]；
+ * - 液态玻璃：miuix-glass 骨架（backdrop 置 null 关掉其玻璃）+ [LiquidTopBarSkin] 皮肤
+ *   （折叠时整块玻璃包住状态栏）+ 液态圆钮，采样 [LocalLiquidBackdrop]；
  * - 材质关闭 / 关于页豁免：两条路径都拿到 null backdrop，回落传统纯色顶栏。
  *
  * 大标题 + 滚动塌缩由 [scrollBehavior] 驱动，页面 LazyColumn 需挂 nestedScroll。
@@ -52,15 +60,35 @@ fun KibaTopBar(
     actions: @Composable RowScope.() -> Unit = {},
 ) {
     if (useLiquidBar()) {
-        LiquidTopAppBar(
-            title = title,
-            largeTitle = largeTitle,
-            modifier = modifier,
-            backdrop = LocalLiquidBackdrop.current,
-            scrollBehavior = scrollBehavior,
-            navigationIcon = navigationIcon,
-            actions = actions,
-        )
+        // 液态：miuix-glass 骨架（折叠逻辑 / 大标题左对齐 / 小标题居中 / 按钮槽）+
+        // 液态皮肤（折叠时整块玻璃包住状态栏与标题栏、底部 28dp 圆角）+ 液态圆钮。
+        // 骨架的 backdrop 传 null：miuix 自己的玻璃与按钮材质不渲染，band 笔刷透明化，
+        // 内容之下只剩液态皮肤；KibaActionButton 经 LocalInLiquidTopBar 渲染为液态圆钮。
+        // 按钮材质跟随折叠进度（miuix 语义：内容没滚到顶栏下时按钮是裸图标）：
+        // 玻璃底板在 collapse≥1/3 时完全成形，按钮此刻同步换成液态圆钮
+        val liquidButtons by remember(scrollBehavior) {
+            derivedStateOf { scrollBehavior.state.collapsedFraction >= 1f / 3f }
+        }
+        Box(modifier.fillMaxWidth()) {
+            LiquidTopBarSkin(
+                backdrop = LocalLiquidBackdrop.current,
+                scrollBehavior = scrollBehavior,
+                modifier = Modifier.matchParentSize(),
+            )
+            CompositionLocalProvider(LocalInLiquidTopBar provides liquidButtons) {
+                GlassTopAppBar(
+                    title = title,
+                    largeTitle = largeTitle,
+                    backdrop = null,
+                    scrollBehavior = scrollBehavior,
+                    navigationIcon = navigationIcon,
+                    actions = actions,
+                    bandBrush = Brush.verticalGradient(
+                        listOf(Color.Transparent, Color.Transparent),
+                    ),
+                )
+            }
+        }
     } else {
         GlassTopAppBar(
             title = title,

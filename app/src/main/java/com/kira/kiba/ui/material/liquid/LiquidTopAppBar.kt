@@ -5,34 +5,27 @@ package com.kira.kiba.ui.material.liquid
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.semantics.Role
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.BackdropEffectScope
 import com.kyant.backdrop.drawBackdrop
@@ -43,7 +36,6 @@ import com.kyant.backdrop.shadow.Shadow
 import com.kyant.shapes.Capsule
 import com.kyant.shapes.UnevenRoundedRectangle
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
-import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /** 顶栏单行高度：大标题、标题、按钮**全在这一行里**，折叠前后高度不变。 */
@@ -105,28 +97,26 @@ val LiquidTopBarCollapsedHeight: Dp
  * @param backdrop 液态取景层；null 时落成实色背景（无着色器/材质关闭的兜底）
  * @param scrollBehavior 驱动折叠的滚动行为；null 视为已完全收窄
  */
+/**
+ * 液态顶栏的**皮肤层**：一块随折叠进度淡入的整片玻璃（matchParentSize，
+ * 折叠态正好包住「状态栏 + 小标题栏」，底部 28dp 圆角收口）。
+ *
+ * 液态顶栏的骨架（折叠逻辑 / 大标题 / 居中小标题 / 按钮槽）是 miuix `GlassTopAppBar`
+ * （backdrop 传 null 关掉它自己的玻璃与按钮材质，band 笔刷透明化），这层皮肤垫在
+ * 骨架之下、内容之上：折叠时淡入盖住骨架的背板，液滴按钮画在皮肤之上。
+ *
+ * 不再登记 `heightOffsetLimit`——折叠量的语义（大标题区高度）归 miuix 骨架所有，
+ * 这里只读 `collapsedFraction` 驱动透明度。
+ *
+ * @param backdrop 液态取景层；null 时落成实色背景（材质关闭的兜底）
+ */
 @Composable
-fun LiquidTopAppBar(
-    title: String,
-    largeTitle: String,
+fun LiquidTopBarSkin(
     backdrop: Backdrop?,
     scrollBehavior: ScrollBehavior?,
     modifier: Modifier = Modifier,
-    navigationIcon: @Composable () -> Unit = {},
-    actions: @Composable RowScope.() -> Unit = {},
+    collapsedHeight: Dp = 56.dp,
 ) {
-    val density = LocalDensity.current
-    val collapsePx = with(density) { LiquidTopBarCollapseDistance.toPx() }
-    val state = scrollBehavior?.state
-
-    // 登记可收起量：不写这一步，nested-scroll 连接会把滚动全部吞掉（页面划不动）
-    SideEffect {
-        if (state != null && state.heightOffsetLimit != -collapsePx) {
-            state.heightOffsetLimit = -collapsePx
-        }
-    }
-
-    // 折叠进度 0..1；在 draw 阶段读取，滚动时不会重组顶栏子树
     val collapse: () -> Float = remember(scrollBehavior) {
         if (scrollBehavior == null) {
             ({ 1f })
@@ -150,101 +140,38 @@ fun LiquidTopAppBar(
         }
     }
     val glassEffects: BackdropEffectScope.() -> Unit = remember { { liquidBarEffects() } }
-    // 贴边玻璃只有底边露在屏幕内：给它一道极淡的落影，玻璃块的边界才看得出来
-    // （不加的话亮色主题下玻璃和背景几乎融成一片，看不出「一整块」）。
+    // 贴边玻璃只有底边露在屏幕内：给它一道极淡的落影，玻璃块的边界才看得出来。
     // 高光仍不加——顶部/左右都贴着屏幕边，加了会在边缘糊出一条亮线。
     val glassShadow = remember { { Shadow(radius = 16.dp, color = Color.Black.copy(alpha = 0.07f)) } }
     val glassSurface: androidx.compose.ui.graphics.drawscope.DrawScope.() -> Unit =
         remember(glassColor) { { drawRect(glassColor) } }
 
-    Box(modifier = modifier.fillMaxWidth()) {
-        // ── 玻璃块：matchParentSize 自动等于「状态栏 + 单行顶栏」的总高 ──
-        // alpha 由折叠进度驱动：置顶时完全透明（不画玻璃），滚起来后迅速补满。
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .graphicsLayer {
-                    // 折叠到 1/3 时玻璃已经完全成形，避免半透明玻璃糊在标题后面
-                    alpha = (collapse() * 3f).coerceIn(0f, 1f)
-                }
-                .then(
-                    if (backdrop != null) {
-                        Modifier.drawBackdrop(
-                            backdrop = backdrop,
-                            shape = glassShape,
-                            effects = glassEffects,
-                            highlight = null,
-                            shadow = glassShadow,
-                            onDrawSurface = glassSurface,
-                        )
-                    } else {
-                        Modifier.background(MiuixTheme.colorScheme.surface)
-                    },
-                ),
-        )
-
-        // ── 单行内容：导航图标 / 标题 / 动作按钮 ──
-        // 这里 provide 一个标记：只有真在这块液态顶栏里的按钮才用液态玻璃实现。
-        // 详情页 / 播放页 / 谱面预览页的顶栏是 miuix glass 或实色，它们的返回按钮
-        // 必须继续走 GlassIconButton，否则会出现材质混搭（详见 LocalInLiquidTopBar）。
-        CompositionLocalProvider(LocalInLiquidTopBar provides true) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .statusBarsPadding()
-                    .height(LiquidTopBarPillHeight)
-                    .padding(horizontal = LiquidTopBarHorizontalInset),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                navigationIcon()
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(start = 8.dp),
-                ) {
-                    // 标题**只有一个 Text**，靠 scale 从大标题尺寸缩到收窄尺寸。
-                    //
-                    // 之前是两个 Text（大标题淡出 + 小标题淡入）交叉淡化：两者字号不同、
-                    // 又叠在同一个起点，中间那几帧会互相叠影（用户截图指出「文字变化有叠加」）。
-                    // 改成单一元素缩放后，任何时候都只有一份字形，过渡是连续的放大/缩小动画。
-                    //
-                    // 用 graphicsLayer 缩放而不是动画 fontSize：缩放只影响绘制，
-                    // 不触发文字重排（remeasure），滚动时不掉帧；等比缩放也让位置天然居中。
-                    val collapsedFontSize = MiuixTheme.textStyles.title4.fontSize
-                    val scaleRatio = remember(collapsedFontSize) {
-                        (collapsedFontSize.value / 30f).coerceIn(0.4f, 1f)
-                    }
-                    Text(
-                        // 主 Tab 顶栏的 title 与 largeTitle 恒相等（KibaTopBar 默认后者取前者），
-                        // 所以收窄后不需要换文案，直接缩放同一段文字。
-                        text = largeTitle,
-                        modifier = Modifier
-                            .align(Alignment.CenterStart)
-                            .graphicsLayer {
-                                val f = collapse()
-                                val s = 1f + (scaleRatio - 1f) * f
-                                scaleX = s
-                                scaleY = s
-                                // 从左侧起缩，标题左对齐位置保持不变
-                                transformOrigin = TransformOrigin(0f, 0.5f)
-                                // 缩小同时轻微上收一点，像被玻璃"吸"进去
-                                translationY = -3.dp.toPx() * f
-                            },
-                        fontSize = 30.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MiuixTheme.colorScheme.onBackground,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                // 动作按钮：不再额外加 Arrangement 间距——按钮自带各 6dp 外间距，
-                // 相邻合计 12dp，与 miuix 顶栏完全一致（折叠态换按钮时不会跳间距）。
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    actions()
-                }
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            // 皮肤只盖「状态栏 + 折叠态高度」：骨架有大标题区（展开态高很多），
+            // matchParentSize 会让半透明玻璃在中途态罩住大标题（视觉 bug），固定高度杜绝
+            .statusBarsPadding()
+            .height(collapsedHeight)
+            .graphicsLayer {
+                // 折叠到 1/3 时玻璃已经完全成形，避免半透明玻璃糊在标题后面
+                alpha = (collapse() * 3f).coerceIn(0f, 1f)
             }
-        }
-    }
+            .then(
+                if (backdrop != null) {
+                    Modifier.drawBackdrop(
+                        backdrop = backdrop,
+                        shape = glassShape,
+                        effects = glassEffects,
+                        highlight = null,
+                        shadow = glassShadow,
+                        onDrawSurface = glassSurface,
+                    )
+                } else {
+                    Modifier.background(MiuixTheme.colorScheme.surface)
+                },
+            ),
+    )
 }
 
 /**

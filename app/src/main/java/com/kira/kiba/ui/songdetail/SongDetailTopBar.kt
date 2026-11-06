@@ -7,6 +7,7 @@ import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.systemBars
@@ -47,12 +48,16 @@ import com.kira.kiba.ui.material.liquid.LocalInLiquidTopBar
 import com.kira.kiba.ui.navigation.KibaActionButton
 import com.kira.kiba.ui.navigation.KibaBackAction
 import com.kira.kiba.ui.navigation.LocalGlassTopAppBarBackdrop
+import com.kira.kiba.ui.material.liquid.LiquidTopBarSkin
+import com.kira.kiba.ui.material.liquid.LocalLiquidBackdrop
+import com.kira.kiba.ui.navigation.useLiquidBar
 import com.kira.kiba.ui.share.ShareImageAction
 import kotlinx.coroutines.delay
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.TopAppBarDefaults
 import top.yukonga.miuix.kmp.glass.GlassTopAppBar
+import top.yukonga.miuix.kmp.glass.GlassTopAppBarDefaults
 import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
 import top.yukonga.miuix.kmp.icon.glass.*
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -174,10 +179,21 @@ fun SongDetailTopBarSlot(
 
     // 液态玻璃模式下：封面还在时按钮保持 miuix（裸图标压在封面上才对），
     // 折叠后顶栏变成一条玻璃带 → 按钮随之换成液态玻璃圆钮（见 KibaActionButton）。
+    // 液态材质下：收缩态（封面消失）顶栏的玻璃底板换成液态玻璃（其余材质保持原 miuix 玻璃）
+    val liquidSkin = useLiquidBar()
     val liquidActions = LocalMaterialFamily.current == MaterialFamily.LIQUID &&
         LocalAdvancedMaterialEnabled.current && collapsed
 
-    CompositionLocalProvider(LocalInLiquidTopBar provides liquidActions) {
+    Box {
+        if (liquidSkin) {
+            // 液态皮肤垫在最底层：收缩态封面淡出后由它接管顶栏底板
+            LiquidTopBarSkin(
+                backdrop = LocalLiquidBackdrop.current,
+                scrollBehavior = scrollBehavior,
+                collapsedHeight = TopAppBarDefaults.CollapsedHeight,
+            )
+        }
+        CompositionLocalProvider(LocalInLiquidTopBar provides liquidActions) {
         GlassTopAppBar(
             title = current?.title ?: "",
             largeTitle = current?.title ?: "",
@@ -185,8 +201,13 @@ fun SongDetailTopBarSlot(
             titleColor = onCoverColor,
             largeTitleColor = onCoverColor,
             subtitleColor = onCoverColor.copy(alpha = 0.72f),
-            backdrop = LocalGlassTopAppBarBackdrop.current,
+            backdrop = if (liquidSkin) null else LocalGlassTopAppBarBackdrop.current,
             scrollBehavior = scrollBehavior,
+            bandBrush = if (liquidSkin) {
+                Brush.verticalGradient(listOf(Color.Transparent, Color.Transparent))
+            } else {
+                GlassTopAppBarDefaults.bandBrush(MiuixTheme.colorScheme.surface)
+            },
             navigationIcon = { KibaBackAction(onClick = onBack, tint = onCoverColor) },
             actions = {
                 KibaActionButton(onClick = {
@@ -236,6 +257,7 @@ fun SongDetailTopBarSlot(
             // 表现成「渐隐替换瞬间卡一下再继续流畅」；标题本身有位移+渐隐，无需模糊。
             largeTitleBlurRadius = 0.dp,
         )
+        }
     }
 }
 

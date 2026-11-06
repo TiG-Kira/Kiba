@@ -95,7 +95,7 @@ class DampedDragAnimation(
                 snapJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
                     position.snapTo(pendingTarget)
                 }
-                scope.launch { press.animateTo(1f, spring(1f, Spring.StiffnessMediumLow)) }
+                scope.launch { press.animateTo(1f, spring(1f, Spring.StiffnessHigh)) }
             },
             onDrag = { change, dragAmount ->
                 change.consume()
@@ -165,10 +165,10 @@ class DampedDragAnimation(
             press.animateTo(0f, spring(1f, Spring.StiffnessMediumLow))
             return
         }
-        press.animateTo(1f, spring(1f, Spring.StiffnessMediumLow))
+        press.animateTo(1f, spring(1f, Spring.StiffnessHigh))
         position.animateTo(
             coerced,
-            spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow),
+            spring(dampingRatio = 1f, stiffness = Spring.StiffnessHigh),
         )
         // 按住模式（按下其它 tab 触发的迁移）：手指还没抬，玻璃保持；
         // 松手后状态流会以 holdPress=false 再触发一次（position 已到位，
