@@ -7,11 +7,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.Alignment
@@ -150,9 +153,10 @@ fun LiquidTopBarSkin(
         modifier = modifier
             .fillMaxWidth()
             // 皮肤只盖「状态栏 + 折叠态高度」：骨架有大标题区（展开态高很多），
-            // matchParentSize 会让半透明玻璃在中途态罩住大标题（视觉 bug），固定高度杜绝
-            .statusBarsPadding()
-            .height(collapsedHeight)
+            // matchParentSize 会让半透明玻璃在中途态罩住大标题（视觉 bug），固定高度杜绝。
+            // 高度必须**含**状态栏且从屏幕顶边起画——玻璃要包住通知栏（statusBarsPadding
+            // 会让玻璃从状态栏下方才开始，顶上露出一条内容，实证踩过）
+            .height(collapsedHeight + WindowInsets.statusBars.asPaddingValues().calculateTopPadding())
             .graphicsLayer {
                 // 折叠到 1/3 时玻璃已经完全成形，避免半透明玻璃糊在标题后面
                 alpha = (collapse() * 3f).coerceIn(0f, 1f)
