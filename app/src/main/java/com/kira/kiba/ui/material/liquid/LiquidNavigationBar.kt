@@ -8,6 +8,9 @@ import androidx.compose.animation.core.EaseOut
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -41,6 +44,7 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.style.TextOverflow
@@ -346,7 +350,18 @@ fun LiquidNavigationBar(
                 .then(interactiveHighlight.modifier)
                 .height(height)
                 .fillMaxWidth()
-                .padding(4f.dp),
+                .padding(4f.dp)
+                // 按下立刻浮现玻璃（在当前选中的 tag 上）：不等抬起后的状态流。
+                // 抬手后延迟兜底回落——若触发了换页，animateToValue 的
+                // press.animateTo(1f) 会抢占回落，玻璃保持到飞到位再淡出。
+                .pointerInput(damped) {
+                    awaitEachGesture {
+                        awaitFirstDown()
+                        damped.pressDown()
+                        waitForUpOrCancellation()
+                        damped.pressUpDelayed()
+                    }
+                },
             verticalAlignment = Alignment.CenterVertically,
         ) {
             items.forEachIndexed { i, item ->

@@ -124,6 +124,28 @@ class DampedDragAnimation(
     }
 
     /**
+     * 按下（任意位置）立刻浮现玻璃：快速把 pressProgress 拉满。
+     * 玻璃浮现在 position 的当前值处（= 当前选中的 tab），随后点击换页 /
+     * 拖动都从这一点出发——「液滴从当前 tag 诞生」，不等抬起后的状态流。
+     */
+    fun pressDown() {
+        scope.launch { press.animateTo(1f, spring(1f, Spring.StiffnessHigh)) }
+    }
+
+    /**
+     * 抬手兜底回落：延迟 [delayMs] 再淡出。
+     * 若这次抬手触发了换页，currentIndex 流的 animateToValue 会以
+     * press.animateTo(1f) 抢占本回落（同一 Animatable 的并发 animateTo 自动互斥），
+     * 玻璃保持到飞到位再淡出；点击当前 tab / 无后续时按延迟安静淡出。
+     */
+    fun pressUpDelayed(delayMs: Long = 280L) {
+        scope.launch {
+            kotlinx.coroutines.delay(delayMs)
+            press.animateTo(0f, spring(1f, Spring.StiffnessMediumLow))
+        }
+    }
+
+    /**
      * 程序化切换 / 松手吸附：玻璃浮现（press→1）→ 位置到位 → 玻璃淡出（press→0）。
      * visibilityThreshold 很小（demo 用 0.001f），跨一个 tab 就算"动了"。
      */

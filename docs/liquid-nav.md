@@ -191,6 +191,12 @@ LaunchedEffect(damped) {
 
 三条路径最终都汇入同一条流，动画与 `onSelect` 上报各只发生一次。
 
+**按下立刻浮现**（对齐酷安：玻璃从当前 tag 诞生）：底栏本体另挂一个
+`awaitEachGesture { awaitFirstDown → pressDown(); waitForUpOrCancellation → pressUpDelayed() }`——
+down 时刻 `press.animateTo(1f, StiffnessHigh)` 立即让玻璃在当前选中 tab 浮现，
+不等抬起后的状态流。抬手后 280ms 兜底回落；若触发了换页，`animateToValue` 的
+`press.animateTo(1f)` 会抢占回落（同一 Animatable 并发互斥），玻璃保持到飞到位再淡出。
+
 ## 两态切换：灰色提示 ↔ 液态玻璃（同一块胶囊）
 
 胶囊是**常驻**的，而且**不做显隐、不拆成两个图层**——灰色提示与液态玻璃是
