@@ -211,7 +211,7 @@ fun LiquidNavigationBar(
                     reportedIndex = index
                     onSelect(index)
                 }
-                damped.animateToValue(index.toFloat(), holdPressUntilUp)
+                damped.animateToValue(index.toFloat()) { holdPressUntilUp }
             }
     }
 
@@ -271,7 +271,7 @@ fun LiquidNavigationBar(
         {
             scaleX = damped.scaleX
             scaleY = damped.scaleY
-            val velocity = damped.velocity / 10f
+            val velocity = damped.stretchVelocity / 10f
             scaleX /= 1f - (velocity * 0.75f).fastCoerceIn(-0.2f, 0.2f)
             scaleY *= 1f - (velocity * 0.25f).fastCoerceIn(-0.2f, 0.2f)
         }
@@ -279,11 +279,18 @@ fun LiquidNavigationBar(
     val pillSurface: DrawScope.() -> Unit = remember(isLightTheme, damped) {
         {
             val progress = damped.pressProgress
+            // 静止 = 灰色提示底（酷安同款）；按住/飞行 = 明显的白玻璃气泡——
+            // 透镜在当前 tab 上正好对着图标、折射看不出来，没有这层白底
+            // 「按住已选 tag」就完全没有玻璃感（用户实证），白底让它在任何
+            // tab 上都是同一颗清晰的液滴
             drawRect(
                 if (isLightTheme) Color.Black.copy(0.1f) else Color.White.copy(0.1f),
                 alpha = 1f - progress,
             )
-            drawRect(Color.Black.copy(alpha = 0.03f * progress))
+            drawRect(
+                if (isLightTheme) Color.White.copy(0.38f) else Color.White.copy(0.14f),
+                alpha = progress,
+            )
         }
     }
     // Row B 录制层的图标随按压鼓起（demo 的 LocalLiquidBottomTabScale 口径）
@@ -409,21 +416,29 @@ fun LiquidNavigationBar(
                                 break
                             }
                         }
-                        // 松手：吸附最近 tab（含 down 迁移未完成的场景）；
-                        // holdPress 复位后流会以 holdPress=false 再触发，玻璃淡成选中态
+                        // 松手分流：只有**拖动过**才按视觉位置吸附——
+                        // 纯点按（含快速点按）绝不能重发吸附：此刻迁移动画还在飞，
+                        // value 是半程点，round 后会把目标改成中途 tag 并取消在飞的
+                        // 动画 → 页面切到动画停掉的位置（快速点切错页的根因）。
+                        // 纯点按时 navSettle 已在 down 时指向目标 tab，放行动画播完：
+                        // 页面在 down 时已切好，到位后 hold 已释放、玻璃自动淡出。
                         holdPressUntilUp = false
-                        // 吸附目标用**当前视觉位置**：点击迁移场景 pendingTarget 已与
-                        // 动画终点对齐，拖动场景它与视觉同步，两者都成立；但迁移若被
-                        // 按住打断（手指按住时动画未完），value 才是唯一事实
-                        val target = damped.value.fastRoundToInt()
-                            .fastCoerceIn(0, items.size - 1)
                         bridge.offsetSnapJob?.cancel()
                         bridge.offsetSnapJob = null
                         bridge.offsetAnimation?.let { a ->
                             scope.launch { a.animateTo(0f, spring(1f, 300f, 0.5f)) }
                         }
-                        navSettle = NavSettle(target, navSettle.serial + 1)
-                        damped.pressUpDelayed()
+                        if (dragging) {
+                            navSettle = NavSettle(
+                                damped.value.fastRoundToInt().fastCoerceIn(0, items.size - 1),
+                                navSettle.serial + 1,
+                            )
+                        } else if (!damped.inFlight) {
+                            // 没有动画在飞（点在当前 tab / 迁移已完成才松手）：兜底淡出。
+                            // 有动画在飞时不调——延迟淡出会在飞行途中把玻璃淡掉，
+                            // 淡出由动画收尾统一负责
+                            damped.pressUpDelayed()
+                        }
                     }
                 },
             verticalAlignment = Alignment.CenterVertically,
