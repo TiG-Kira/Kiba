@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import com.kira.kiba.core.account.DivingFishAccount
 import com.kira.kiba.core.maimai.QrScoreImport
 import com.kira.kiba.core.state.KibaState
+import com.kira.kiba.core.utils.SpUtil
 import com.kira.kiba.ui.common.SectionTitle
 import com.kira.kiba.ui.common.pageContentPadding
 import kotlinx.coroutines.launch
@@ -54,8 +55,9 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  * 1. 官方登录二维码：微信公众号「舞萌 DX」内生成的 SGWCMAID 串，用于拉取官方成绩；
  * 2. 水鱼成绩导入令牌：水鱼网页版「个人资料」页查看/设置，用于向水鱼上传。
  *
- * 隐私铁律：二维码与令牌只存在于本页临时状态里，导入完成（无论成败）立即清空，
+ * 隐私铁律：二维码只存在于本页临时状态里，导入完成（无论成败）立即清空，
  * 不写 SP / 不落盘 / 日志只出现二维码尾部 4 字符。
+ * **导入令牌例外**：用户要求它常驻本机并可随时修改（2.3.0 起存私有 SP）。
  */
 @Composable
 fun QrImportScreen(scrollBehavior: ScrollBehavior) {
@@ -65,7 +67,8 @@ fun QrImportScreen(scrollBehavior: ScrollBehavior) {
     val account by DivingFishAccount.state.collectAsState()
 
     var qrText by remember { mutableStateOf("") }
-    var importToken by remember { mutableStateOf("") }
+    // 导入令牌常驻本地（可改可清）：以前每次导入都要回网页翻一遍
+    var importToken by remember { mutableStateOf(SpUtil.getDivingFishImportToken()) }
     var importing by remember { mutableStateOf(false) }
     var showCamera by remember { mutableStateOf(false) }
 
@@ -243,16 +246,43 @@ fun QrImportScreen(scrollBehavior: ScrollBehavior) {
                         Column(modifier = Modifier.padding(16.dp)) {
                             TextField(
                                 value = importToken,
-                                onValueChange = { importToken = it },
+                                onValueChange = {
+                                    importToken = it
+                                    // 边输边存：用户粘完就切走也不会丢
+                                    SpUtil.setDivingFishImportToken(it)
+                                },
                                 label = "导入令牌（OAuth 已授权可留空）",
                                 useLabelAsPlaceholder = true,
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth(),
                             )
                             Spacer(Modifier.height(8.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                TextButton(
+                                    text = "从本机清除令牌",
+                                    onClick = {
+                                        importToken = ""
+                                        SpUtil.setDivingFishImportToken("")
+                                        logs.add("已清除本机保存的导入令牌")
+                                    },
+                                    enabled = importToken.isNotBlank() && !importing,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                TextButton(
+                                    text = "清除运行日志",
+                                    onClick = { logs.clear() },
+                                    enabled = logs.isNotEmpty() && !importing,
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                            Spacer(Modifier.height(8.dp))
                             Text(
-                                text = "令牌等同上传权限，请勿透露给他人；本应用只在本次导入的内存中使用它，" +
-                                    "不保存到本机（下次导入需重新粘贴）。已 OAuth 授权登录时此栏可留空。",
+                                text = "令牌等同上传权限，请勿透露给他人。它会**保存在本机**（私有目录，仅本 App 可读），" +
+                                    "下次打开本页自动带出，可随时改或点上面「从本机清除令牌」；" +
+                                    "解绑水鱼账号时也会一并清空。已 OAuth 授权登录时此栏可留空。",
                                 style = MiuixTheme.textStyles.footnote2,
                                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                             )

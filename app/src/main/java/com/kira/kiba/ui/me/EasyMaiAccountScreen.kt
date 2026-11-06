@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -22,9 +23,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.kira.kiba.core.account.LxnsAccount
 import com.kira.kiba.core.maimai.MaiQrGateway
 import com.kira.kiba.core.maimai.QrScoreImport
 import com.kira.kiba.core.state.KibaState
+import com.kira.kiba.core.utils.SpUtil
 import com.kira.kiba.ui.common.SectionTitle
 import com.kira.kiba.ui.common.pageContentPadding
 import java.text.SimpleDateFormat
@@ -68,6 +71,10 @@ fun EasyMaiAccountScreen(scrollBehavior: ScrollBehavior) {
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var syncing by remember { mutableStateOf(false) }
+    // 两个查分器各自独立判断：只登录其中一个时，对应按钮置灰并说明原因
+    val lxnsState by LxnsAccount.state.collectAsState()
+    val lxnsBound = lxnsState.bound || SpUtil.isLxnsLoggedIn()
+    val dfLoggedIn = SpUtil.isDivingFishLoggedIn()
     val syncLogs = remember { mutableListOf<String>() }
 
     fun refreshState() {
@@ -102,20 +109,26 @@ fun EasyMaiAccountScreen(scrollBehavior: ScrollBehavior) {
         }
     }
 
-    fun doManualSync() {
+    /** 手动同步：把账号云端已同步的成绩写进指定查分器（水鱼 / 落雪）。 */
+    fun doManualSync(target: SyncTarget) {
         if (syncing) return
         syncing = true
         syncLogs.clear()
+        message = null
         scope.launch {
-            QrScoreImport.syncGatewayToDivingFish { syncLogs.add(it) }
+            val result = when (target) {
+                SyncTarget.DIVING_FISH -> QrScoreImport.syncGatewayToDivingFish { syncLogs.add(it) }
+                SyncTarget.LXNS -> QrScoreImport.syncGatewayToLxns { syncLogs.add(it) }
+            }
+            result
                 .onSuccess {
-                    message = "手动同步完成：$it 条记录已上传水鱼"
+                    message = "手动同步完成：$it 条记录已上传${target.label}"
                     refreshState()
                     // 立刻刷新查分器账户态：拉最新成绩/评分，防止回到「我」页时
                     // 账户卡还挂着旧的错误提示/过期缓存
                     KibaState.refreshRecords()
                 }
-                .onFailure { message = "同步失败：${it.message}" }
+                .onFailure { message = "同步到${target.label}失败：${it.message}" }
             syncing = false
         }
     }
@@ -233,16 +246,41 @@ fun EasyMaiAccountScreen(scrollBehavior: ScrollBehavior) {
                     }
                 }
                 item(key = "sync_button") {
-                    Button(
-                        colors = ButtonDefaults.buttonColorsPrimary(),
-                        onClick = { doManualSync() },
-                        modifier = Modifier.fillMaxWidth(),
-                        enabled = !syncing,
-                    ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            colors = ButtonDefaults.buttonColorsPrimary(),
+                            onClick = { doManualSync(SyncTarget.DIVING_FISH) },
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = !syncing && dfLoggedIn,
+                        ) {
+                            Text(
+                                text = if (syncing) "正在同步…" else "手动同步到水鱼",
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                            )
+                        }
+                        Button(
+                            colors = ButtonDefaults.buttonColorsPrimary(),
+                            onClick = { doManualSync(SyncTarget.LXNS) },
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = !syncing && lxnsBound,
+                        ) {
+                            Text(
+                                text = if (syncing) "正在同步…" else "手动同步到落雪",
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                            )
+                        }
                         Text(
-                            text = if (syncing) "正在同步…" else "手动同步到水鱼",
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White,
+                            text = when {
+                                !dfLoggedIn && !lxnsBound ->
+                                    "两个查分器都还没登录：请先到「我」页登录水鱼或落雪，再回来同步。"
+                                !dfLoggedIn -> "水鱼未登录，只能同步到落雪。"
+                                !lxnsBound -> "落雪未登录，只能同步到水鱼。"
+                                else -> "水鱼 / 落雪都已登录，可以任选其一或都同步。"
+                            },
+                            style = MiuixTheme.textStyles.footnote2,
+                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                         )
                     }
                 }
@@ -273,9 +311,11 @@ fun EasyMaiAccountScreen(scrollBehavior: ScrollBehavior) {
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
                             Text(
-                                text = "「手动同步」把账号云端已同步的成绩（上次二维码导入的数据）" +
-                                    "拉取并上传到水鱼，无需重新扫码。上传凭证沿用二维码导入页的" +
-                                    "设置（OAuth 优先，其次导入令牌）。",
+                                text = "「手动同步」把账号云端已保存的成绩（官方 APP 上传过的排行、" +
+                                    "上次二维码导入的数据都算）拉取下来写进查分器，无需重新扫码、无需 VPN。\n" +
+                                    "· 到水鱼：凭证沿用 OAuth 授权，其次本机保存的导入令牌；\n" +
+                                    "· 到落雪：需已登录落雪账号（授权或 API Key），写入接口为 " +
+                                    "POST /user/maimai/player/scores，会自动把水鱼 FDX 记号转成落雪 FSD。",
                                 style = MiuixTheme.textStyles.footnote2,
                                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                             )
@@ -309,4 +349,10 @@ fun EasyMaiAccountScreen(scrollBehavior: ScrollBehavior) {
             }
         }
     }
+}
+
+/** 手动同步的目标查分器。 */
+private enum class SyncTarget(val label: String) {
+    DIVING_FISH("水鱼"),
+    LXNS("落雪"),
 }

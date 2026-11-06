@@ -78,6 +78,9 @@ object LxnsAccount {
         State(
             bound = SpUtil.isLxnsLoggedIn(),
             name = SpUtil.getLxnsName(),
+            // 冷启动先用上次探活的结果：探活是网络调用，跑完之前界面不该对已绑定玩家的
+            // 账号报「尚未绑定玩家」（false 是默认值，会造成假告警）。
+            playerFound = SpUtil.getLxnsPlayerFound(),
             oauth = SpUtil.hasLxnsOAuth(),
         ),
     )
@@ -119,6 +122,7 @@ object LxnsAccount {
         _state.value = State(
             bound = SpUtil.isLxnsLoggedIn(),
             name = SpUtil.getLxnsName(),
+            playerFound = SpUtil.getLxnsPlayerFound(),
             error = e.message ?: "落雪授权登录失败",
             oauth = SpUtil.hasLxnsOAuth(),
         )
@@ -157,6 +161,9 @@ object LxnsAccount {
                 name = SpUtil.getLxnsName(),
                 loading = false,
                 error = e.message ?: "落雪 API Key 验证失败",
+                // 校验失败只说明凭据没换成，不代表玩家没了：沿用上次探活结果，
+                // 否则界面会顺手报一句「账号还没有绑定玩家」（两个不相关的错误叠在一起）
+                playerFound = SpUtil.getLxnsPlayerFound(),
             )
             throw e
         }
@@ -172,6 +179,7 @@ object LxnsAccount {
         SpUtil.saveLxnsApiKey("")
         SpUtil.saveLxnsName("")
         SpUtil.clearLxnsFriendCodes()
+        SpUtil.setLxnsPlayerFound(true)
         _state.value = State()
     }
 
@@ -197,9 +205,36 @@ object LxnsAccount {
                 _state.value = State(
                     bound = true,
                     name = SpUtil.getLxnsName(),
+                    // 探活失败（网络抖动 / 限流）不等于玩家没绑定：沿用上次结果
+                    playerFound = SpUtil.getLxnsPlayerFound(),
                     error = e.message,
                     oauth = SpUtil.hasLxnsOAuth(),
                 )
+            }
+    }
+
+    /**
+     * 重新探活（不重建凭据）：给「从落雪网页同步完回来」的用户一个立刻复核的入口。
+     *
+     * 与 [restore] 的区别只是语义：探活成功会刷新昵称 / 好友码 / playerFound，
+     * 失败不动已登录状态（网络抖动不该把用户踢下线）。
+     */
+    suspend fun refreshStatus() {
+        if (!SpUtil.isLxnsLoggedIn()) return
+        _state.value = _state.value.copy(loading = true, error = null)
+        runCatching { probe() }
+            .onSuccess { probe ->
+                if (probe.name.isNotBlank()) SpUtil.saveLxnsName(probe.name)
+                _state.value = State(
+                    bound = true,
+                    name = probe.name.ifBlank { SpUtil.getLxnsName() },
+                    playerFound = probe.playerFound,
+                    oauth = SpUtil.hasLxnsOAuth(),
+                )
+            }
+            .onFailure { e ->
+                Log.w(TAG, "lxns refreshStatus failed", e)
+                _state.value = _state.value.copy(loading = false, error = e.message)
             }
     }
 
@@ -231,6 +266,7 @@ object LxnsAccount {
             }
         }
         authError?.let { throw it }
+        SpUtil.setLxnsPlayerFound(found)
         return Probe(
             name = name.ifBlank { SpUtil.getLxnsName() }.ifBlank { "落雪玩家" },
             playerFound = found,

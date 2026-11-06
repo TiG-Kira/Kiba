@@ -16,8 +16,8 @@ import com.kira.kiba.core.utils.CoverFetcher
 import com.kira.kiba.core.utils.CoverSources
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlin.math.floor
 import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 
 /**
  * Best 50 图片生成器 —— 逐行移植自 KibaBot（KilluaSakata/Kiba）
@@ -700,26 +700,77 @@ object Best50ImageBuilder {
     }
 
     /**
-     * 上游 computeRa：b50 走 spp=True 的 baseRa 分档。
-     * `floor(ds × min(100.5, 达成率)/100 × baseRa)`
+     * 上游 computeRa —— **按机台口径**：`floor(ds × min(100.5, 达成率)/100 × 系数)`。
+     *
+     * 系数表以达成率（万分之一为单位）分档，与上游 MaimaiData 的
+     * `ConvertUtils.achievementToRating` 逐档对齐：
+     *
+     * | 达成率 | 系数 |
+     * |---|---|
+     * | ≥100.5% | 22.4 |
+     * | 100.4999% | 22.2 |
+     * | 100.0% ~ 100.4998% | 21.6 |
+     * | 99.9999% | 21.4 |
+     * | 99.5% ~ 99.9998% | 21.1 |
+     * | 99.0% ~ 99.4999% | 20.8 |
+     * | 98.9999% | 20.6 |
+     * | 98.0% ~ 98.9998% | 20.3 |
+     * | 97.0% ~ 97.9999% | 20.0 |
+     * | 96.9999% | 17.6 |
+     * | 94.0% ~ 96.9998% | 16.8 |
+     * | 90.0% ~ 93.9999% | 15.2 |
+     * | 80.0% ~ 89.9999% | 13.6 |
+     * | 79.9999% | 12.8 |
+     * | 75.0% ~ 79.9998% | 12.0 |
+     * | 70.0% ~ 74.9999% | 11.2 |
+     * | 60.0% ~ 69.9999% | 9.6 |
+     * | 50.0% ~ 59.9999% | 8.0 |
+     * | 40.0% ~ 49.9999% | 6.4 |
+     * | 30.0% ~ 39.9999% | 4.8 |
+     * | 20.0% ~ 29.9999% | 3.2 |
+     * | 10.0% ~ 19.9999% | 1.6 |
+     * | <10% | 0 |
+     *
+     * 历史坑（2.3.0 修）：旧实现把整张表**错位了一档**——S(97~98) 给了 16.8（应为 20.0）、
+     * SSS(100) 给了 21.1（应为 21.6）、≥100.5 只给到 21.6，还漏了 100.4999 / 98.9999
+     * 这类「差一点点」的档位。结果机台上分并上传后，Best 50 里每首歌的 ra 与机台显示的
+     * 对不上（差 1~8 点不等），汇总 Rating 也跟着偏小 —— 用户反馈第 4 条。
+     *
+     * @param spp 兼容旧调用点的占位参数（旧实现用它切换「旧曲」另一套系数）。
+     *   机台对旧曲 / 新曲**用同一张表**，所以这里不再区分。
      */
+    @Suppress("UNUSED_PARAMETER")
     fun computeRa(ds: Double, achievement: Double, spp: Boolean): Int {
+        // 换算成「万分之一百分比」整数档位，与机台 / 上游一致（避免浮点边界踩错档）
+        val achi = (achievement * 10_000).roundToLong().toInt()
         val baseRa = when {
-            achievement < 50 -> 0.0
-            achievement < 60 -> if (spp) 8.0 else 5.0
-            achievement < 70 -> if (spp) 9.6 else 6.0
-            achievement < 75 -> if (spp) 11.2 else 7.0
-            achievement < 80 -> if (spp) 12.0 else 7.5
-            achievement < 90 -> if (spp) 13.6 else 8.5
-            achievement < 94 -> if (spp) 15.2 else 9.5
-            achievement < 97 -> if (spp) 16.8 else 10.5
-            achievement < 98 -> if (spp) 20.0 else 12.5
-            achievement < 99 -> if (spp) 20.0 else 12.7
-            achievement < 99.5 -> if (spp) 20.8 else 13.0
-            achievement < 100 -> if (spp) 21.1 else 13.2
-            achievement < 100.5 -> if (spp) 21.6 else 13.5
-            else -> if (spp) 22.4 else 14.0
+            achi >= 1_005_000 -> 22.4
+            achi == 1_004_999 -> 22.2
+            achi >= 1_000_000 -> 21.6
+            achi == 999_999 -> 21.4
+            achi >= 995_000 -> 21.1
+            achi >= 990_000 -> 20.8
+            achi == 989_999 -> 20.6
+            achi >= 980_000 -> 20.3
+            achi >= 970_000 -> 20.0
+            achi == 969_999 -> 17.6
+            achi >= 940_000 -> 16.8
+            achi >= 900_000 -> 15.2
+            achi >= 800_000 -> 13.6
+            achi == 799_999 -> 12.8
+            achi >= 750_000 -> 12.0
+            achi >= 700_000 -> 11.2
+            achi >= 600_000 -> 9.6
+            achi >= 500_000 -> 8.0
+            achi >= 400_000 -> 6.4
+            achi >= 300_000 -> 4.8
+            achi >= 200_000 -> 3.2
+            achi >= 100_000 -> 1.6
+            else -> 0.0
         }
-        return floor(ds * (minOf(100.5, achievement) / 100.0) * baseRa).toInt()
+        if (baseRa <= 0.0 || ds <= 0.0) return 0
+        val capped = minOf(1_005_000, achi)
+        // achi 单位是「万分之一百分比」 → /1e4 得百分比，再 /100 得比例
+        return (capped.toDouble() * ds * baseRa / 1_000_000.0).toInt()
     }
 }

@@ -77,6 +77,8 @@ fun MeScreen(
     onOpenFavorites: () -> Unit,
     onOpenMachineLogin: () -> Unit,
     onOpenGatewayAccount: () -> Unit,
+    onOpenMachineUpdate: () -> Unit,
+    onOpenQrImport: () -> Unit,
     onOpenRatingCalc: () -> Unit,
     onOpenVersionMap: () -> Unit,
     onOpenHotCharts: () -> Unit,
@@ -209,12 +211,14 @@ fun MeScreen(
             item(key = "checker_card") {
                 Card(modifier = (Modifier.fillMaxWidth())) {
                     ArrowPreference(
+                        // 水鱼卡只看**水鱼凭据**：落雪源下 account.bound 也会是 true（成绩来自落雪），
+                        // 拿它判断会把落雪账户显示成「当前水鱼账户」。
                         title = when {
-                            account.bound -> "重新登录水鱼账户"
+                            account.dfLoggedIn -> "重新登录水鱼账户"
                             else -> "水鱼账户登录"
                         },
                         summary = when {
-                            account.bound ->
+                            account.dfLoggedIn ->
                                 "当前水鱼账户：${account.nickname.ifBlank { "水鱼用户" }}（Rating ${account.rating}）· 点击重新登录"
                             else -> "水鱼源专用：支持水鱼账号密码登录（OAuth 授权已暂时停用）"
                         },
@@ -235,6 +239,31 @@ fun MeScreen(
                         startAction = { PrefIcon(MiuixGlassIcons.Regular.CloudFill) },
                         onClick = onOpenLxnsLogin,
                     )
+                    // ── 查分器工具（2.3.0 起从设置页整组迁到这里：登录态与工具入口同一屏）──
+                    ArrowPreference(
+                        title = "机台成绩更新（VPN）",
+                        summary = "在机台 WiFi 下抓包，按各游戏当前选的数据源上传（水鱼 / 落雪）",
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Update) },
+                        onClick = onOpenMachineUpdate,
+                    )
+                    ArrowPreference(
+                        title = "二维码导入成绩",
+                        summary = "免 VPN：先到工具箱「接入 Easymai 账号」，再用官方登录二维码同步成绩",
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Scan) },
+                        onClick = onOpenQrImport,
+                    )
+                    if (maimaiSource == ScoreSource.LXNS || chuniSource == ScoreSource.LXNS) {
+                        // 落雪官方的同步方式是「代理同步」：把 WLAN 代理指向他们的服务器，
+                        // 由落雪代抓。它和本 App 的本地 VPN 抢同一块网络接管，只能二选一，
+                        // 所以这里只做备选入口 —— App 内抓包走不通时用户还有路可走。
+                        ArrowPreference(
+                            title = "落雪官方同步（备选）",
+                            summary = "App 内抓包走不通时用这条：把 WLAN 代理设为 proxy.maimai.lxns.net:8080，" +
+                                "由落雪服务器代抓（与 App 的 VPN 不能同时开）",
+                            startAction = { PrefIcon(MiuixGlassIcons.Regular.CloudFill) },
+                            onClick = { BrowserJump.openUrl(context, LxnsAccount.SYNC_URL) },
+                        )
+                    }
                     if (!isChunithm) {
                         ArrowPreference(
                             title = "成绩查询",
@@ -352,7 +381,7 @@ fun MeScreen(
                             onClick = onOpenDxConverter,
                         )
                     }
-                    if (account.bound) {
+                    if (account.dfLoggedIn) {
                         ArrowPreference(
                             title = "退出水鱼登录",
                             summary = "清除本机水鱼成绩缓存与登录凭证；远端授权可在 auth.diving-fish.com/apps 撤销",

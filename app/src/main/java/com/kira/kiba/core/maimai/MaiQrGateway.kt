@@ -425,14 +425,46 @@ data class GatewayDataResponse(
                     if (!response.isSuccessful) {
                         throw IllegalStateException("拉取同步数据失败（HTTP ${response.code}）：${text.take(120)}")
                     }
-                // 注意：score 端点响应体同样是扁平结构（records/playCount 在根部）。
-                val parsed = runCatching {
-                    json.decodeFromString(GatewayDataResponse.serializer(), text)
-                }.getOrElse { throw IllegalStateException("拉取响应无法解析：${text.take(120)}") }
-                parsed.records
+                    // score 端点实际见过**两种**壳：扁平（records 在根部）与
+                    // `{code, data:{records}}` 包裹。只认扁平会让「账号云端明明有成绩」
+                    // 的账户拿到空列表（用户反馈第 5 条：官方 APP 上传过 rating 却同步不到）。
+                    extractRecords(text)
                 }
             }
         }
+
+    /**
+     * 从 score 端点响应里取 records，兼容三种壳：
+     * 1. 扁平：`{message, records:[...], playCount}`；
+     * 2. 包裹：`{code:1, data:{records:[...]}}`；
+     * 3. 数组：顶层直接就是 `[...]`。
+     *
+     * 另外把 `scores` / `data` 当 records 的别名校验一遍 —— 服务端换过字段名，
+     * 空列表会直接表现成「账号云端暂无同步数据」，很难排查。
+     */
+    internal fun extractRecords(text: String): List<kotlinx.serialization.json.JsonElement> {
+        val root = runCatching {
+            json.parseToJsonElement(text)
+        }.getOrNull() ?: throw IllegalStateException("拉取响应无法解析：${text.take(120)}")
+
+        fun recordsOf(obj: kotlinx.serialization.json.JsonObject): List<kotlinx.serialization.json.JsonElement>? {
+            for (key in listOf("records", "scores", "data")) {
+                when (val v = obj[key]) {
+                    is kotlinx.serialization.json.JsonArray -> return v.toList()
+                    is kotlinx.serialization.json.JsonObject ->
+                        if (key == "data") recordsOf(v)?.let { return it }
+                    else -> Unit
+                }
+            }
+            return null
+        }
+
+        return when (root) {
+            is kotlinx.serialization.json.JsonArray -> root.toList()
+            is kotlinx.serialization.json.JsonObject -> recordsOf(root) ?: emptyList()
+            else -> emptyList()
+        }
+    }
 
     // ── 工具 ──
 }

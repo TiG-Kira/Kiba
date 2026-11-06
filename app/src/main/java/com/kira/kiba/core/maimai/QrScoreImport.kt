@@ -2,6 +2,8 @@ package com.kira.kiba.core.maimai
 
 import android.util.Log
 import com.kira.kiba.core.account.DivingFishAccount
+import com.kira.kiba.core.network.LxnsAuth
+import com.kira.kiba.core.network.LxnsUploader
 import com.kira.kiba.core.utils.SpUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -40,6 +42,8 @@ import java.util.concurrent.TimeUnit
  *
  * 隐私铁律：二维码字符串只作为**函数参数**在内存中流转，任何环节都不写 SP / 日志明文 /
  * 数据库；更新完成后调用方清空输入框状态，二维码数据即随 GC 丢弃（「用完即毁」）。
+ * 例外只有一项：**水鱼导入令牌**（[SpUtil.getDivingFishImportToken]）—— 它是可随时重置的
+ * 写凭据、不是账号口令，用户明确要求常驻本机并可修改，因此随 SP 保存。
  * 水鱼登录态非必须：有账号密码 jwt 时会作为 dfCode 传给解析服务（服务端可能用于附加
  * 校验），OAuth 短 token 不传。
  */
@@ -317,7 +321,10 @@ object QrScoreImport {
      * 全都没有 → 返回 null（调用方报错，引导用户去绑定 OAuth 或填令牌）。
      */
     private suspend fun resolveUploadCredential(manualToken: String?): UploadCred? {
-        val manual = manualToken?.trim().orEmpty()
+        // 参数为空时回落到本机保存的导入令牌（2.3.0 起令牌常驻 SP，用户不用每次重粘）
+        val manual = manualToken?.trim()
+            .takeUnless { it.isNullOrBlank() }
+            ?: SpUtil.getDivingFishImportToken().trim()
         if (manual.isNotBlank()) {
             return UploadCred(DF_LEGACY_API, "import-token", manual, "导入令牌")
         }
@@ -390,6 +397,122 @@ object QrScoreImport {
 
         SpUtil.setQrGatewayLastSyncAt(System.currentTimeMillis())
         return Result.success(records.size)
+    }
+
+    // ── 同步：账号云端 → 落雪（2.3.0 新增） ──
+
+    /**
+     * 从账号云端拉取同步成绩并**上传落雪**（舞萌）。
+     *
+     * 为什么不让用户再扫一遍二维码：官方便携端（Easymai）早就把成绩传到账号云端了，
+     * 用户要的只是「换个查分器再写一份」。落雪的写入接口
+     * `POST /api/v0/user/maimai/player/scores` 收的就是 Score 数组
+     * （`id` / `type` / `level_index` / `achievements` / `fc` / `fs` / `dx_score`）。
+     *
+     * ## 曲目 id 换算
+     * 账号云端给的是**水鱼体系 id**（SD < 10000，DX = SD + 10000，宴谱 ≥ 100000），
+     * 落雪的分谱规则是「同一曲目的 SD/DX 共用一个 id，用 type 区分」。所以：
+     * `落雪 id = musicId % 10000`，`type = 原 type 小写`。
+     * 宴谱（≥100000）落雪走独立的 utage 通道，这里直接跳过，避免写坏谱面。
+     *
+     * ## FS 记号口径
+     * 水鱼用 `fdx` / `fdxp`，落雪叫 `fsd` / `fsdp`（与 NET 页面解析同一套映射）。
+     * 直接搬字符串会把 FDX 记成不存在的类型，落雪会拒整条成绩。
+     *
+     * @return 成功提交的条数
+     */
+    suspend fun syncGatewayToLxns(
+        preFetchedRecords: List<JsonElement>? = null,
+        onLog: (String) -> Unit = {},
+    ): Result<Int> {
+        if (!LxnsAuth.hasCredential()) {
+            return Result.failure(
+                IllegalStateException("尚未登录落雪账号：请先到「我」页「落雪账户登录」完成授权或填 Key"),
+            )
+        }
+        val rawRecords: List<JsonElement>
+        if (preFetchedRecords != null && preFetchedRecords.isNotEmpty()) {
+            rawRecords = preFetchedRecords
+        } else {
+            onLog("正在从账号拉取同步成绩…")
+            rawRecords = MaiQrGateway.pullScores().getOrElse {
+                Log.w(TAG, "pullScores failed", it)
+                return Result.failure(IllegalStateException(dnsMsg("拉取同步数据失败", it)))
+            }
+            if (rawRecords.isEmpty()) {
+                return Result.failure(
+                    IllegalStateException("账号云端暂无同步数据，请先用二维码导入一次"),
+                )
+            }
+        }
+
+        val songMetaById = withContext(Dispatchers.IO) { loadSongMeta() }
+        val (records, skipped) = convertGatewayRecords(rawRecords, songMetaById)
+        if (records.isEmpty()) {
+            return Result.failure(
+                IllegalStateException("没有可上传的记录（本地曲库可能未同步，请先更新曲库）"),
+            )
+        }
+        val (payload, utage) = buildLxnsPayload(records)
+        val count = payload.getAsJsonArray("scores")?.size() ?: 0
+        onLog(
+            "转换完成：$count 条可上传" +
+                (if (skipped > 0) "（跳过无法解析 $skipped 条）" else "") +
+                (if (utage > 0) "（跳过宴谱 $utage 条：落雪宴谱不走成绩接口）" else ""),
+        )
+        if (count == 0) {
+            return Result.failure(IllegalStateException("没有可上传到落雪的成绩"))
+        }
+
+        val result = withContext(Dispatchers.IO) {
+            LxnsUploader.uploadScoresPayloadBlocking("maimai", payload)
+        }
+        onLog("落雪响应：$result")
+        return if (result.startsWith("上传失败")) {
+            Result.failure(IllegalStateException(result.removePrefix("上传失败：")))
+        } else {
+            SpUtil.setQrGatewayLastSyncAt(System.currentTimeMillis())
+            Result.success(count)
+        }
+    }
+
+    /**
+     * 水鱼格式成绩 → 落雪 Score 载荷。返回（载荷, 跳过的宴谱条数）。
+     *
+     * 抽成 internal 纯函数方便单测：id 取余、type/FS 记号映射都在这里。
+     */
+    internal fun buildLxnsPayload(records: List<DivingFishRecord>): Pair<com.google.gson.JsonObject, Int> {
+        val arr = com.google.gson.JsonArray()
+        var utage = 0
+        for (r in records) {
+            // 宴谱（≥100000）在落雪是独立 difficulty，成绩接口不收
+            if (r.musicId >= 100_000) {
+                utage++
+                continue
+            }
+            arr.add(
+                com.google.gson.JsonObject().apply {
+                    addProperty("id", r.musicId % 10000)
+                    addProperty("type", if (r.type.equals("DX", true)) "dx" else "standard")
+                    addProperty("level_index", r.levelIndex)
+                    addProperty("achievements", r.achievements)
+                    if (r.fc.isNotBlank()) addProperty("fc", r.fc.lowercase())
+                    lxnsFs(r.fs)?.let { addProperty("fs", it) }
+                    if (r.dxScore > 0) addProperty("dx_score", r.dxScore)
+                },
+            )
+        }
+        val payload = com.google.gson.JsonObject().apply { add("scores", arr) }
+        return payload to utage
+    }
+
+    /** 水鱼 FS 记号 → 落雪 FSType；未知值返回 null（宁可不传，也不要发非法枚举）。 */
+    internal fun lxnsFs(raw: String): String? = when (raw.trim().lowercase()) {
+        "" -> null
+        "fdx" -> "fsd"
+        "fdxp" -> "fsdp"
+        "fs", "fsp", "fsd", "fsdp", "sync" -> raw.trim().lowercase()
+        else -> null
     }
 
     /** 本机记录的最近一次「账号 → 水鱼」同步时间（毫秒；从未同步过为 0）。 */

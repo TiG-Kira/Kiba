@@ -2,6 +2,7 @@ package com.kira.kiba.core.state
 
 import android.content.Context
 import com.kira.kiba.core.account.DivingFishAccount
+import com.kira.kiba.core.account.LxnsAccount
 import com.kira.kiba.core.data.ChuniSongSync
 import com.kira.kiba.core.data.SongDataSync
 import com.kira.kiba.core.utils.SpUtil
@@ -43,6 +44,10 @@ object KibaState {
      */
     fun bootstrap(context: Context) {
         scope.launch {
+            // 落雪必须自己也恢复一次：以前只恢复水鱼，落雪的 playerFound / 昵称 / 好友码
+            // 全靠内存态，冷启动后恒为「未绑定玩家」，UI 对已绑定账号报假告警。
+            // 先恢复落雪再刷新成绩，避免成绩链路拿到半截状态。
+            runCatching { LxnsAccount.restore() }
             runCatching { DivingFishAccount.restore() }
         }
         scope.launch {

@@ -107,6 +107,56 @@ object LxnsUploader {
         }
     }
 
+    /**
+     * 直接提交一份**已经构造好的**落雪 Score 载荷（`{"scores":[...]}`）。
+     *
+     * 用于「账号云端（Easymai）→ 落雪」这条链路：那边拿到的是查分器通用记录
+     * （自带 musicId / 达成率 / DX 分），不需要曲名反查，直接用 `id % 10000` 就能拼载荷，
+     * 比走 [LxnsScoreMapper] 的曲名索引更准（不会因为曲名本地化差异漏歌）。
+     *
+     * 鉴权头由 [LxnsAuth] 决定（OAuth Bearer 或 个人 Key）。**禁止在主线程调用**。
+     *
+     * @return 人话状态串（成功 / 失败原因），失败不抛异常，直接写进同步日志
+     */
+    @JvmStatic
+    fun uploadScoresPayloadBlocking(game: String, payload: JsonObject): String {
+        if (!LxnsAuth.hasCredential()) return "上传失败：尚未登录落雪账号"
+        val count = payload.getAsJsonArray("scores")?.size() ?: 0
+        if (count == 0) return "上传失败：没有可提交的成绩"
+
+        val auth = try {
+            LxnsAuth.headerBlocking()
+        } catch (e: Exception) {
+            return "上传失败：${e.message}"
+        }
+        val request = Request.Builder()
+            .url("$BASE_URL/user/$game/player/scores")
+            .header(auth.first, auth.second)
+            .header("Content-Type", "application/json")
+            .post(payload.toString().toRequestBody(JSON_TYPE))
+            .build()
+
+        return try {
+            client.newCall(request).execute().use { resp ->
+                val body = resp.body?.string().orEmpty()
+                val root = runCatching { JsonParser.parseString(body).asJsonObject }.getOrNull()
+                val code = root?.get("code")?.takeIf { it.isJsonPrimitive }?.asInt ?: resp.code
+                val message = root?.get("message")?.takeIf { it.isJsonPrimitive }?.asString.orEmpty()
+                when {
+                    resp.isSuccessful && root?.get("success")?.asBoolean != false ->
+                        "落雪已接收 $count 条成绩"
+                    code == 401 || code == 403 -> "上传失败：落雪登录态无效（请重新登录落雪账号）"
+                    code == 404 -> "上传失败：落雪账号还没有玩家数据，请先在落雪网页同步一次"
+                    code == 429 -> "上传失败：落雪限流（每秒最多 5 次），请稍后重试"
+                    else -> "上传失败：HTTP ${resp.code} ${message.ifBlank { body.take(160) }}"
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "lxns payload upload failed", e)
+            "上传失败：${e.javaClass.simpleName}: ${e.message}"
+        }
+    }
+
     // ────────────────── 玩家资料页直传（称号 / 头像 / 名牌） ──────────────────
 
     /**

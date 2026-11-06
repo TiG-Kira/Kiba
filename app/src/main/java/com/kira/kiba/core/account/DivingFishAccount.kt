@@ -76,7 +76,17 @@ object DivingFishAccount {
         val recordCount: Int = 0,
         val loading: Boolean = false,
         val error: String? = null,
-    )
+    ) {
+        /**
+         * **水鱼凭据本身**是否还在（OAuth 绑定或原版 jwt，现读 SP）。
+         *
+         * 必须与 [bound] 分开判：舞萌/中二数据源选的是落雪时，[bound] 会被落雪链路置真
+         * （成绩确实来自落雪、可以看 Best 50），但**这不代表用户登录过水鱼**。
+         * 1.x 版本「我」页直接拿 [bound] 判断，导致只登录落雪的用户看到
+         * 「当前水鱼账户：<落雪昵称>」—— 就是这条混淆。
+         */
+        val dfLoggedIn: Boolean get() = SpUtil.isDivingFishLoggedIn()
+    }
 
     /** 设备授权结果：交给 UI 展示授权链接与确认码输入框。 */
     data class DeviceAuth(
@@ -443,6 +453,8 @@ object DivingFishAccount {
         SpUtil.setDivingFishBound(false)
         SpUtil.saveDivingFishJwt("")
         SpUtil.saveDivingFishOAuthNickname("")
+        // 导入令牌属于这个水鱼账号的写凭据，解绑时一并清掉
+        SpUtil.setDivingFishImportToken("")
         // 一并清除原版登录凭据，保证「我」页与机台更新页状态同步
         SpUtil.putLoginInfo("", "", "")
         _state.value = AccountState()

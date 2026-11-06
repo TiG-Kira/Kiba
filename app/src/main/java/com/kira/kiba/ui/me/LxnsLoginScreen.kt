@@ -71,6 +71,11 @@ fun LxnsLoginScreen(
     LaunchedEffect(state.bound, submitted) {
         if (submitted && state.bound) onLoginSuccess()
     }
+    // 进页复核一次玩家绑定状态：用户很可能是刚从落雪网页「同步游戏数据」回来，
+    // 不重探就会一直看到上次缓存的「尚未绑定玩家」。
+    LaunchedEffect(Unit) {
+        if (state.bound) runCatching { LxnsAccount.refreshStatus() }
+    }
 
     Scaffold(
         modifier = Modifier
@@ -119,10 +124,22 @@ fun LxnsLoginScreen(
                                     color = MiuixTheme.colorScheme.error,
                                 )
                                 Spacer(Modifier.height(8.dp))
-                                TextButton(
-                                    text = "打开落雪同步页",
-                                    onClick = { BrowserJump.openUrl(context, LxnsAccount.SYNC_URL) },
-                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    TextButton(
+                                        text = "打开落雪同步页",
+                                        onClick = { BrowserJump.openUrl(context, LxnsAccount.SYNC_URL) },
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    TextButton(
+                                        text = if (state.loading) "检测中…" else "已同步，重新检测",
+                                        onClick = { scope.launch { runCatching { LxnsAccount.refreshStatus() } } },
+                                        enabled = !state.loading,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                }
                             }
                             Spacer(Modifier.height(8.dp))
                             Text(
