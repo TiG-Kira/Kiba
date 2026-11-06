@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalDensity
@@ -201,38 +202,37 @@ fun LiquidTopAppBar(
                         .weight(1f)
                         .padding(start = 8.dp),
                 ) {
-                    // 展开态大标题：淡出时略微缩小 + 上移，观感上像被玻璃收走
+                    // 标题**只有一个 Text**，靠 scale 从大标题尺寸缩到收窄尺寸。
+                    //
+                    // 之前是两个 Text（大标题淡出 + 小标题淡入）交叉淡化：两者字号不同、
+                    // 又叠在同一个起点，中间那几帧会互相叠影（用户截图指出「文字变化有叠加」）。
+                    // 改成单一元素缩放后，任何时候都只有一份字形，过渡是连续的放大/缩小动画。
+                    //
+                    // 用 graphicsLayer 缩放而不是动画 fontSize：缩放只影响绘制，
+                    // 不触发文字重排（remeasure），滚动时不掉帧；等比缩放也让位置天然居中。
+                    val collapsedFontSize = MiuixTheme.textStyles.title4.fontSize
+                    val scaleRatio = remember(collapsedFontSize) {
+                        (collapsedFontSize.value / 30f).coerceIn(0.4f, 1f)
+                    }
                     Text(
+                        // 主 Tab 顶栏的 title 与 largeTitle 恒相等（KibaTopBar 默认后者取前者），
+                        // 所以收窄后不需要换文案，直接缩放同一段文字。
                         text = largeTitle,
                         modifier = Modifier
                             .align(Alignment.CenterStart)
                             .graphicsLayer {
                                 val f = collapse()
-                                alpha = 1f - f
-                                val s = 1f - 0.12f * f
+                                val s = 1f + (scaleRatio - 1f) * f
                                 scaleX = s
                                 scaleY = s
-                                translationY = -6.dp.toPx() * f
+                                // 从左侧起缩，标题左对齐位置保持不变
+                                transformOrigin = TransformOrigin(0f, 0.5f)
+                                // 缩小同时轻微上收一点，像被玻璃"吸"进去
+                                translationY = -3.dp.toPx() * f
                             },
                         fontSize = 30.sp,
                         fontWeight = FontWeight.Bold,
                         color = MiuixTheme.colorScheme.onBackground,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    // 收窄态标题：从下方一点点浮上来
-                    Text(
-                        text = title,
-                        modifier = Modifier
-                            .align(Alignment.CenterStart)
-                            .graphicsLayer {
-                                val f = collapse()
-                                alpha = f
-                                translationY = 6.dp.toPx() * (1f - f)
-                            },
-                        fontSize = MiuixTheme.textStyles.title4.fontSize,
-                        fontWeight = FontWeight.Medium,
-                        color = MiuixTheme.colorScheme.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
