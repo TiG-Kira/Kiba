@@ -58,7 +58,7 @@ Row(
             onDrawSurface = barSurface)
         .then(interactiveHighlight.modifier)      // 镜面光斑
         .height(54.dp).fillMaxWidth().padding(4.dp),
-) { /* 图标 + 标签，onClick 只写 currentIndex，不直接 onSelect */ }
+) { /* 图标 + 标签，onClick 只写 NavSettle，不直接 onSelect */ }
 
 // Row B：隐形导出层 —— alpha(0) 不可见，只负责录制
 Row(
@@ -151,15 +151,19 @@ InteractiveHighlight（同样是官方工具类）：底栏表面跟随胶囊位
 ## 手势：点按 + 拖动 + 外部切 Tab（汇入同一条状态流）
 
 ```kotlin
-var currentIndex by remember { mutableIntStateOf(selectedIndex) }
-var settleSerial by remember { mutableIntStateOf(0) }   // 没换页也要触发一次吸附
+private data class NavSettle(val index: Int, val serial: Int)
+
+var navSettle by remember { mutableStateOf(NavSettle(selectedIndex, 0)) }
 var reportedIndex by remember { mutableIntStateOf(selectedIndex) }
 
+// setCurrent / onClick 都写成单次状态写（serial 自增保证 index 不变也 emit）
+fun setCurrent(index: Int) { navSettle = NavSettle(index, navSettle.serial + 1) }
+
 LaunchedEffect(selectedIndex) {                          // 外部切 Tab
-    snapshotFlow { selectedIndex }.collectLatest { if (it != currentIndex) currentIndex = it }
+    if (selectedIndex != navSettle.index) setCurrent(selectedIndex)
 }
 LaunchedEffect(damped) {
-    snapshotFlow { currentIndex to settleSerial }.drop(1).collectLatest { (index, _) ->
+    snapshotFlow { navSettle }.drop(1).collectLatest { (index, _) ->
         damped.animateToValue(index.toFloat())           // 动画 + press 起落只此一处
         if (index != reportedIndex) {                    // 换页回调只此一处
             reportedIndex = index
@@ -169,16 +173,19 @@ LaunchedEffect(damped) {
 }
 ```
 
-- **点按**：TabContent 的 `clickable` 只写 `currentIndex = i`，**不直接调 `onSelect`**。
+- **点按**：TabContent 的 `clickable` 只写 `NavSettle(i, serial+1)`，**不直接调 `onSelect`**。
   否则一次点按会上报两次，而且页面在液滴还没飞过去时就切了（拖动路径却是动画后才切），
   两条路径时机不一致；
 - **拖动**：`damped.modifier` 的 `detectDragGestures`，`onDrag` 里
   `updateValue(target + dragAmount.x / tabWidth * (isLtr ? 1 : -1))` 跟手 +
   `offsetAnimation.snapTo(+= dx)`（整条底栏让位）；`onDragStopped` 里
-  `setCurrent(round(targetValue))` + `settleSerial++` +
+  `setCurrent(round(targetValue))` +
   `offsetAnimation.animateTo(0f, spring(1f, 300f, 0.5f))` 回弹；
-- **`settleSerial` 是"没换页"的兜底**：松手吸附回原 tab 时 `currentIndex` 不变，
-  没有这个序号流就不会触发，胶囊会卡在两 tab 之间（拖动没换页 = 应该弹回去）；
+- **`NavSettle.serial` 是"没换页"的兜底**：松手吸附回原 tab 时 index 不变，
+  没有自增序号流就不会触发，胶囊会卡在两 tab 之间（拖动没换页 = 应该弹回去）。
+  它必须是**同一个状态对象里的一个字段**、一次写一次 emit；拆成
+  `setCurrent()` + `settleSerial++` 两次写会产生两次 emit，`collectLatest`
+  取消前一个协程时连那次的 `onSelect` 一起吞掉；
 - **RTL**：拖动增量取反、胶囊 `translationX` 用 `size.width - (value+1)*tabWidth`、
   光斑中心同样镜像，三者都要按 `LocalLayoutDirection` 翻，缺一个就会左右打架。
 
@@ -273,17 +280,38 @@ p→1 时玻璃浮现、被速度拉长、吸进 tabsBackdrop 的染色图标；
 
 8. **手势收尾要闭环，否则留下半截状态**：
    - 松手必须 `offsetAnimation.animateTo(0f, spring(...))`，否则整条底栏的
-     让位偏移会一直累积残留（demo 有这一句，移植时最容易漏）；
-   - 松手没换页时 `currentIndex` 不变，必须靠 `settleSerial` 触发一次吸附，
+     让位偏移会一直累积残留（demo 有这一句，移植时最容易漏）；让位的
+     `snapTo` 也要用 Job 跟踪并在回弹前 cancel，否则排队的 snapTo 会覆盖回弹；
+   - 松手没换页时 index 不变，必须靠 `NavSettle.serial` 触发一次吸附，
      否则胶囊卡在两 tab 之间；
    - `press` 的落回只交给 `animateToValue`，手势回调别再 launch press 动画；
      位置已在目标时也要把 press 落回 0；
    - 点按不许直接 `onSelect`，统一走状态流，否则上报两次、切页时机与拖动不一致。
 
-9. **RTL 三处一起翻**：拖动增量、`translationX`、光斑中心。
-   只翻一处会出现"手往左拖、胶囊往右走"。坐标系公式见「手势」一节。
+9. **拖动停在两 tab 中间，松手必须吸附到最近 tab 并换页**（AVD 实测）。
+   症状是胶囊停在松手点不动、页面也不切。根因是 `updateValue` 的
+   `position.snapTo` 经 `scope.launch` 排队：松手时最后一个 snapTo 可能尚未执行，
+   随后触发的 `animateToValue` 会被这个迟到的 snapTo 打断，连 `onSelect` 一起吞掉。
+   五处一起修：
+   - `pendingTarget` 用**同步字段**记录拖动意图，`targetValue` 读它而不是
+     `Animatable.targetValue`（后者滞后一个事件），吸附目标取 `roundToInt()`；
+     该字段只表示「拖动意图」，**不要**在 `animateToValue` 里改成动画目标值；
+   - 每次 `updateValue` 先 cancel 排队中的 `snapJob`，snapTo 用
+     `CoroutineStart.UNDISPATCHED` 立即落地；`animateToValue` 开头再兜底 cancel 一次；
+   - `dragStartSettled` 区分「拖动刚结束」（动画起点 = `pendingTarget` 松手点）与
+     「普通点按 / 连续切换」（起点 = `position.value`）。在动画开始前就把
+     `pendingTarget` 改成整数目标，会让快速连点时胶囊先回跳到上一个 tab；
+   - **拖动开始把 `pendingTarget` 重置为 `position.value`**，下一轮拖动不会继承
+     上一轮松手的半程点——那是同一个残留状态换个时机发作；
+   - 切换意图用单个 `NavSettle(index, serial)` 一次写一次 emit，避免
+     `collectLatest` 取消自己的动画并吞掉 `onSelect`。
+   也不要留 `settlePress()` 这类只 `snapTo(pendingTarget)`、不做吸附的兜底函数，
+   误用恰好会把胶囊停在中间。
 
-10. **验证手段**：动画中间态截图抓不到，用
+10. **RTL 三处一起翻**：拖动增量、`translationX`、光斑中心。
+    只翻一处会出现"手往左拖、胶囊往右走"。坐标系公式见「手势」一节。
+
+11. **验证手段**：动画中间态截图抓不到，用
     `adb shell screenrecord --size 480x1068 --time-limit 3` 录屏 +
     `ffmpeg -i nav.mp4 -vf fps=60 f_%03d.png` 抽帧 + PIL 帧差定位切换区间，
     再逐帧检查胶囊宽度/位置。

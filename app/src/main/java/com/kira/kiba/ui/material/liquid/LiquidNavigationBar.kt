@@ -63,6 +63,7 @@ import com.kyant.backdrop.highlight.Highlight
 import com.kyant.backdrop.shadow.InnerShadow
 import com.kyant.backdrop.shadow.Shadow
 import com.kyant.shapes.Capsule
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
@@ -80,6 +81,13 @@ import kotlin.math.sign
 val LiquidNavHeight: Dp = 54.dp
 
 /**
+ * 切换意图：`serial` 每次写都自增，保证「松手吸附回原 tab」这种 index 不变的情况
+ * 也会触发一次状态流。单个状态对象 = 单次写 = 单次 emit，避免两次写让
+ * `collectLatest` 取消掉正在播的吸附动画并吞掉那次的 `onSelect`。
+ */
+private data class NavSettle(val index: Int, val serial: Int)
+
+/**
  * 液态玻璃版底部导航栏 —— 1:1 移植 AndroidLiquidGlass demo 的 `LiquidBottomTabs`
  * （Kyant0 官方实现；酷安的 `LiquidGlassTabPanel` 即基于同库同结构的工程化封装）。
  *
@@ -92,9 +100,9 @@ val LiquidNavHeight: Dp = 54.dp
  *    pressProgress——**静止时全为 0，只剩 Black 10% 的灰色提示**（酷安同款）；
  *    速度驱动的拉伸是 demo 的除法对称式：`scaleX /= 1 - v*0.75`。
  *
- * 交互：点按 tab、横向拖动胶囊、外部切 Tab 三条路径统一汇入 `currentIndex` /
- * `settleSerial` 状态流，动画与 `onSelect` 上报只发生在一处；拖动时 `updateValue`
- * 跟手 + 整条底栏 EaseOut 微移（panelOffset，最多 4dp），松手吸附最近 tab 并回弹。
+ * 交互：点按 tab、横向拖动胶囊、外部切 Tab 三条路径统一汇入 [NavSettle] 状态流，
+ * 动画与 `onSelect` 上报只发生在一处；拖动时 `updateValue` 跟手 + 整条底栏
+ * EaseOut 微移（panelOffset，最多 4dp），松手吸附最近 tab 并回弹。
  * 图标高亮跟随胶囊的实际位置（`round(damped.value)`），不跟随目标 tab。
  *
  * 只服务于 `MaterialFamily.LIQUID`；柔光玻璃+（默认）与未开启高级材质时的经典
@@ -126,15 +134,14 @@ fun LiquidNavigationBar(
         var tabWidth: Float = 0f
         var isLtr: Boolean = true
         var offsetAnimation: Animatable<Float, *>? = null
+        var offsetSnapJob: Job? = null
         var setCurrent: (Int) -> Unit = {}
     }
     val bridge = remember { DragBridge() }
     bridge.isLtr = isLtr
     var dampedRef by remember { mutableStateOf<DampedDragAnimation?>(null) }
 
-    var currentIndex by remember { mutableIntStateOf(selectedIndex) }
-    // 松手没换页时 currentIndex 不变，靠这个序号让同一条流仍触发一次位置吸附
-    var settleSerial by remember { mutableIntStateOf(0) }
+    var navSettle by remember { mutableStateOf(NavSettle(selectedIndex, 0)) }
     // 只在上报目标真的变化时回调 onSelect，避免吸附回原位也上报一次
     var reportedIndex by remember { mutableIntStateOf(selectedIndex) }
 
@@ -148,10 +155,13 @@ fun LiquidNavigationBar(
             pressedScale = 78f / 56f,
             onDragStopped = {
                 dampedRef?.let { d ->
+                    // targetValue 读同步字段，不受排队 snapTo 滞后影响；roundToInt
+                    // 让停在半程的胶囊吸附到最近 tab，并经由状态流触发换页
                     val target = d.targetValue.fastRoundToInt().fastCoerceIn(0, items.size - 1)
                     bridge.setCurrent(target)
-                    settleSerial++
-                    // demo 的松手回弹：拖动时整条底栏让位，松手必须收回
+                    // demo 的松手回弹：先丢弃排队中的让位 snapTo，否则它会覆盖回弹动画
+                    bridge.offsetSnapJob?.cancel()
+                    bridge.offsetSnapJob = null
                     bridge.offsetAnimation?.let { a ->
                         scope.launch { a.animateTo(0f, spring(1f, 300f, 0.5f)) }
                     }
@@ -165,7 +175,8 @@ fun LiquidNavigationBar(
                             d.targetValue + dragAmount.x / w * if (bridge.isLtr) 1f else -1f,
                         )
                         bridge.offsetAnimation?.let { a ->
-                            scope.launch { a.snapTo(a.value + dragAmount.x) }
+                            bridge.offsetSnapJob?.cancel()
+                            bridge.offsetSnapJob = scope.launch { a.snapTo(a.value + dragAmount.x) }
                         }
                     }
                 }
@@ -173,15 +184,16 @@ fun LiquidNavigationBar(
         ).also { dampedRef = it }
     }
 
-    // 外部 selectedIndex（其它入口切 Tab）→ 汇入同一条流
+    // 外部 selectedIndex（其它入口切 Tab）→ 汇入同一条流。
+    // 形参不是 State，靠 LaunchedEffect 的 key 变化驱动即可，无需再包一层 snapshotFlow
     LaunchedEffect(selectedIndex) {
-        snapshotFlow { selectedIndex }.collectLatest { index ->
-            if (index != currentIndex) currentIndex = index
+        if (selectedIndex != navSettle.index) {
+            navSettle = NavSettle(selectedIndex, navSettle.serial + 1)
         }
     }
     // 点按 / 拖动吸附 / 外部切换的唯一出口：液滴到位后只上报一次换页
     LaunchedEffect(damped) {
-        snapshotFlow { currentIndex to settleSerial }
+        snapshotFlow { navSettle }
             .drop(1)
             .collectLatest { (index, _) ->
                 damped.animateToValue(index.toFloat())
@@ -283,7 +295,10 @@ fun LiquidNavigationBar(
         // 整条底栏的"被拖动"偏移：拖动时底栏向拖动方向微微让位（最多 4dp，EaseOut 收敛）
         val offsetAnimation = remember { Animatable(0f) }
         bridge.offsetAnimation = offsetAnimation
-        bridge.setCurrent = { index -> currentIndex = index }
+        // 单次状态写：serial 自增保证「吸附回原 tab」也会 emit 一次
+        bridge.setCurrent = { index ->
+            navSettle = NavSettle(index, navSettle.serial + 1)
+        }
         val panelOffsetState = remember(density) {
             derivedStateOf {
                 val fraction = (offsetAnimation.value / constraints.maxWidth).fastCoerceIn(-1f, 1f)
@@ -340,7 +355,9 @@ fun LiquidNavigationBar(
                     tint = if (i == highlightIndex) accentColor else unselectedTint(),
                     modifier = Modifier.weight(1f).fillMaxHeight(),
                     // 不直接 onSelect：交给状态流在液滴到位后统一上报一次
-                    onClick = { currentIndex = i },
+                    onClick = {
+                        navSettle = NavSettle(i, navSettle.serial + 1)
+                    },
                 )
             }
         }

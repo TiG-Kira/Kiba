@@ -12,6 +12,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.util.lerp
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlin.math.abs
@@ -36,9 +37,14 @@ import kotlin.math.abs
  * **拖动 → 松手吸附的竞态**（AVD 实证）：`updateValue` 的 snapTo 经 `scope.launch`
  * 排队，松手时最后一个 snapTo 可能还没执行；此时启动的 `animateToValue` 动画会被
  * 随后执行的 snapTo 打断，胶囊就卡在两 tab 中间。所以：
- * - [targetValue] 读同步字段 [pendingTarget]（不是 Animatable.targetValue，它会滞后）；
- * - 每次 updateValue 先取消排队中的 snapTo（[snapJob]）；
- * - [animateToValue] 开头先 `snapTo(pendingTarget)` 把位置落到松手点，再起动画。
+ * - [targetValue] 读同步字段 [pendingTarget]（不是 Animatable.targetValue，它会滞后），
+ *   且该字段只记录「拖动意图」，不参与动画目标值；
+ * - 每次 `updateValue` 先 cancel 排队中的 [snapJob]，snapTo 用 UNDISPATCHED 立即落地；
+ *   `animateToValue` 开头再兜底取消一次；
+ * - [dragStartSettled] 区分「拖动刚结束」（起点 = 松手点）与「普通点按 / 连续切换」
+ *   （起点 = 真实视觉位置），否则快速连点时胶囊会先回跳到上一个整数目标；
+ * - 拖动开始把 [pendingTarget] 重置为 `position.value`，下一轮拖动不会继承
+ *   上一轮松手的半程点——那是同一个残留状态换个时机发作。
  */
 class DampedDragAnimation(
     animationScope: CoroutineScope,
@@ -56,9 +62,9 @@ class DampedDragAnimation(
     private val position = Animatable(initialValue)
     private val press = Animatable(0f)
 
-    // 拖动的"最新意图位置"：同步字段，onDragStopped 读它不会被排队协程滞后
     private var pendingTarget: Float = initialValue
     private var snapJob: Job? = null
+    private var dragStartSettled = true
 
     /** 胶囊当前位置（tab 下标，可为小数 = 正在两 tab 之间）。 */
     val value: Float get() = position.value
@@ -81,6 +87,14 @@ class DampedDragAnimation(
         detectDragGestures(
             onDragStart = { _ ->
                 onDragStarted()
+                // 新一轮拖动从胶囊的实际位置起步，不继承上一轮松手的半程点
+                pendingTarget = position.value
+                dragStartSettled = false
+                snapJob?.cancel()
+                // 立即落地：同时打断仍在跑的切换动画（动画中途开始拖动）
+                snapJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                    position.snapTo(pendingTarget)
+                }
                 scope.launch { press.animateTo(1f, spring(1f, Spring.StiffnessMediumLow)) }
             },
             onDrag = { change, dragAmount ->
@@ -88,7 +102,7 @@ class DampedDragAnimation(
                 onDrag(change.position, dragAmount)
             },
             onDragEnd = {
-                // press 的回落统一交给 animateToValue / settlePress：
+                // press 的回落统一交给 animateToValue：
                 // 这里若自己 launch animateTo(0f)，会和 animateToValue 开头的
                 // press.animateTo(1f) 竞速，玻璃在飞行途中就被淡掉了。
                 onDragStopped()
@@ -102,8 +116,11 @@ class DampedDragAnimation(
     /** 拖动中直接跟手（不播动画）。 */
     fun updateValue(target: Float) {
         pendingTarget = target.coerceIn(valueRange.start, valueRange.endInclusive)
+        dragStartSettled = false
         snapJob?.cancel()
-        snapJob = scope.launch { position.snapTo(pendingTarget) }
+        snapJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            position.snapTo(pendingTarget)
+        }
     }
 
     /**
@@ -112,9 +129,13 @@ class DampedDragAnimation(
      */
     suspend fun animateToValue(target: Float) {
         val coerced = target.coerceIn(valueRange.start, valueRange.endInclusive)
-        // 先丢弃排队中的拖动 snapTo，并把位置落到松手点，避免它随后打断本动画
+        // 先丢弃排队中的拖动 snapTo，避免它随后打断本动画
         snapJob?.cancel()
-        position.snapTo(pendingTarget)
+        snapJob = null
+        // 拖动刚结束时 pendingTarget 仍是松手点，从它起动画才能把胶囊带离中间；
+        // 其它路径一律用真实视觉位置，快速连点不会先回跳到上一个整数目标
+        position.snapTo(if (dragStartSettled) position.value else pendingTarget)
+        dragStartSettled = true
         if (abs(position.value - coerced) < visibilityThreshold) {
             press.animateTo(0f, spring(1f, Spring.StiffnessMediumLow))
             return
@@ -124,13 +145,6 @@ class DampedDragAnimation(
             coerced,
             spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow),
         )
-        press.animateTo(0f, spring(1f, Spring.StiffnessMediumLow))
-    }
-
-    /** 松手但没换 tab：把玻璃安静地淡回灰色提示。 */
-    suspend fun settlePress() {
-        snapJob?.cancel()
-        position.snapTo(pendingTarget)
         press.animateTo(0f, spring(1f, Spring.StiffnessMediumLow))
     }
 }
