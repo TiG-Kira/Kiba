@@ -64,10 +64,18 @@ fun KibaTopBar(
         // 液态皮肤（折叠时整块玻璃包住状态栏与标题栏、底部 28dp 圆角）+ 液态圆钮。
         // 骨架的 backdrop 传 null：miuix 自己的玻璃与按钮材质不渲染，band 笔刷透明化，
         // 内容之下只剩液态皮肤；KibaActionButton 经 LocalInLiquidTopBar 渲染为液态圆钮。
-        // 按钮材质跟随折叠进度（miuix 语义：内容没滚到顶栏下时按钮是裸图标）：
-        // 玻璃底板在 collapse≥1/3 时完全成形，按钮此刻同步换成液态圆钮
+        // 按钮材质与 miuix 骨架的 `isContentScrolled` **同源**（contentOffset < 0）：
+        // 内容没滚到顶栏下时按钮是裸图标，滚离原位即换成液态圆钮。
+        //
+        // 不能用 collapsedFraction：它的分母 heightOffsetLimit 是 TopAppBarState 的普通字段
+        // （非 snapshot state），封面详情页的 limit 远大于列表页。从详情页返回时 limit 变小
+        // 却不会广播失效，restoreTopBar 的同值补写也救不回来，这个 derivedStateOf 会永久
+        // 卡在 false —— 表现成「返回后上一级按钮变回 miuix-glass 圆底」（用户实证）。
+        // BlurTopAppBar 内部用 heightOffsetLimitVersion 修了自己的 smallTitleVisible，
+        // 但那枚计数器是它的局部变量，外部读不到；contentOffset 是 snapshot state，
+        // 页面切换恢复时一定触发重算，与骨架的 floating / 按钮底板严格同步。
         val liquidButtons by remember(scrollBehavior) {
-            derivedStateOf { scrollBehavior.state.collapsedFraction >= 1f / 3f }
+            derivedStateOf { scrollBehavior.state.contentOffset < 0f }
         }
         Box(modifier.fillMaxWidth()) {
             LiquidTopBarSkin(
@@ -106,7 +114,7 @@ fun KibaTopBar(
  * 顶栏动作按钮：材质**跟随所在的那块顶栏**，而不是跟随全局开关。
  *
  * [LocalInLiquidTopBar] 由两处置 true：
- * - [LiquidTopAppBar] 在自己的内容区（主 Tab 顶栏恒为液态）；
+ * - [KibaTopBar] 的液态分支：内容滚离原位（contentOffset < 0，与 miuix 骨架同信号）后置 true；
  * - 歌曲详情 / 播放页 / 中二详情这些"封面大图 + 折叠"的顶栏，在**折叠之后**才置 true
  *   （封面还在时按钮必须是 miuix 的裸图标，压在封面上的玻璃圆钮很难看）。
  *

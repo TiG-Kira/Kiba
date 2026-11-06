@@ -368,3 +368,35 @@ p→1 时玻璃浮现、被速度拉长、吸进 tabsBackdrop 的染色图标；
     `adb shell screenrecord --size 480x1068 --time-limit 3` 录屏 +
     `ffmpeg -i nav.mp4 -vf fps=60 f_%03d.png` 抽帧 + PIL 帧差定位切换区间，
     再逐帧检查胶囊宽度/位置。
+
+12. **液态顶栏按钮必须自己做按压反馈**（否则完全没有）。
+    `LiquidIconButton` 照抄 `clickable(indication = null, interactionSource = null)`
+    时按下不会有任何变化，而 miuix 的 `GlassIconButton` 自带 pressed 叠色 +
+    `PressedContentAlpha = 0.6f` 图标淡出，混在两套材质里非常突兀。液态语义做成
+    「液滴被压扁」：`Animatable` 进度驱动 `graphicsLayer` 整体缩到 94%
+    （按下 StiffnessHigh / 松手 MediumLow，不过冲）、中心径向叠色
+    （暗色 White 14% / 亮色 Black 10%，对齐 `buttonPressedOverlay`）、图标 alpha 淡到 0.6。
+    **动画值只能在 draw / graphicsLayer 阶段读**：含 `drawBackdrop` 的子树一收高频
+    State 就逐帧重组，lambda 换身份 → 取景重录 → 滚动细抖（见踩坑 3）。
+    光斑 / shape / effects / onDrawSurface 等 lambda 全部 `remember` 固定身份，
+    内部读 `Animatable.value` 即可，draw 阶段读 State 只触发重绘、不触发重组。
+
+13. **玻璃淡出时投影要自己跟着淡出，别指望父层 alpha**。
+    `drawBackdrop` 的 `shadow` 是 modifier 链里一个**独立的 `ShadowNode`**，它用
+    `requireGraphicsContext().createGraphicsLayer()` 单独录一层投影，
+    `shadowLayer.alpha = shadow.alpha` 只认 `Shadow.alpha`（默认固定 1f）。
+    外层 `Modifier.graphicsLayer { alpha = p }` 在折叠/展开快速切换的个别帧里收不干净，
+    症状是「玻璃已经消失、弧形投影还挂在顶栏下沿」。解法：玻璃与投影共用同一个
+    `glassAlpha()` 进度；`shadow` lambda（身份 remember 恒定）在 draw 阶段读它，
+    返回 `Shadow(..., alpha = p)`，**p = 0 直接返回 null**——`ShadowNode.draw()`
+    遇到 null 会连投影层一起跳过，不留残影。
+
+14. **跨页面复用的顶栏状态别拿 `collapsedFraction` 当布尔信号**。
+    `TopAppBarState.heightOffsetLimit` 是**普通字段**（非 snapshot state），封面详情页的
+    limit（屏宽级）远大于列表页。`popPage` 的 `restoreTopBar` 把 `heightOffset`
+    写回去时若与当前值相同 → `derivedStateOf` 不重算；limit 变小也不广播失效，
+    于是按钮材质永久卡在旧值：从详情页返回后上一级按钮退化成 miuix 玻璃圆底。
+    miuix 骨架自己的 `isContentScrolled = contentOffset < 0f` 用的是 snapshot state，
+    恢复时必然触发重算——**外部判定一律与骨架同源**。
+    （vendored `BlurTopAppBar` 内部用 `heightOffsetLimitVersion` 计数器修了它自己的
+    `smallTitleVisible`，但那是局部变量，外部读不到。）

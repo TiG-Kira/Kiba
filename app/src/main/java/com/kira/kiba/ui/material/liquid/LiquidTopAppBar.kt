@@ -3,9 +3,13 @@
 
 package com.kira.kiba.ui.material.liquid
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
@@ -14,19 +18,23 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.SideEffect
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.semantics.Role
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.Backdrop
@@ -143,9 +151,26 @@ fun LiquidTopBarSkin(
         }
     }
     val glassEffects: BackdropEffectScope.() -> Unit = remember { { liquidBarEffects() } }
-    // 贴边玻璃只有底边露在屏幕内：给它一道极淡的落影，玻璃块的边界才看得出来。
-    // 高光仍不加——顶部/左右都贴着屏幕边，加了会在边缘糊出一条亮线。
-    val glassShadow = remember { { Shadow(radius = 16.dp, color = Color.Black.copy(alpha = 0.07f)) } }
+    // 玻璃与投影必须共用**同一个进度**，不能指望外层 graphicsLayer 的 alpha 顺带把投影收掉：
+    // drawBackdrop 的投影是内部独立的 ShadowNode，它用自己的 GraphicsLayer 绘制，
+    // shadowLayer.alpha 只认 Shadow.alpha（固定值）。展开/折叠切换快的那几帧里，
+    // 玻璃已经淡没了而投影层还留在上一帧的强度，表现成「玻璃消失了阴影还在」。
+    // 这里让投影强度跟着同一个折叠进度走，且进度归零时直接返回 null——
+    // ShadowNode 会连投影层一起跳过，彻底不留残影。lambda 身份恒定（remember），
+    // 只在 draw 阶段读进度，不会触发取景重录/滚动细抖。
+    val glassAlpha: () -> Float = remember(collapse) {
+        { (collapse() * 3f).coerceIn(0f, 1f) }
+    }
+    val glassShadow: () -> Shadow? = remember(glassAlpha) {
+        {
+            val p = glassAlpha()
+            if (p <= 0f) {
+                null
+            } else {
+                Shadow(radius = 16.dp, color = Color.Black.copy(alpha = 0.07f), alpha = p)
+            }
+        }
+    }
     val glassSurface: androidx.compose.ui.graphics.drawscope.DrawScope.() -> Unit =
         remember(glassColor) { { drawRect(glassColor) } }
 
@@ -159,7 +184,7 @@ fun LiquidTopBarSkin(
             .height(collapsedHeight + WindowInsets.statusBars.asPaddingValues().calculateTopPadding())
             .graphicsLayer {
                 // 折叠到 1/3 时玻璃已经完全成形，避免半透明玻璃糊在标题后面
-                alpha = (collapse() * 3f).coerceIn(0f, 1f)
+                alpha = glassAlpha()
             }
             .then(
                 if (backdrop != null) {
@@ -183,6 +208,19 @@ fun LiquidTopBarSkin(
  *
  * 折射高度取 demo `LiquidButton` 的 12dp / 24dp——按钮面积小，折射量给大才有「水滴」的
  * 隆起感；底色补一层很淡的白色（暗色 12% / 亮色 42%）保证图标在任何背景下都读得清。
+ *
+ * ## 按压反馈（液态语义）
+ *
+ * 之前 `clickable(indication = null, interactionSource = null)` 等于**完全没有点击效果**，
+ * 而 miuix 的 `GlassIconButton` 有 pressed 叠色 + 图标淡出。这里做成「手指把一颗液滴压扁」：
+ * - 整颗按钮 spring 收缩到 94%（松手弹回，不做回弹过冲，避免像果冻）；
+ * - 中心泛起一圈随按压扩散的径向叠色（暗色提亮 / 亮色压暗，取 miuix
+ *   `buttonPressedOverlay` 的同一组颜色）；
+ * - 图标同步淡到 60%（miuix `PressedContentAlpha`），与柔光玻璃按钮的观感对齐。
+ *
+ * 所有动画值只在 `graphicsLayer` / draw 阶段读取，**不进 composition**：含 `drawBackdrop`
+ * 的子树一旦收高频 State 就会逐帧重组，令 effects lambda 身份变化、整套取景重录重模糊
+ * （底栏滚动细抖的旧坑）。`effects` / `onDrawSurface` / 光斑 lambda 一律 remember 恒定身份。
  */
 @Composable
 fun LiquidIconButton(
@@ -205,14 +243,54 @@ fun LiquidIconButton(
     }
     val highlight = remember { { LiquidBarHighlight } }
     val shadow = remember { { LiquidBarShadow } }
-    val onDrawSurface: androidx.compose.ui.graphics.drawscope.DrawScope.() -> Unit =
-        remember(surface) { { drawRect(surface) } }
+    val onDrawSurface: DrawScope.() -> Unit = remember(surface) { { drawRect(surface) } }
+
+    // ── 按压动画 ──
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    // Animatable 身份稳定：draw 阶段读 .value 只触发重绘，不触发重组/取景重录。
+    val press = remember { Animatable(0f) }
+    LaunchedEffect(pressed) {
+        press.animateTo(
+            targetValue = if (pressed) 1f else 0f,
+            animationSpec = spring(
+                dampingRatio = 1f,
+                stiffness = if (pressed) Spring.StiffnessHigh else Spring.StiffnessMediumLow,
+            ),
+        )
+    }
+    val pressTint = remember(isDark) {
+        if (isDark) Color.White.copy(alpha = 0.14f) else Color.Black.copy(alpha = 0.10f)
+    }
+    val pressOverlay: DrawScope.() -> Unit = remember(pressTint, press) {
+        {
+            val p = press.value
+            if (p > 0f) {
+                drawRect(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            pressTint.copy(alpha = pressTint.alpha * p),
+                            pressTint.copy(alpha = 0f),
+                        ),
+                        center = Offset(size.width / 2f, size.height / 2f),
+                        radius = size.minDimension * (0.45f + 0.55f * p),
+                    ),
+                    size = size,
+                )
+            }
+        }
+    }
 
     Box(
         modifier = modifier
             // 外间距对齐 miuix 的 ButtonPadding（见 LiquidActionButtonPadding）
             .padding(horizontal = LiquidActionButtonPadding)
             .size(44.dp)
+            .graphicsLayer {
+                val s = 1f - 0.06f * press.value
+                scaleX = s
+                scaleY = s
+            }
             .then(
                 if (backdrop != null) {
                     Modifier.drawBackdrop(
@@ -230,15 +308,21 @@ fun LiquidIconButton(
                 },
             )
             .clip(Capsule())
+            .drawWithContent {
+                drawContent()
+                pressOverlay()
+            }
             .clickable(
-                interactionSource = null,
+                interactionSource = interactionSource,
                 indication = null,
                 role = Role.Button,
                 onClick = onClick,
             ),
         contentAlignment = Alignment.Center,
     ) {
-        content()
+        Box(Modifier.graphicsLayer { alpha = 1f - 0.4f * press.value }) {
+            content()
+        }
     }
 }
 

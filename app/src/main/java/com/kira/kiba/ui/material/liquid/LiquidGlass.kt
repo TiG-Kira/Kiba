@@ -35,7 +35,7 @@ val LocalLiquidBackdrop = staticCompositionLocalOf<Backdrop?> { null }
  * 「液态玻璃按钮压在一块 miuix 玻璃/封面/实色顶栏上」的混搭，而且按钮采样的
  * 还是另一条取景层（kyant 那条），观感与性能都不对。
  *
- * 所以由 [LiquidTopAppBar] 在自己的内容区 provide true，只有真在液态顶栏里的
+ * 所以由 `KibaTopBar` 的液态分支在自己的内容区 provide true，只有真在液态顶栏里的
  * 按钮才走液态实现。
  *
  * 用 `compositionLocalOf`（动态）而非 `staticCompositionLocalOf`：歌曲详情 / 播放页
