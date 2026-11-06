@@ -282,6 +282,8 @@ fun GlassTopAppBar(
     background: (@Composable BoxScope.() -> Unit)? = null,
     /** 展开态最小额外展开高度（px），用于封面背景完整露出。 */
     minExpansionPx: Int = 0,
+    /** 折叠态总高度回报（px，不含状态栏），详见 [BlurTopAppBar] 同名参数。 */
+    onCollapsedHeightPx: ((Int) -> Unit)? = null,
     /** 展开态把大标题/副标题贴到顶栏底部（叠在背景下部）。 */
     largeTitleBottomAligned: Boolean = false,
     /** 展开态大标题字重。 */
@@ -322,6 +324,7 @@ fun GlassTopAppBar(
         bandBlurRadius = bandBlurRadius,
         background = background,
         minExpansionPx = minExpansionPx,
+        onCollapsedHeightPx = onCollapsedHeightPx,
         largeTitleBottomAligned = largeTitleBottomAligned,
         largeTitleFontWeight = largeTitleFontWeight,
     )
@@ -387,6 +390,8 @@ fun GlassTopAppBar(
     background: (@Composable BoxScope.() -> Unit)? = null,
     /** 展开态最小额外展开高度（px），用于封面背景完整露出。 */
     minExpansionPx: Int = 0,
+    /** 折叠态总高度回报（px，不含状态栏），详见 [BlurTopAppBar] 同名参数。 */
+    onCollapsedHeightPx: ((Int) -> Unit)? = null,
     /** 展开态把大标题/副标题贴到顶栏底部（叠在背景下部），距底边留空白。 */
     largeTitleBottomAligned: Boolean = false,
     /** 展开态大标题字重。 */
@@ -552,6 +557,7 @@ fun GlassTopAppBar(
                 bottomContent = bottomContent,
                 onBlankTap = onBlankTap,
                 minExpansionPx = minExpansionPx,
+                onCollapsedHeightPx = onCollapsedHeightPx,
                 largeTitleBottomAligned = largeTitleBottomAligned,
                 largeTitleFontWeight = largeTitleFontWeight,
             )

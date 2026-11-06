@@ -17,6 +17,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -181,6 +182,8 @@ fun SongDetailTopBarSlot(
     // 折叠后顶栏变成一条玻璃带 → 按钮随之换成液态玻璃圆钮（见 KibaActionButton）。
     // 液态材质下：收缩态（封面消失）顶栏的玻璃底板换成液态玻璃（其余材质保持原 miuix 玻璃）
     val liquidSkin = useLiquidBar()
+    // 折叠态顶栏真实高度（含副标题行，px）：液态皮肤底板用它对齐 miuix 骨架的底边
+    var liquidSkinCollapsedPx by remember { mutableIntStateOf(0) }
     val liquidActions = LocalMaterialFamily.current == MaterialFamily.LIQUID &&
         LocalAdvancedMaterialEnabled.current && collapsed
 
@@ -190,7 +193,11 @@ fun SongDetailTopBarSlot(
             LiquidTopBarSkin(
                 backdrop = LocalLiquidBackdrop.current,
                 scrollBehavior = scrollBehavior,
-                collapsedHeight = TopAppBarDefaults.CollapsedHeight,
+                collapsedHeight = if (liquidSkinCollapsedPx > 0) {
+                    with(LocalDensity.current) { liquidSkinCollapsedPx.toDp() }
+                } else {
+                    TopAppBarDefaults.CollapsedHeight
+                },
             )
         }
         CompositionLocalProvider(LocalInLiquidTopBar provides liquidActions) {
@@ -229,6 +236,7 @@ fun SongDetailTopBarSlot(
                     tint = onCoverColor,
                 )
             },
+            onCollapsedHeightPx = { liquidSkinCollapsedPx = it },
             background = {
                 Box(modifier = Modifier.fillMaxSize()) {
                     // 封面显示走候选链 SubcomposeAsyncImage：与列表 CoverFrame 同机制，

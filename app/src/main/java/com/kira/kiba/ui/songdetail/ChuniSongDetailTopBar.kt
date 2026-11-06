@@ -16,6 +16,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -146,6 +147,8 @@ fun ChuniSongDetailTopBarSlot(
     // （与歌曲详情页同一套规则，见 KibaActionButton）。
     // 液态材质下：收缩态（封面消失）顶栏的玻璃底板换成液态玻璃（其余材质保持原 miuix 玻璃）
     val liquidSkin = useLiquidBar()
+    // 折叠态顶栏真实高度（含副标题行，px）：液态皮肤底板用它对齐 miuix 骨架的底边
+    var liquidSkinCollapsedPx by remember { mutableIntStateOf(0) }
     val liquidActions = LocalMaterialFamily.current == MaterialFamily.LIQUID &&
         LocalAdvancedMaterialEnabled.current && collapsed
 
@@ -155,7 +158,11 @@ fun ChuniSongDetailTopBarSlot(
             LiquidTopBarSkin(
                 backdrop = LocalLiquidBackdrop.current,
                 scrollBehavior = scrollBehavior,
-                collapsedHeight = TopAppBarDefaults.CollapsedHeight,
+                collapsedHeight = if (liquidSkinCollapsedPx > 0) {
+                    with(LocalDensity.current) { liquidSkinCollapsedPx.toDp() }
+                } else {
+                    TopAppBarDefaults.CollapsedHeight
+                },
             )
         }
         CompositionLocalProvider(LocalInLiquidTopBar provides liquidActions) {
@@ -187,6 +194,7 @@ fun ChuniSongDetailTopBarSlot(
                 }
                 // 中二节奏不支持分享，不提供分享入口
             },
+            onCollapsedHeightPx = { liquidSkinCollapsedPx = it },
             background = {
                 Box(modifier = Modifier.fillMaxSize()) {
                     ChuniCoverBackground(songId = songId, modifier = Modifier.fillMaxSize())

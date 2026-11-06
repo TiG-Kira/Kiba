@@ -125,6 +125,8 @@ fun BlurTopAppBar(
     onBlankTap: (() -> Unit)? = null,
     /** 展开态最小额外展开高度（ songsDetail 封面背景等场景让顶栏完整露出封面）。 */
     minExpansionPx: Int = 0,
+    /** 折叠态总高度回报（px，不含状态栏 insets），详见内层同名参数。 */
+    onCollapsedHeightPx: ((Int) -> Unit)? = null,
     /** 展开态把大标题/副标题移到顶栏底部（封面等背景之下），而非紧跟折叠区。 */
     largeTitleBottomAligned: Boolean = false,
     /** 展开态大标题字重。 */
@@ -165,6 +167,7 @@ fun BlurTopAppBar(
         bottomContent = bottomContent,
         onBlankTap = onBlankTap,
         minExpansionPx = minExpansionPx,
+        onCollapsedHeightPx = onCollapsedHeightPx,
         largeTitleBottomAligned = largeTitleBottomAligned,
         largeTitleFontWeight = largeTitleFontWeight,
     )
@@ -196,6 +199,12 @@ private fun TopAppBarLayout(
      * 仅靠 largeTitle 文字高度不够。折叠完成后仍回到 CollapsedHeight。
      */
     minExpansionPx: Int = 0,
+    /**
+     * 折叠态总高度回报（px，不含状态栏 insets——那是 windowInsetsPadding 加的）。
+     * 折叠态含副标题行时实际高度 > CollapsedHeight，外部玻璃底板（液态皮肤）
+     * 需要用这个真实值对齐，否则底边会短一截（停在副标题中间）。
+     */
+    onCollapsedHeightPx: ((Int) -> Unit)? = null,
     /** 展开态把大标题/副标题块贴到顶栏底部（叠在封面等背景的下部），距底边留 [BottomAlignedTitleGap]。 */
     largeTitleBottomAligned: Boolean = false,
     /** 展开态大标题字重。 */
@@ -502,6 +511,14 @@ private fun TopAppBarLayout(
         }
         val contentTop = maxOf(barHeight + expandedBottomPadding, smallSubtitleBottom + expandedBottomPadding)
         val layoutHeight = contentTop + bottomContentPlaceable.height
+        // 折叠态总高度（barHeight=collapsedHeight 时的 layoutHeight）：给外部底板对齐用。
+        // 每次 measure 都会调（滚动中逐帧），但值只在文本/布局变化时才变，state 去重后无重组抖动
+        onCollapsedHeightPx?.invoke(
+            maxOf(
+                collapsedHeight + expandedBottomPadding,
+                verticalCenter + titlePlaceable.height / 2 + smallSubtitleHeight + expandedBottomPadding,
+            ) + bottomContentPlaceable.height,
+        )
 
         layout(constraints.maxWidth, layoutHeight) {
             // Navigation icon
