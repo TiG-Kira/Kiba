@@ -7,15 +7,12 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.util.lerp
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
@@ -35,6 +32,13 @@ import kotlin.math.abs
  * 点击/程序化切换走 [animateToValue]：先把 pressProgress 拉到 1（玻璃浮现），
  * 位置动画到位后再落回 0（玻璃淡出、凝回灰色提示）——酷安点击切换有完整玻璃
  * 特效而 demo 只有拖动有，这一步是把两者行为对齐的关键。
+ *
+ * **拖动 → 松手吸附的竞态**（AVD 实证）：`updateValue` 的 snapTo 经 `scope.launch`
+ * 排队，松手时最后一个 snapTo 可能还没执行；此时启动的 `animateToValue` 动画会被
+ * 随后执行的 snapTo 打断，胶囊就卡在两 tab 中间。所以：
+ * - [targetValue] 读同步字段 [pendingTarget]（不是 Animatable.targetValue，它会滞后）；
+ * - 每次 updateValue 先取消排队中的 snapTo（[snapJob]）；
+ * - [animateToValue] 开头先 `snapTo(pendingTarget)` 把位置落到松手点，再起动画。
  */
 class DampedDragAnimation(
     animationScope: CoroutineScope,
@@ -52,11 +56,15 @@ class DampedDragAnimation(
     private val position = Animatable(initialValue)
     private val press = Animatable(0f)
 
+    // 拖动的"最新意图位置"：同步字段，onDragStopped 读它不会被排队协程滞后
+    private var pendingTarget: Float = initialValue
+    private var snapJob: Job? = null
+
     /** 胶囊当前位置（tab 下标，可为小数 = 正在两 tab 之间）。 */
     val value: Float get() = position.value
 
-    /** 动画目标位置。 */
-    val targetValue: Float get() = position.targetValue
+    /** 拖动的最新意图位置（松手吸附用它；与 Animatable.targetValue 不同，不滞后）。 */
+    val targetValue: Float get() = pendingTarget
 
     /** 当前速度（tab/秒），拉伸公式用。 */
     val velocity: Float get() = position.velocity
@@ -71,7 +79,7 @@ class DampedDragAnimation(
     /** 拖动手势：按下鼓起、拖动跟手、松手触发 [onDragStopped]（吸附逻辑由调用方做）。 */
     val modifier: Modifier = Modifier.pointerInput(Unit) {
         detectDragGestures(
-            onDragStart = { offset ->
+            onDragStart = { _ ->
                 onDragStarted()
                 scope.launch { press.animateTo(1f, spring(1f, Spring.StiffnessMediumLow)) }
             },
@@ -80,32 +88,35 @@ class DampedDragAnimation(
                 onDrag(change.position, dragAmount)
             },
             onDragEnd = {
+                // press 的回落统一交给 animateToValue / settlePress：
+                // 这里若自己 launch animateTo(0f)，会和 animateToValue 开头的
+                // press.animateTo(1f) 竞速，玻璃在飞行途中就被淡掉了。
                 onDragStopped()
-                scope.launch { press.animateTo(0f, spring(1f, Spring.StiffnessMediumLow)) }
             },
             onDragCancel = {
                 onDragStopped()
-                scope.launch { press.animateTo(0f, spring(1f, Spring.StiffnessMediumLow)) }
             },
         )
     }
 
     /** 拖动中直接跟手（不播动画）。 */
     fun updateValue(target: Float) {
-        val coerced = target.coerceIn(valueRange.start, valueRange.endInclusive)
-        scope.launch {
-            position.snapTo(coerced)
-        }
+        pendingTarget = target.coerceIn(valueRange.start, valueRange.endInclusive)
+        snapJob?.cancel()
+        snapJob = scope.launch { position.snapTo(pendingTarget) }
     }
 
     /**
-     * 程序化切换：玻璃浮现（press→1）→ 位置到位 → 玻璃淡出（press→0）。
+     * 程序化切换 / 松手吸附：玻璃浮现（press→1）→ 位置到位 → 玻璃淡出（press→0）。
      * visibilityThreshold 很小（demo 用 0.001f），跨一个 tab 就算"动了"。
      */
     suspend fun animateToValue(target: Float) {
         val coerced = target.coerceIn(valueRange.start, valueRange.endInclusive)
+        // 先丢弃排队中的拖动 snapTo，并把位置落到松手点，避免它随后打断本动画
+        snapJob?.cancel()
+        position.snapTo(pendingTarget)
         if (abs(position.value - coerced) < visibilityThreshold) {
-            position.snapTo(coerced)
+            press.animateTo(0f, spring(1f, Spring.StiffnessMediumLow))
             return
         }
         press.animateTo(1f, spring(1f, Spring.StiffnessMediumLow))
@@ -113,6 +124,13 @@ class DampedDragAnimation(
             coerced,
             spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow),
         )
+        press.animateTo(0f, spring(1f, Spring.StiffnessMediumLow))
+    }
+
+    /** 松手但没换 tab：把玻璃安静地淡回灰色提示。 */
+    suspend fun settlePress() {
+        snapJob?.cancel()
+        position.snapTo(pendingTarget)
         press.animateTo(0f, spring(1f, Spring.StiffnessMediumLow))
     }
 }

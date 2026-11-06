@@ -24,7 +24,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -36,17 +35,23 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.GraphicsLayerScope
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.fastCoerceIn
 import androidx.compose.ui.util.fastRoundToInt
 import androidx.compose.ui.util.lerp
 import com.kyant.backdrop.Backdrop
+import com.kyant.backdrop.BackdropEffectScope
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
@@ -81,16 +86,19 @@ val LiquidNavHeight: Dp = 54.dp
  * 绘制分三层（z 序）：
  * 1. **Row A 可见底栏**：`vibrancy + blur(8) + lens(24,24)`，表面 = 容器色；
  *    按压时整条底栏 `scale = 1 + 16dp/宽`（随 pressProgress，酷安按压时整条微鼓）；
- * 2. **Row B 隐形导出层**：`alpha(0)` 不可见，只把「底栏 + 图标」**染成强调色**
- *    （`ColorFilter.tint(accent)`）录进 `tabsBackdrop`——胶囊折射吸进来的图标是
- *    染过色的，酷安录屏里"图标被玻璃拉出彩色变形"就来自这层；
+ * 2. **Row B 隐形导出层**：`alpha(0)` 不可见，只把「底栏 + 图标」染成强调色录进
+ *    `tabsBackdrop`，胶囊折射吸进来的图标是染过色的；
  * 3. **胶囊**：采样 `combined(page, tabsBackdrop)`，折射/高光/内阴影/表面强度全部乘
  *    pressProgress——**静止时全为 0，只剩 Black 10% 的灰色提示**（酷安同款）；
  *    速度驱动的拉伸是 demo 的除法对称式：`scaleX /= 1 - v*0.75`。
  *
- * 交互（对齐酷安）：点按 tab 或横向拖动胶囊都触发切换；拖动时 `updateValue` 跟手 +
- * 整条底栏 EaseOut 微移（panelOffset，最多 4dp）；松手吸附最近 tab。
+ * 交互：点按 tab、横向拖动胶囊、外部切 Tab 三条路径统一汇入 `currentIndex` /
+ * `settleSerial` 状态流，动画与 `onSelect` 上报只发生在一处；拖动时 `updateValue`
+ * 跟手 + 整条底栏 EaseOut 微移（panelOffset，最多 4dp），松手吸附最近 tab 并回弹。
  * 图标高亮跟随胶囊的实际位置（`round(damped.value)`），不跟随目标 tab。
+ *
+ * 只服务于 `MaterialFamily.LIQUID`；柔光玻璃+（默认）与未开启高级材质时的经典
+ * 底栏都由 `GlassNavigationBar` 承担，与本文件无关。
  */
 @Composable
 fun LiquidNavigationBar(
@@ -107,6 +115,7 @@ fun LiquidNavigationBar(
     val accentColor = if (isLightTheme) Color(0xFF0088FF) else Color(0xFF0091FF)
     val containerColor =
         if (isLightTheme) Color(0xFFFAFAFA).copy(0.4f) else Color(0xFF121212).copy(0.4f)
+    val isLtr = LocalLayoutDirection.current == LayoutDirection.Ltr
     val scope = rememberCoroutineScope()
 
     val tabsBackdrop = rememberLayerBackdrop()
@@ -115,11 +124,19 @@ fun LiquidNavigationBar(
     // 回调每次重组都会被重新赋值（捕获最新状态），所以字段可变即可。
     class DragBridge {
         var tabWidth: Float = 0f
+        var isLtr: Boolean = true
         var offsetAnimation: Animatable<Float, *>? = null
         var setCurrent: (Int) -> Unit = {}
     }
     val bridge = remember { DragBridge() }
+    bridge.isLtr = isLtr
     var dampedRef by remember { mutableStateOf<DampedDragAnimation?>(null) }
+
+    var currentIndex by remember { mutableIntStateOf(selectedIndex) }
+    // 松手没换页时 currentIndex 不变，靠这个序号让同一条流仍触发一次位置吸附
+    var settleSerial by remember { mutableIntStateOf(0) }
+    // 只在上报目标真的变化时回调 onSelect，避免吸附回原位也上报一次
+    var reportedIndex by remember { mutableIntStateOf(selectedIndex) }
 
     val damped = remember(scope) {
         DampedDragAnimation(
@@ -130,16 +147,23 @@ fun LiquidNavigationBar(
             initialScale = 1f,
             pressedScale = 78f / 56f,
             onDragStopped = {
-                // 松手吸附最近 tab；换页动画与 onSelect 由 currentIndex 流统一驱动
                 dampedRef?.let { d ->
-                    bridge.setCurrent(d.targetValue.fastRoundToInt().fastCoerceIn(0, items.size - 1))
+                    val target = d.targetValue.fastRoundToInt().fastCoerceIn(0, items.size - 1)
+                    bridge.setCurrent(target)
+                    settleSerial++
+                    // demo 的松手回弹：拖动时整条底栏让位，松手必须收回
+                    bridge.offsetAnimation?.let { a ->
+                        scope.launch { a.animateTo(0f, spring(1f, 300f, 0.5f)) }
+                    }
                 }
             },
             onDrag = { _, dragAmount ->
                 dampedRef?.let { d ->
                     val w = bridge.tabWidth
                     if (w > 0f) {
-                        d.updateValue(d.targetValue + dragAmount.x / w)
+                        d.updateValue(
+                            d.targetValue + dragAmount.x / w * if (bridge.isLtr) 1f else -1f,
+                        )
                         bridge.offsetAnimation?.let { a ->
                             scope.launch { a.snapTo(a.value + dragAmount.x) }
                         }
@@ -148,21 +172,23 @@ fun LiquidNavigationBar(
             },
         ).also { dampedRef = it }
     }
-    var currentIndex by remember { mutableIntStateOf(selectedIndex) }
 
-    // 外部 selectedIndex（点按 tab）→ 驱动胶囊动画 + 上报 onSelect
+    // 外部 selectedIndex（其它入口切 Tab）→ 汇入同一条流
     LaunchedEffect(selectedIndex) {
         snapshotFlow { selectedIndex }.collectLatest { index ->
             if (index != currentIndex) currentIndex = index
         }
     }
-    // currentIndex 变化（点按或拖动吸附）→ 液滴飞过去 + 上报
+    // 点按 / 拖动吸附 / 外部切换的唯一出口：液滴到位后只上报一次换页
     LaunchedEffect(damped) {
-        snapshotFlow { currentIndex }
+        snapshotFlow { currentIndex to settleSerial }
             .drop(1)
-            .collectLatest { index ->
+            .collectLatest { (index, _) ->
                 damped.animateToValue(index.toFloat())
-                onSelect(index)
+                if (index != reportedIndex) {
+                    reportedIndex = index
+                    onSelect(index)
+                }
             }
     }
 
@@ -171,8 +197,84 @@ fun LiquidNavigationBar(
         derivedStateOf { damped.value.fastRoundToInt().fastCoerceIn(0, items.size - 1) }
     }
 
+    // DrawBackdropElement.equals 按 lambda 引用判等，update() 无条件
+    // invalidateDrawCache()。这些 lambda 一旦每次重组新建，整套取景链就会重录
+    // （滚动时表现为底栏细抖），所以身份一律固定在这里。
+    val capsuleShape: () -> Shape = remember { { Capsule() } }
+    val barEffects: BackdropEffectScope.() -> Unit = remember {
+        {
+            vibrancy()
+            blur(8f.dp.toPx())
+            lens(24f.dp.toPx(), 24f.dp.toPx())
+        }
+    }
+    val barLayerBlock: GraphicsLayerScope.() -> Unit = remember(damped) {
+        {
+            val scale = lerp(1f, 1f + 16f.dp.toPx() / size.width, damped.pressProgress)
+            scaleX = scale
+            scaleY = scale
+        }
+    }
+    val barSurface: DrawScope.() -> Unit = remember(containerColor) {
+        { drawRect(containerColor) }
+    }
+    val exportEffects: BackdropEffectScope.() -> Unit = remember(damped) {
+        {
+            val progress = damped.pressProgress
+            vibrancy()
+            blur(8f.dp.toPx())
+            lens(24f.dp.toPx() * progress, 24f.dp.toPx() * progress)
+        }
+    }
+    val exportHighlight: () -> Highlight? = remember(damped) {
+        { Highlight.Default.copy(alpha = damped.pressProgress) }
+    }
+    val pillLens: BackdropEffectScope.() -> Unit = remember(damped) {
+        {
+            val progress = damped.pressProgress
+            lens(10f.dp.toPx() * progress, 14f.dp.toPx() * progress, chromaticAberration = true)
+        }
+    }
+    val pillHighlight: () -> Highlight? = remember(damped) {
+        { Highlight.Default.copy(alpha = damped.pressProgress) }
+    }
+    val pillShadow: () -> Shadow? = remember(damped) {
+        { Shadow(alpha = damped.pressProgress) }
+    }
+    val pillInnerShadow: () -> InnerShadow? = remember(damped) {
+        { InnerShadow(radius = 8f.dp * damped.pressProgress, alpha = damped.pressProgress) }
+    }
+    val pillLayerBlock: GraphicsLayerScope.() -> Unit = remember(damped) {
+        {
+            scaleX = damped.scaleX
+            scaleY = damped.scaleY
+            val velocity = damped.velocity / 10f
+            scaleX /= 1f - (velocity * 0.75f).fastCoerceIn(-0.2f, 0.2f)
+            scaleY *= 1f - (velocity * 0.25f).fastCoerceIn(-0.2f, 0.2f)
+        }
+    }
+    val pillSurface: DrawScope.() -> Unit = remember(isLightTheme, damped) {
+        {
+            val progress = damped.pressProgress
+            drawRect(
+                if (isLightTheme) Color.Black.copy(0.1f) else Color.White.copy(0.1f),
+                alpha = 1f - progress,
+            )
+            drawRect(Color.Black.copy(alpha = 0.03f * progress))
+        }
+    }
+    // Row B 录制层的图标随按压鼓起（demo 的 LocalLiquidBottomTabScale 口径）
+    val pressScale: () -> Float = remember(damped) {
+        { lerp(1f, 1.2f, damped.pressProgress) }
+    }
+    val combinedBackdrop = if (backdrop != null) {
+        rememberCombinedBackdrop(backdrop, tabsBackdrop)
+    } else {
+        null
+    }
+
     BoxWithConstraints(modifier, contentAlignment = Alignment.CenterStart) {
-        val density = androidx.compose.ui.platform.LocalDensity.current
+        val density = LocalDensity.current
         val tabWidth = with(density) {
             (constraints.maxWidth.toFloat() - 8f.dp.toPx()) / items.size
         }
@@ -182,7 +284,7 @@ fun LiquidNavigationBar(
         val offsetAnimation = remember { Animatable(0f) }
         bridge.offsetAnimation = offsetAnimation
         bridge.setCurrent = { index -> currentIndex = index }
-        val panelOffset by remember(density) {
+        val panelOffsetState = remember(density) {
             derivedStateOf {
                 val fraction = (offsetAnimation.value / constraints.maxWidth).fastCoerceIn(-1f, 1f)
                 with(density) {
@@ -190,20 +292,26 @@ fun LiquidNavigationBar(
                 }
             }
         }
+        val panelOffset by panelOffsetState
 
         val interactiveHighlight = remember(scope) {
             InteractiveHighlight(
                 animationScope = scope,
                 position = { size, _ ->
+                    val w = bridge.tabWidth
                     Offset(
-                        (damped.value + 0.5f) * tabWidth + panelOffset,
+                        if (bridge.isLtr) {
+                            (damped.value + 0.5f) * w + panelOffsetState.value
+                        } else {
+                            size.width - (damped.value + 0.5f) * w + panelOffsetState.value
+                        },
                         size.height / 2f,
                     )
                 },
             )
         }
 
-        // ── Row A：可见底栏 ──
+        // Row A：可见底栏
         Row(
             Modifier
                 .graphicsLayer { translationX = panelOffset }
@@ -211,19 +319,10 @@ fun LiquidNavigationBar(
                     if (backdrop != null) {
                         Modifier.drawBackdrop(
                             backdrop = backdrop,
-                            shape = { Capsule() },
-                            effects = {
-                                vibrancy()
-                                blur(8f.dp.toPx())
-                                lens(24f.dp.toPx(), 24f.dp.toPx())
-                            },
-                            layerBlock = {
-                                val progress = damped.pressProgress
-                                val scale = lerp(1f, 1f + 16f.dp.toPx() / size.width, progress)
-                                scaleX = scale
-                                scaleY = scale
-                            },
-                            onDrawSurface = { drawRect(containerColor) },
+                            shape = capsuleShape,
+                            effects = barEffects,
+                            layerBlock = barLayerBlock,
+                            onDrawSurface = barSurface,
                         )
                     } else {
                         Modifier.background(containerColor, Capsule())
@@ -240,12 +339,13 @@ fun LiquidNavigationBar(
                     item = item,
                     tint = if (i == highlightIndex) accentColor else unselectedTint(),
                     modifier = Modifier.weight(1f).fillMaxHeight(),
-                    onClick = { onSelect(i) },
+                    // 不直接 onSelect：交给状态流在液滴到位后统一上报一次
+                    onClick = { currentIndex = i },
                 )
             }
         }
 
-        // ── Row B：隐形导出层（整层染成强调色录进 tabsBackdrop）──
+        // Row B：隐形导出层（图标染成强调色录进 tabsBackdrop）
         Row(
             Modifier
                 .clearAndSetSemantics {}
@@ -256,91 +356,58 @@ fun LiquidNavigationBar(
                     if (backdrop != null) {
                         Modifier.drawBackdrop(
                             backdrop = backdrop,
-                            shape = { Capsule() },
-                            effects = {
-                                val progress = damped.pressProgress
-                                vibrancy()
-                                blur(8f.dp.toPx())
-                                lens(
-                                    24f.dp.toPx() * progress,
-                                    24f.dp.toPx() * progress,
-                                )
-                            },
-                            highlight = {
-                                val progress = damped.pressProgress
-                                Highlight.Default.copy(alpha = progress)
-                            },
+                            shape = capsuleShape,
+                            effects = exportEffects,
+                            highlight = exportHighlight,
                         )
                     } else {
                         Modifier
                     },
                 )
+                .then(interactiveHighlight.modifier)
                 .height(height - 8f.dp)
                 .fillMaxWidth()
                 .padding(horizontal = 4f.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // 注意：这层录进 tabsBackdrop 的只有「玻璃效果输出 + 强调色图标」，
-            // 不画表面色——demo 的整层 ColorFilter.tint 会把玻璃表面也染成实心蓝，
-            // 胶囊折射出来就是一整块蓝（AVD 实证）。
+            // 不画表面色、不整层 ColorFilter.tint、不挂 clickable：
+            // 前两个会把 tabsBackdrop 染成实心蓝（胶囊折射出一整块色块），
+            // 第三个会拦掉 Row A 的真实点按（均为 AVD 实证）。
             items.forEach { item ->
-                // 不挂 clickable：Row B 盖在 Row A 之上，空点击会拦掉真实点按（AVD 实证）
-                TabContent(item = item, tint = accentColor, modifier = Modifier.weight(1f).fillMaxHeight(), onClick = null)
+                TabContent(
+                    item = item,
+                    tint = accentColor,
+                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                    onClick = null,
+                    scale = pressScale,
+                )
             }
         }
 
-        // ── 胶囊：一切玻璃效果 × pressProgress；静止 = Black 10% 灰色提示 ──
+        // 胶囊：一切玻璃效果 × pressProgress；静止 = Black 10% 灰色提示
         Box(
             Modifier
                 .padding(horizontal = 4f.dp)
                 .graphicsLayer {
-                    translationX = damped.value * tabWidth + panelOffset
+                    translationX = if (bridge.isLtr) {
+                        damped.value * tabWidth + panelOffset
+                    } else {
+                        size.width - (damped.value + 1f) * tabWidth + panelOffset
+                    }
                 }
                 .then(interactiveHighlight.gestureModifier)
                 .then(damped.modifier)
                 .then(
-                    if (backdrop != null) {
+                    if (combinedBackdrop != null) {
                         Modifier.drawBackdrop(
-                            backdrop = rememberCombinedBackdrop(backdrop, tabsBackdrop),
-                            shape = { Capsule() },
-                            effects = {
-                                val progress = damped.pressProgress
-                                lens(
-                                    10f.dp.toPx() * progress,
-                                    14f.dp.toPx() * progress,
-                                    chromaticAberration = true,
-                                )
-                            },
-                            highlight = {
-                                val progress = damped.pressProgress
-                                Highlight.Default.copy(alpha = progress)
-                            },
-                            shadow = {
-                                val progress = damped.pressProgress
-                                Shadow(alpha = progress)
-                            },
-                            innerShadow = {
-                                val progress = damped.pressProgress
-                                InnerShadow(
-                                    radius = 8f.dp * progress,
-                                    alpha = progress,
-                                )
-                            },
-                            layerBlock = {
-                                scaleX = damped.scaleX
-                                scaleY = damped.scaleY
-                                val velocity = damped.velocity / 10f
-                                scaleX /= 1f - (velocity * 0.75f).fastCoerceIn(-0.2f, 0.2f)
-                                scaleY *= 1f - (velocity * 0.25f).fastCoerceIn(-0.2f, 0.2f)
-                            },
-                            onDrawSurface = {
-                                val progress = damped.pressProgress
-                                drawRect(
-                                    if (isLightTheme) Color.Black.copy(0.1f) else Color.White.copy(0.1f),
-                                    alpha = 1f - progress,
-                                )
-                                drawRect(Color.Black.copy(alpha = 0.03f * progress))
-                            },
+                            backdrop = combinedBackdrop,
+                            shape = capsuleShape,
+                            effects = pillLens,
+                            highlight = pillHighlight,
+                            shadow = pillShadow,
+                            innerShadow = pillInnerShadow,
+                            layerBlock = pillLayerBlock,
+                            onDrawSurface = pillSurface,
                         )
                     } else {
                         Modifier.background(Color.Black.copy(alpha = 0.1f), Capsule())
@@ -361,7 +428,9 @@ private fun TabContent(
     tint: Color,
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
+    scale: (() -> Float)? = null,
 ) {
+    val iconScale = scale
     Column(
         modifier = modifier
             .then(
@@ -372,6 +441,17 @@ private fun TabContent(
                         role = Role.Tab,
                         onClick = onClick,
                     )
+                } else {
+                    Modifier
+                },
+            )
+            .then(
+                if (iconScale != null) {
+                    Modifier.graphicsLayer {
+                        val s = iconScale()
+                        scaleX = s
+                        scaleY = s
+                    }
                 } else {
                     Modifier
                 },
