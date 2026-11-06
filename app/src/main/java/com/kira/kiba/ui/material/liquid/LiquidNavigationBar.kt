@@ -44,6 +44,7 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -146,6 +147,8 @@ fun LiquidNavigationBar(
     var dampedRef by remember { mutableStateOf<DampedDragAnimation?>(null) }
 
     var navSettle by remember { mutableStateOf(NavSettle(selectedIndex, 0)) }
+    // 按住其它 tab 触发的迁移：玻璃保持到松手（抬起后的同 index 再触发走 early-return 淡出）
+    var holdPressUntilUp by remember { mutableStateOf(false) }
     // 只在上报目标真的变化时回调 onSelect，避免吸附回原位也上报一次
     var reportedIndex by remember { mutableIntStateOf(selectedIndex) }
 
@@ -195,16 +198,20 @@ fun LiquidNavigationBar(
             navSettle = NavSettle(selectedIndex, navSettle.serial + 1)
         }
     }
-    // 点按 / 拖动吸附 / 外部切换的唯一出口：液滴到位后只上报一次换页
+    // 点按 / 拖动吸附 / 外部切换的唯一出口。
+    // onSelect 必须在动画**之前**即时上报：collectLatest 的新值会取消上一协程，
+    // 若上报排在动画之后，「动画完成 + 立刻松手」的窗口会让 onSelect 随协程
+    // 一起被取消——页面不切但胶囊已飞到目标（恶性竞态，AVD 实证）。
+    // 页面切换与液滴飞行就此解耦：点按即时换页，液滴随后跟上。
     LaunchedEffect(damped) {
         snapshotFlow { navSettle }
             .drop(1)
             .collectLatest { (index, _) ->
-                damped.animateToValue(index.toFloat())
                 if (index != reportedIndex) {
                     reportedIndex = index
                     onSelect(index)
                 }
+                damped.animateToValue(index.toFloat(), holdPressUntilUp)
             }
     }
 
@@ -354,11 +361,68 @@ fun LiquidNavigationBar(
                 // 按下立刻浮现玻璃（在当前选中的 tag 上）：不等抬起后的状态流。
                 // 抬手后延迟兜底回落——若触发了换页，animateToValue 的
                 // press.animateTo(1f) 会抢占回落，玻璃保持到飞到位再淡出。
-                .pointerInput(damped) {
+                .pointerInput(Unit) {
                     awaitEachGesture {
                         awaitFirstDown()
+                    }
+                }
+                .pointerInput(damped, items.size) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(pass = PointerEventPass.Initial)
                         damped.pressDown()
-                        waitForUpOrCancellation()
+                        // 点按其它 tab：按下瞬间就开始迁移（液滴从当前 tag 飞向手指），
+                        // 不等抬起——按住期间玻璃保持（含点在当前 tag 的情况），松手才淡出
+                        holdPressUntilUp = true
+                        val hit = (down.position.x / tabWidth).toInt()
+                            .fastCoerceIn(0, items.size - 1)
+                        if (hit != navSettle.index) {
+                            navSettle = NavSettle(hit, navSettle.serial + 1)
+                        }
+                        // 按住期间左右拖动跟手：可继续拖过任意 tag，松手吸附最近者。
+                        // 首帧从胶囊的**实际视觉位置**起跳（迁移动画可能已飞出半程，
+                        // 若从 pendingTarget 起跳会回跳）。
+                        var lastX = down.position.x
+                        var dragging = false
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            val dx = change.position.x - lastX
+                            lastX = change.position.x
+                            if (dragging || abs(change.position.x - down.position.x) >
+                                viewConfiguration.touchSlop
+                            ) {
+                                dragging = true
+                                change.consume()
+                                damped.updateValue(
+                                    (if (dragging && damped.targetValue != damped.value) damped.value
+                                     else damped.targetValue) + dx / tabWidth * if (isLtr) 1f else -1f,
+                                )
+                                // demo 的让位：整条底栏向拖动方向微移
+                                bridge.offsetSnapJob?.cancel()
+                                bridge.offsetSnapJob = scope.launch {
+                                    bridge.offsetAnimation?.let { a ->
+                                        a.snapTo(a.value + dx)
+                                    }
+                                }
+                            }
+                            if (!change.pressed) {
+                                break
+                            }
+                        }
+                        // 松手：吸附最近 tab（含 down 迁移未完成的场景）；
+                        // holdPress 复位后流会以 holdPress=false 再触发，玻璃淡成选中态
+                        holdPressUntilUp = false
+                        // 吸附目标用**当前视觉位置**：点击迁移场景 pendingTarget 已与
+                        // 动画终点对齐，拖动场景它与视觉同步，两者都成立；但迁移若被
+                        // 按住打断（手指按住时动画未完），value 才是唯一事实
+                        val target = damped.value.fastRoundToInt()
+                            .fastCoerceIn(0, items.size - 1)
+                        bridge.offsetSnapJob?.cancel()
+                        bridge.offsetSnapJob = null
+                        bridge.offsetAnimation?.let { a ->
+                            scope.launch { a.animateTo(0f, spring(1f, 300f, 0.5f)) }
+                        }
+                        navSettle = NavSettle(target, navSettle.serial + 1)
                         damped.pressUpDelayed()
                     }
                 },
@@ -428,7 +492,6 @@ fun LiquidNavigationBar(
                     }
                 }
                 .then(interactiveHighlight.gestureModifier)
-                .then(damped.modifier)
                 .then(
                     if (combinedBackdrop != null) {
                         Modifier.drawBackdrop(

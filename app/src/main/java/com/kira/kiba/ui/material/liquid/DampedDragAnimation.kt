@@ -149,7 +149,7 @@ class DampedDragAnimation(
      * 程序化切换 / 松手吸附：玻璃浮现（press→1）→ 位置到位 → 玻璃淡出（press→0）。
      * visibilityThreshold 很小（demo 用 0.001f），跨一个 tab 就算"动了"。
      */
-    suspend fun animateToValue(target: Float) {
+    suspend fun animateToValue(target: Float, holdPressUntilSettle: Boolean = false) {
         val coerced = target.coerceIn(valueRange.start, valueRange.endInclusive)
         // 先丢弃排队中的拖动 snapTo，避免它随后打断本动画
         snapJob?.cancel()
@@ -158,6 +158,9 @@ class DampedDragAnimation(
         // 其它路径一律用真实视觉位置，快速连点不会先回跳到上一个整数目标
         position.snapTo(if (dragStartSettled) position.value else pendingTarget)
         dragStartSettled = true
+        // pendingTarget 与动画终点对齐：否则「按下其它 tab 触发的迁移」完成后
+        // pendingTarget 仍是旧 tab，松手吸附会按过期值把胶囊拉回去（AVD 实证）
+        pendingTarget = coerced
         if (abs(position.value - coerced) < visibilityThreshold) {
             press.animateTo(0f, spring(1f, Spring.StiffnessMediumLow))
             return
@@ -167,6 +170,11 @@ class DampedDragAnimation(
             coerced,
             spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow),
         )
-        press.animateTo(0f, spring(1f, Spring.StiffnessMediumLow))
+        // 按住模式（按下其它 tab 触发的迁移）：手指还没抬，玻璃保持；
+        // 松手后状态流会以 holdPress=false 再触发一次（position 已到位，
+        // 走 early-return），那时才淡出成正常选中态。
+        if (!holdPressUntilSettle) {
+            press.animateTo(0f, spring(1f, Spring.StiffnessMediumLow))
+        }
     }
 }
