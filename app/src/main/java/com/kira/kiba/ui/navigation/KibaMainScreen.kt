@@ -674,28 +674,9 @@ fun KibaMainScreen() {
                   // 底栏导航项与切页回调：两套材质共用同一份数据，只换渲染控件
                   // Kiba 页用产品 Logo（按亮/暗色整体重着色：亮色黑、暗色白）
                   val darkTheme = isSystemInDarkTheme()
-                  val kibaLogoPainter = remember(darkTheme) {
-                      val tintColor =
-                          if (darkTheme) android.graphics.Color.WHITE else android.graphics.Color.BLACK
-                      // 整段（含 copy/getPixels/BitmapPainter）都放 runCatching：
-                      // 任何机型/资源异常都只退回占位图标，绝不因底部导航拖垮启动。
-                      runCatching {
-                          val bm = ContextCompat.getDrawable(context, R.drawable.ic_launcher_foreground)
-                              ?.toBitmap() ?: return@runCatching null
-                          val copy = bm.copy(android.graphics.Bitmap.Config.ARGB_8888, true)
-                          val pixels = IntArray(copy.width * copy.height)
-                          copy.getPixels(pixels, 0, copy.width, 0, 0, copy.width, copy.height)
-                          for (i in pixels.indices) {
-                              val a = (pixels[i] shr 24) and 0xFF
-                              if (a > 128) {
-                                  // 非透明像素 → 统一染成目标色，alpha 保持原值（软边）
-                                  pixels[i] = (a shl 24) or (tintColor and 0x00FFFFFF)
-                              }
-                          }
-                          copy.setPixels(pixels, 0, copy.width, 0, 0, copy.width, copy.height)
-                          BitmapPainter(copy.asImageBitmap())
-                      }.getOrNull()
-                  }
+                  // Kiba 页产品 Logo：裁掉 adaptive-icon 留白并铺满 + 膨胀增粗 + 主题染色，
+                  // 让它在 28dp 槽位里与其它线性图层级一致（详见 buildTintedNavLogo）。
+                  val kibaLogoPainter = remember(darkTheme) { buildTintedNavLogo(context, darkTheme) }
                   val navItems = tabs.map { tab ->
                       if (tab == KibaTab.Agent) {
                           GlassNavigationItem(
@@ -989,4 +970,83 @@ fun KibaMainScreen() {
           }
       }
     }
+}
+
+/**
+ * 构造底部导航栏的 Kiba 产品 Logo（栅格 [BitmapPainter]）。
+ *
+ * 直接拿 adaptive-icon 的 foreground 会「又小又细」：该图四周有安全区留白
+ * （实测 432×432 里图案仅占 ~60% 画布），且是细线稿。这里做三件事：
+ *  1) 扫描非透明像素包围盒并裁掉透明留白，等比铺满画布 → 视觉尺寸与其它图标一致；
+ *  2) 以 9 个轻微偏移重复叠画（等效形态学膨胀 ≈1px）→ 线条增粗，对齐线性图标笔重；
+ *  3) 整体染色（亮色→黑 / 暗色→白），保留原 alpha 抗锯齿。
+ *
+ * 任何机型/资源异常都返回 null，调用方回退到占位矢量图标，绝不因底部导航拖垮启动。
+ */
+private fun buildTintedNavLogo(context: android.content.Context, dark: Boolean): BitmapPainter? {
+    return runCatching {
+        val src = ContextCompat.getDrawable(context, R.drawable.ic_launcher_foreground)
+            ?.toBitmap() ?: return@runCatching null
+        val bmp = if (src.config == android.graphics.Bitmap.Config.ARGB_8888) src
+        else src.copy(android.graphics.Bitmap.Config.ARGB_8888, false) ?: return@runCatching null
+
+        val w = bmp.width
+        val h = bmp.height
+        val px = IntArray(w * h)
+        bmp.getPixels(px, 0, w, 0, 0, w, h)
+
+        // 1) 非透明像素包围盒（alpha > 24 视为有效内容）
+        var minX = w; var minY = h; var maxX = -1; var maxY = -1
+        for (y in 0 until h) {
+            val row = y * w
+            for (x in 0 until w) {
+                if (((px[row + x] ushr 24) and 0xFF) > 24) {
+                    if (x < minX) minX = x
+                    if (x > maxX) maxX = x
+                    if (y < minY) minY = y
+                    if (y > maxY) maxY = y
+                }
+            }
+        }
+        if (maxX < minX || maxY < minY) return@runCatching null
+        val cw = maxX - minX + 1
+        val ch = maxY - minY + 1
+        val cropped = android.graphics.Bitmap.createBitmap(bmp, minX, minY, cw, ch)
+
+        // 2) 超采样到 128px 正方形画布；铺满 86%（叠加膨胀后 ≈ 28dp 槽位的正常字形大小）
+        val size = 128
+        val out = android.graphics.Bitmap.createBitmap(
+            size, size, android.graphics.Bitmap.Config.ARGB_8888
+        )
+        val canvas = android.graphics.Canvas(out)
+        val inner = size * 0.86f
+        val scale = inner / maxOf(cw, ch)
+        val dw = cw * scale
+        val dh = ch * scale
+        val left = (size - dw) / 2f
+        val top = (size - dh) / 2f
+
+        // 3) 染色 + 膨胀：9 向轻微偏移叠画，线条变粗且边缘自然抗锯齿
+        val tint = if (dark) android.graphics.Color.WHITE else android.graphics.Color.BLACK
+        val paint = android.graphics.Paint(
+            android.graphics.Paint.ANTI_ALIAS_FLAG or android.graphics.Paint.FILTER_BITMAP_FLAG
+        )
+        paint.colorFilter = android.graphics.PorterDuffColorFilter(
+            tint, android.graphics.PorterDuff.Mode.SRC_IN
+        )
+        val r = 1.3f
+        val offs = floatArrayOf(
+            0f, 0f, r, 0f, -r, 0f, 0f, r, 0f, -r, r, r, -r, -r, r, -r, -r, r
+        )
+        val dst = android.graphics.RectF()
+        var i = 0
+        while (i < offs.size) {
+            val dx = offs[i]
+            val dy = offs[i + 1]
+            dst.set(left + dx, top + dy, left + dw + dx, top + dh + dy)
+            canvas.drawBitmap(cropped, null, dst, paint)
+            i += 2
+        }
+        BitmapPainter(out.asImageBitmap())
+    }.getOrNull()
 }
