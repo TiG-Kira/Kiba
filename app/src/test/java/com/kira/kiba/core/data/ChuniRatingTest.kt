@@ -1,6 +1,7 @@
 package com.kira.kiba.core.data
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -82,15 +83,35 @@ class ChuniRatingTest {
         val ds = 14.0
         // 接口没给 rating 时的兜底（落雪 player/scores 可能是 SimpleScore）
         assertEquals(16.15, ChuniRating.raOf(1_009_000, ds), 1e-9)
-        // 1007500 段：ds + 2.0 + (score-1007500)/10000*0.15 → 500/10000*0.15 = 0.0075
-        assertEquals(16.0075, ChuniRating.raOf(1_008_000, ds), 1e-9)
+        // 1007500 段：每 100 分 +0.01 → 500 分 = +0.05
+        assertEquals(16.05, ChuniRating.raOf(1_008_000, ds), 1e-9)
         assertEquals(15.50, ChuniRating.raOf(1_005_000, ds), 1e-9)
         assertEquals(15.00, ChuniRating.raOf(1_000_000, ds), 1e-9)
         assertEquals(14.60, ChuniRating.raOf(990_000, ds), 1e-9)
-        assertEquals(14.00, ChuniRating.raOf(950_000, ds), 1e-9)
-        assertEquals(0.0, ChuniRating.raOf(900_000, ds), 1e-9)
-        assertEquals(0.0, ChuniRating.raOf(800_000, ds), 1e-9)
+        // S 档锚点 = 定数本身（不是定数+0.3）
+        assertEquals(14.00, ChuniRating.raOf(975_000, ds), 1e-9)
+        assertEquals(12.50, ChuniRating.raOf(950_000, ds), 1e-9) // AA→S 段线性
+        assertEquals(9.00, ChuniRating.raOf(900_000, ds), 1e-9)  // A = 定数 − 5.0
+        assertEquals(0.0, ChuniRating.raOf(899_999, ds), 1e-9)
         // 定数未知时不瞎算，交给上层显示 0
         assertEquals(0.0, ChuniRating.raOf(1_009_000, 0.0), 1e-9)
+    }
+
+    @Test
+    fun `跨档线不阶跃`() {
+        val ds = 14.0
+        // 每个档线前 1 分的值必须紧贴下一档锚点，否则玩家会看到 ra 掉 0.1+
+        assertEquals(15.4999, ChuniRating.raOf(1_004_999, ds), 1e-9)
+        assertEquals(15.9998, ChuniRating.raOf(1_007_499, ds), 1e-9)
+        assertEquals(16.1499, ChuniRating.raOf(1_008_999, ds), 1e-9)
+        assertEquals(14.59996, ChuniRating.raOf(989_999, ds), 1e-9)
+        assertEquals(13.99994, ChuniRating.raOf(974_999, ds), 1e-9)
+        // 全程单调不减
+        var prev = 0.0
+        for (score in 900_000..1_010_000 step 500) {
+            val ra = ChuniRating.raOf(score, ds)
+            assertTrue("score=$score ra=$ra < $prev", ra >= prev - 1e-9)
+            prev = ra
+        }
     }
 }

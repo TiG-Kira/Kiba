@@ -19,6 +19,7 @@ import com.kira.kiba.core.db.entity.RecordEntity
 import com.kira.kiba.core.db.entity.SongDataEntity
 import com.kira.kiba.core.model.ChuniDiffType
 import com.kira.kiba.core.model.DifficultyType
+import com.kira.kiba.core.stats.ChuniPushRecommender
 import com.kira.kiba.core.stats.RecommendFusion
 import com.kira.kiba.core.utils.SpUtil
 import kotlinx.coroutines.Dispatchers
@@ -1458,9 +1459,10 @@ class KibaAgent(private val context: Context) {
     /**
      * 中二推分推荐。
      *
-     * 思路与舞萌推分一致，但**档位换成中二的分数段**：官方单曲 ra 完全由「分数 + 定数」
-     * 决定（[ChuniRating.raOf]），所以对每个谱面找「第一个能让 ra 超过地板地板的分数档」，
-     * 差距小的优先 —— 用户要的是「同样的练习量里最快进榜的那几首」。
+     * 与舞萌推分**口径不同**：中二 SSS+ 要 1009000（满分才 1010000，余量只有 1000 分，
+     * 漏一个 note 就掉线），比 SSS 只多 0.15 ra —— 死磕 SSS+ 是典型的高投入低回报。所以这里
+     * 「按定数从高到低排、同定数取能压过地板的最低档位」，SSS+ 结构性沉底但保留，
+     * 详见 [ChuniPushRecommender]。
      */
     private suspend fun chuniPush(): AgentReply {
         val dao = AppDataBase.getInstance().chuniSongWithChartDao()
@@ -1498,37 +1500,49 @@ class KibaAgent(private val context: Context) {
             .filter { it.levelIndex != ChuniDiffType.WORLD_END.ordinal }
             .associateBy { ChuniRating.chartKey(it.songId, it.levelIndex) }
 
-        // 中二曲库里 MASTER 以下的谱面基本不可能进 Rating 枠，先过滤掉，省得推荐一堆 BASIC
-        val candidates = charts
+        // 当前版本枠判定：优先曲库 version，其次落雪官方 new_bests 分池（hasOfficialSplit）。
+        // 两者都拿不到时才整体归非当前枠（此时当前枠地板也没有，不会误推）。
+        val chartInputs = charts
             .filter { it.difficultyIndex != ChuniDiffType.WORLD_END.ordinal }
-            .filter { it.difficultyIndex >= ChuniDiffType.EXPERT.ordinal }
-            .mapNotNull { chart ->
+            .map { chart ->
                 val version = versionMap[ChuniRating.chartKey(chart.songId, chart.difficultyIndex)] ?: 0
-                val isCurrent = stats.currentVersion > 0 && version == stats.currentVersion
-                val floor = (if (isCurrent) currentFloor else nonCurrentFloor) ?: return@mapNotNull null
-                val current = recordByKey[ChuniRating.chartKey(chart.songId, chart.difficultyIndex)]
-                val currentScore = current?.score ?: 0
-                // 分数档 → 该档 ra；只保留「还没打到 + 能超过地板」的最低一档
-                val target = CHUNI_PUSH_TIERS.firstOrNull { (score, _) ->
-                    ChuniRating.raOf(score, chart.ds) > floor && currentScore < score
-                } ?: return@mapNotNull null
-                val potential = ChuniRating.raOf(target.first, chart.ds)
-                ChuniPushCand(
+                val byVersion = stats.currentVersion > 0 && version == stats.currentVersion
+                val byOfficial = stats.hasOfficialSplit &&
+                    recordByKey[ChuniRating.chartKey(chart.songId, chart.difficultyIndex)]
+                        ?.isCurrentVersion == true
+                ChuniPushRecommender.Chart(
                     songId = chart.songId,
                     levelIndex = chart.difficultyIndex,
                     level = chart.level,
                     ds = chart.ds,
-                    isCurrent = isCurrent,
-                    tierScore = target.first,
-                    tierName = target.second,
-                    potential = potential,
-                    floor = floor,
-                    gap = target.first - currentScore,
-                    currentScore = currentScore,
+                    isCurrent = byVersion || byOfficial,
                 )
             }
-            .sortedWith(compareBy({ it.gap }, { -it.potential }))
-            .take(10)
+
+        val candidates = ChuniPushRecommender.recommend(
+            charts = chartInputs,
+            scores = records
+                .filter { it.levelIndex != ChuniDiffType.WORLD_END.ordinal }
+                .map {
+                    ChuniPushRecommender.Score(
+                        songId = it.songId,
+                        levelIndex = it.levelIndex,
+                        score = it.score,
+                        ra = it.ra,
+                    )
+                },
+            nonCurrent = ChuniPushRecommender.Pool(
+                floor = nonCurrentFloor,
+                size = stats.nonCurrent.size,
+                capacity = ChuniRating.NON_CURRENT_SIZE,
+            ),
+            current = ChuniPushRecommender.Pool(
+                floor = currentFloor,
+                size = stats.current.size,
+                capacity = ChuniRating.CURRENT_SIZE,
+            ),
+            limit = 10,
+        )
 
         val sb = StringBuilder()
         sb.append("## 中二推分推荐\n\n")
@@ -1536,45 +1550,58 @@ class KibaAgent(private val context: Context) {
             "非当前 TOP30 地板 ra ${nonCurrentFloor?.let { "%.2f".format(it) } ?: "—"}" +
                 " · 当前 TOP20 地板 ra ${currentFloor?.let { "%.2f".format(it) } ?: "—"}\n\n"
         )
+        sb.append(
+            "SSS+ 要 ${ChuniPushRecommender.SSS_PLUS_SCORE}（满分 ${ChuniPushRecommender.MAX_SCORE}），" +
+                "余量只有 ${ChuniPushRecommender.SSS_PLUS_MARGIN} 分 —— 一个 note 就值上千分，" +
+                "漏一个基本就掉线，却只比 SSS 多 0.15 ra；所以压在最后，" +
+                "rating 17+ 推无可推时才会是唯一选择。下面按定数从高到低排，" +
+                "同定数挑最容易压过地板的档位。\n\n"
+        )
         if (candidates.isEmpty()) {
-            sb.append("暂时没有合适目标：高于地板的谱面你都贴着上限了，去冲更高定数的新谱吧。")
+            sb.append("暂时没有合适目标：高于地板的谱面你都贴着档位上限了，去冲更高定数的新谱吧。")
         } else {
             candidates.forEachIndexed { index, c ->
                 if (index > 0) sb.append("\n---\n\n")
                 val title = mdEscape(titleById[c.songId] ?: "id ${c.songId}")
                 val pool = if (c.isCurrent) "当前 TOP20" else "非当前 TOP30"
-                sb.append("**$title** · `${chuniLabel(c.levelIndex)} ${c.level}` · 定数 ${c.ds}\n")
-                if (c.currentScore <= 0) {
-                    sb.append(
-                        "未游玩：打到 ${c.tierScore}（${c.tierName}）得 ra ${"%.2f".format(c.potential)} " +
-                            "→ 顶替 $pool 地板（**+${"%.2f".format(c.potential - c.floor)}**）\n"
-                    )
+                val tier = if (c.tierName == "SSS+") {
+                    "`${c.tierScore}`（SSS+，余量仅 ${ChuniPushRecommender.SSS_PLUS_MARGIN} 分）"
                 } else {
-                    sb.append(
-                        "当前 ${c.currentScore}：还差 ${c.gap} 分到 ${c.tierScore}（${c.tierName}）" +
-                            "得 ra ${"%.2f".format(c.potential)} → **+${"%.2f".format(c.potential - c.floor)}**\n"
-                    )
+                    "`${c.tierScore}`（${c.tierName}）"
+                }
+                sb.append("**$title** · `${chuniLabel(c.levelIndex)} ${c.level}` · 定数 ${c.ds}\n")
+                when {
+                    !c.played -> {
+                        sb.append(
+                            "未游玩：打到 $tier 得 ra ${"%.2f".format(c.potential)} " +
+                                "→ 顶替 $pool 地板 **+${"%.2f".format(c.gain)}**\n"
+                        )
+                    }
+                    c.inPool -> {
+                        sb.append(
+                            "当前 ${c.currentScore}（ra ${"%.2f".format(c.currentRa ?: 0.0)}，已在榜内）：" +
+                                "还差 ${c.gap} 分到 $tier 得 ra ${"%.2f".format(c.potential)} " +
+                                "→ 总分还可 **+${"%.2f".format(c.gain)}**\n"
+                        )
+                    }
+                    else -> {
+                        sb.append(
+                            "当前 ${c.currentScore}（ra ${"%.2f".format(c.currentRa ?: 0.0)}，" +
+                                "低于地板 ${"%.2f".format(c.floor)}）：还差 ${c.gap} 分到 $tier " +
+                                "得 ra ${"%.2f".format(c.potential)} " +
+                                "→ 顶替地板 **+${"%.2f".format(c.gain)}**\n"
+                        )
+                    }
                 }
             }
         }
-        sb.append("\n\n数据来自本地曲库定数 + 官方 ra 公式，实际增益以落雪 / 机台结算为准。")
+        sb.append(
+            "\n\n档位由易到难：AAA < S < S+ < SS < SS+ < SSS < SSS+；" +
+                "排在前面的定数更高、打起来不一定更累，SSS+ 会沉在末尾。"
+        )
+        sb.append("\n数据来自本地曲库定数 + 官方 ra 公式，实际增益以落雪 / 机台结算为准。")
         return AgentReply(sb.toString().trimEnd())
     }
-
-    /** 中二推分候选（局部结构，避免污染数据层）。 */
-    private data class ChuniPushCand(
-        val songId: Int,
-        val levelIndex: Int,
-        val level: String,
-        val ds: Double,
-        val isCurrent: Boolean,
-        val tierScore: Int,
-        val tierName: String,
-        val potential: Double,
-        val floor: Double,
-        val gap: Int,
-        val currentScore: Int,
-    )
 
     /** 中二曲目 → Agent 卡片。 */
     private fun ChuniSongEntity.toChuniAgentSong(top: ChuniChartEntity?): AgentSong = AgentSong(
@@ -2139,19 +2166,9 @@ class KibaAgent(private val context: Context) {
         const val GAME_CHUNITHM = "chunithm"
 
         /**
-         * 中二推分用的分数档（降到能过地板的最低一档即为目标）。
-         *
-         * 档位与官方评级一致；`1009000` 已是 SSS+ / AJC 区间，再往上没有额外收益。
+         * 中二推分档位表已迁到 [ChuniPushRecommender.TIERS]：那套「从最省力一档往上挑」
+         * 的选择与排序逻辑需要单测覆盖，留在 companion 里没法测。
          */
-        private val CHUNI_PUSH_TIERS = listOf(
-            1009000 to "SSS+",
-            1007500 to "SSS",
-            1005000 to "SS+",
-            1000000 to "SS",
-            990000 to "S+",
-            975000 to "S",
-            950000 to "AAA",
-        )
 
         /** 输出 token 上限（思考被截断时加额重试的封顶值）。 */
         private const val MAX_TOKENS_CAP = 16384
@@ -2281,7 +2298,9 @@ class KibaAgent(private val context: Context) {
             ),
             AgentSkill(
                 "chuni_push", "中二推分推荐",
-                "按官方单曲 ra 公式找「再提一点分就能顶掉地板」的谱面，差距小的优先",
+                "按官方单曲 ra 公式推「高定数 + 低档位就能压过地板」的谱面，按定数从高到低排；" +
+                    "SSS+ 大幅降权（要 1009000、距满分只剩 1000 分，只比 SSS 多 0.15 ra），" +
+                    "只在 rating 17+ 推无可推时出现",
             ),
             AgentSkill(
                 "random_number", "随机数",
