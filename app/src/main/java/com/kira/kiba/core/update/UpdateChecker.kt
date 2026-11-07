@@ -70,6 +70,12 @@ object UpdateChecker {
     private const val GITHUB_RELEASES_LIST_URL = "https://api.github.com/repos/$GITHUB_REPO/releases?per_page=50"
     private const val GITHUB_RELEASE_PAGE_URL = "https://github.com/$GITHUB_REPO/releases"
 
+    /**
+     * gh-proxy 加速前缀：下载与 API 检查优先走它，失败时回退 GitHub 原链接。
+     * gh-proxy.com 实测支持 Release 资产 / raw / archive 与 api.github.com（2026-11 复核）。
+     */
+    private const val GH_PROXY_BASE = "https://gh-proxy.com/"
+
     private val client = OkHttpClient.Builder()
         .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
         .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
@@ -80,6 +86,32 @@ object UpdateChecker {
         NORMAL,
         PRERELEASE,
         NOT_FOUND
+    }
+
+    /**
+     * 依次尝试多个源拉取 releases 列表：gh-proxy 加速优先，GitHub 原链接兜底。
+     * 代理节点可能返回 200 + 非 JSON 错误页，故逐个解析校验，失败换下一路。
+     * @return 全部通道失败时返回 null
+     */
+    private fun fetchReleases(): JSONArray? {
+        val candidates = listOf(GH_PROXY_BASE + GITHUB_RELEASES_LIST_URL, GITHUB_RELEASES_LIST_URL)
+        for (url in candidates) {
+            try {
+                val request = Request.Builder()
+                    .url(url)
+                    .header("Accept", "application/vnd.github.v3+json")
+                    .build()
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) return@use
+                    val body = response.body?.string() ?: return@use
+                    if (!body.startsWith("[")) return@use
+                    return JSONArray(body)
+                }
+            } catch (e: Exception) {
+                // 换下一路
+            }
+        }
+        return null
     }
 
     /**
@@ -96,91 +128,79 @@ object UpdateChecker {
 
         return try {
             withContext(Dispatchers.IO) {
-                val request = Request.Builder()
-                    .url(GITHUB_RELEASES_LIST_URL)
-                    .header("Accept", "application/vnd.github.v3+json")
-                    .build()
+                val releases = fetchReleases()
+                    ?: return@withContext UpdateResult.CheckFailed
 
-                client.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        return@withContext UpdateResult.CheckFailed
-                    }
+                var currentTagMatched = false
+                var currentReleaseNotes = ""
+                var bestRelease: org.json.JSONObject? = null
+                var bestVersion: AppVersion? = null
+                var bestVersionName = ""
+                var bestIsPreRelease = false
 
-                    val body = response.body?.string() ?: ""
-                    val releases = JSONArray(body)
+                for (i in 0 until releases.length()) {
+                    val release = releases.getJSONObject(i)
+                    val isDraft = release.optBoolean("draft", false)
+                    if (isDraft) continue
 
-                    var currentTagMatched = false
-                    var currentReleaseNotes = ""
-                    var bestRelease: org.json.JSONObject? = null
-                    var bestVersion: AppVersion? = null
-                    var bestVersionName = ""
-                    var bestIsPreRelease = false
+                    val tagName = release.optString("tag_name", "")
+                    val tagVersion = AppVersion.parse(tagName) ?: continue
 
-                    for (i in 0 until releases.length()) {
-                        val release = releases.getJSONObject(i)
-                        val isDraft = release.optBoolean("draft", false)
-                        if (isDraft) continue
+                    if (tagVersion.major != currentVersion.major) continue
 
-                        val tagName = release.optString("tag_name", "")
-                        val tagVersion = AppVersion.parse(tagName) ?: continue
-
-                        if (tagVersion.major != currentVersion.major) continue
-
-                        if (tagVersion == currentVersion) {
-                            currentTagMatched = true
-                            // 记录当前版本自身的 Release Notes，供「已是最新版」时展示
-                            val notes = release.optString("body", "")
-                            if (tagName.equals(currentVersionName, ignoreCase = true) ||
-                                tagName.equals("v$currentVersionName", ignoreCase = true)
-                            ) {
-                                currentReleaseNotes = notes
-                            } else if (currentReleaseNotes.isEmpty()) {
-                                currentReleaseNotes = notes
-                            }
-                        }
-
-                        val isPreRelease = release.optBoolean("prerelease", false)
-                        if (!betaEnabled && isPreRelease) continue
-
-                        if (bestVersion == null || tagVersion > bestVersion) {
-                            bestVersion = tagVersion
-                            bestVersionName = tagName
-                            bestRelease = release
-                            bestIsPreRelease = isPreRelease
+                    if (tagVersion == currentVersion) {
+                        currentTagMatched = true
+                        // 记录当前版本自身的 Release Notes，供「已是最新版」时展示
+                        val notes = release.optString("body", "")
+                        if (tagName.equals(currentVersionName, ignoreCase = true) ||
+                            tagName.equals("v$currentVersionName", ignoreCase = true)
+                        ) {
+                            currentReleaseNotes = notes
+                        } else if (currentReleaseNotes.isEmpty()) {
+                            currentReleaseNotes = notes
                         }
                     }
 
-                    // 当前 tag 在 GitHub 上找不到时仍然允许返回更新（例如本机构建比最新
-                    // 公开版还新时则判为最新）。完全没有任何候选时才提前退出。
-                    if (bestVersion == null || bestVersion <= currentVersion) {
-                        return@withContext UpdateResult.UpToDate(
-                            currentVersion = currentVersion,
-                            currentVersionName = currentVersionName,
-                            releaseNotes = currentReleaseNotes
-                        )
+                    val isPreRelease = release.optBoolean("prerelease", false)
+                    if (!betaEnabled && isPreRelease) continue
+
+                    if (bestVersion == null || tagVersion > bestVersion) {
+                        bestVersion = tagVersion
+                        bestVersionName = tagName
+                        bestRelease = release
+                        bestIsPreRelease = isPreRelease
                     }
+                }
 
-                    val release = bestRelease!!
-                    val releaseUrl = release.optString("html_url", "")
-                        .ifEmpty { GITHUB_RELEASE_PAGE_URL }
-                    val releaseNotes = release.optString("body", "")
-
-                    UpdateResult.UpdateAvailable(
-                        latestVersion = bestVersion,
-                        latestVersionName = bestVersionName,
+                // 当前 tag 在 GitHub 上找不到时仍然允许返回更新（例如本机构建比最新
+                // 公开版还新时则判为最新）。完全没有任何候选时才提前退出。
+                if (bestVersion == null || bestVersion <= currentVersion) {
+                    return@withContext UpdateResult.UpToDate(
                         currentVersion = currentVersion,
                         currentVersionName = currentVersionName,
-                        releaseUrl = releaseUrl,
-                        releaseNotes = releaseNotes,
-                        isBeta = bestIsPreRelease
+                        releaseNotes = currentReleaseNotes
                     )
                 }
+
+                val release = bestRelease!!
+                val releaseUrl = release.optString("html_url", "")
+                    .ifEmpty { GITHUB_RELEASE_PAGE_URL }
+                val releaseNotes = release.optString("body", "")
+
+                UpdateResult.UpdateAvailable(
+                    latestVersion = bestVersion,
+                    latestVersionName = bestVersionName,
+                    currentVersion = currentVersion,
+                    currentVersionName = currentVersionName,
+                    releaseUrl = releaseUrl,
+                    releaseNotes = releaseNotes,
+                    isBeta = bestIsPreRelease
+                )
             }
         } catch (e: Exception) {
             UpdateResult.CheckFailed
         }
     }
-
     /**
      * 获取当前版本的 Release 状态（NORMAL / PRERELEASE / NOT_FOUND）。
      * NOT_FOUND 常见于 CI 直装的内部构建（tag 尚未发布或已被替换）。
@@ -191,37 +211,25 @@ object UpdateChecker {
 
         return try {
             withContext(Dispatchers.IO) {
-                val request = Request.Builder()
-                    .url(GITHUB_RELEASES_LIST_URL)
-                    .header("Accept", "application/vnd.github.v3+json")
-                    .build()
+                val releases = fetchReleases() ?: return@withContext null
 
-                client.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        return@withContext null
-                    }
+                for (i in 0 until releases.length()) {
+                    val release = releases.getJSONObject(i)
+                    val tagName = release.optString("tag_name", "")
+                    val tagVersion = AppVersion.parse(tagName) ?: continue
 
-                    val body = response.body?.string() ?: ""
-                    val releases = JSONArray(body)
-
-                    for (i in 0 until releases.length()) {
-                        val release = releases.getJSONObject(i)
-                        val tagName = release.optString("tag_name", "")
-                        val tagVersion = AppVersion.parse(tagName) ?: continue
-
-                        if (tagVersion == currentVersion) {
-                            val isPrerelease = release.optBoolean("prerelease", false)
-                            val isDraft = release.optBoolean("draft", false)
-                            return@withContext when {
-                                isDraft -> ReleaseStatus.NOT_FOUND
-                                isPrerelease -> ReleaseStatus.PRERELEASE
-                                else -> ReleaseStatus.NORMAL
-                            }
+                    if (tagVersion == currentVersion) {
+                        val isPrerelease = release.optBoolean("prerelease", false)
+                        val isDraft = release.optBoolean("draft", false)
+                        return@withContext when {
+                            isDraft -> ReleaseStatus.NOT_FOUND
+                            isPrerelease -> ReleaseStatus.PRERELEASE
+                            else -> ReleaseStatus.NORMAL
                         }
                     }
-
-                    ReleaseStatus.NOT_FOUND
                 }
+
+                ReleaseStatus.NOT_FOUND
             }
         } catch (e: Exception) {
             null
@@ -235,5 +243,14 @@ object UpdateChecker {
     fun constructDownloadUrl(versionName: String): String {
         val tag = if (versionName.startsWith("v")) versionName else "v$versionName"
         return "$GITHUB_RELEASE_PAGE_URL/download/$tag/app-release.apk"
+    }
+
+    /**
+     * 更新包下载候选源列表：gh-proxy 加速优先，GitHub 原链接兜底。
+     * 顺序即优先级，调用方逐个尝试直到成功。
+     */
+    fun constructDownloadUrls(versionName: String): List<String> {
+        val original = constructDownloadUrl(versionName)
+        return listOf(GH_PROXY_BASE + original, original)
     }
 }

@@ -27,13 +27,15 @@ object ApkDownloader {
     private const val TAG = "ApkDownloader"
     private const val UPDATE_DIR = "updates"
 
-    // 更新包只能来自 GitHub Release，避免被重定向到任意镜像或 CDN。
-    // GitHub Release 资产会经 302 跳转到官方 CDN，最终地址必须纳入白名单。
+    // 更新包只能来自 GitHub Release 官方链路或其加速代理，避免被重定向到任意镜像或 CDN。
+    // GitHub Release 资产会经 302 跳转到官方 CDN，最终地址必须纳入白名单；
+    // gh-proxy 为纯流式转发（最终地址仍是代理域名本身），也在白名单内。
     private val ALLOWED_DOWNLOAD_HOSTS = setOf(
         "github.com",
         "objects.githubusercontent.com",
         "release-assets.githubusercontent.com",
-        "raw.githubusercontent.com"
+        "raw.githubusercontent.com",
+        "gh-proxy.com"
     )
 
     private val SHA256_PATTERN = Regex("([0-9a-fA-F]{64})")
@@ -61,53 +63,62 @@ object ApkDownloader {
         }
     }
 
+    /**
+     * 按候选源顺序下载并安装：gh-proxy 加速优先，GitHub 原链接兜底。
+     * 某一路下载失败或产物校验不通过时自动换下一路；全部失败才返回错误。
+     * @param urls 候选下载地址（顺序即优先级，见 [UpdateChecker.constructDownloadUrls]）
+     */
     suspend fun downloadAndInstall(
         context: Context,
-        url: String,
+        urls: List<String>,
         versionName: String,
         onProgress: ((Int, Long, Long) -> Unit)? = null
     ): Result<Unit> {
         return withContext(Dispatchers.IO) {
-            try {
-                if (!isAllowedDownloadUrl(url)) {
-                    Log.w(TAG, "Rejected update download from untrusted source")
-                    return@withContext Result.failure<Unit>(Exception("更新包地址不受信任，已取消下载"))
-                }
-
-                val apkFile = File(getUpdateDir(context), getApkFileName(versionName))
-                if (apkFile.exists()) {
-                    apkFile.delete()
-                }
-
+            var lastFailure: Exception? = null
+            for (url in urls) {
                 try {
-                    downloadToFile(context, url, apkFile, onProgress)
-                } catch (e: Exception) {
-                    apkFile.delete()
-                    throw e
-                }
-
-                verifyApkFile(context, apkFile, url).onFailure { e ->
-                    apkFile.delete()
-                    Log.w(TAG, "Discarding downloaded APK: ${e.message}")
-                    return@withContext Result.failure<Unit>(e)
-                }
-
-                withContext(Dispatchers.Main) {
-                    if (hasInstallPermission(context)) {
-                        installApk(context, apkFile)
-                        // 安装器已接收 intent 并创建安装会话后，延迟删掉 cacheDir 里的更新包，
-                        // 避免「下载即装」的 transient 文件长期占用（兜底由 CacheCleaner 1 天窗口清理）。
-                        android.os.Handler(android.os.Looper.getMainLooper())
-                            .postDelayed({ runCatching { apkFile.delete() } }, 5000)
-                    } else {
-                        requestInstallPermission(context)
+                    if (!isAllowedDownloadUrl(url)) {
+                        Log.w(TAG, "Rejected update download from untrusted source: $url")
+                        throw Exception("更新包地址不受信任，已取消下载")
                     }
+
+                    val apkFile = File(getUpdateDir(context), getApkFileName(versionName))
+                    if (apkFile.exists()) {
+                        apkFile.delete()
+                    }
+
+                    try {
+                        downloadToFile(context, url, apkFile, onProgress)
+                    } catch (e: Exception) {
+                        apkFile.delete()
+                        throw e
+                    }
+
+                    verifyApkFile(context, apkFile, url).getOrElse { e ->
+                        apkFile.delete()
+                        Log.w(TAG, "Discarding downloaded APK: ${e.message}")
+                        throw e
+                    }
+
+                    withContext(Dispatchers.Main) {
+                        if (hasInstallPermission(context)) {
+                            installApk(context, apkFile)
+                            // 注意：这里绝不能延迟删包。系统安装器是异步读取安装包的，
+                            // 唤起后立刻删会让用户在确认页点「安装」时报「找不到安装包」。
+                            // 残留清理交给 CacheCleaner（updates 目录 1 天窗口）+ 下次下载前覆盖删除。
+                        } else {
+                            requestInstallPermission(context)
+                        }
+                    }
+                    return@withContext Result.success(Unit)
+                } catch (e: Exception) {
+                    Log.w(TAG, "更新包下载失败（$url），尝试下一路", e)
+                    lastFailure = e
                 }
-                Result.success(Unit)
-            } catch (e: Exception) {
-                Log.e(TAG, "更新包下载失败", e)
-                Result.failure(e)
             }
+            Log.e(TAG, "更新包下载失败：全部候选源均不可用", lastFailure)
+            Result.failure(lastFailure ?: Exception("更新包下载失败"))
         }
     }
 

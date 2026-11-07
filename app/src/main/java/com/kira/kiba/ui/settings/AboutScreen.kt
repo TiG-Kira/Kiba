@@ -573,11 +573,12 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
                                     downloadProgress = 0
                                     downloadedBytes = 0L
                                     totalBytes = 0L
-                                    val downloadUrl = UpdateChecker.constructDownloadUrl(result.latestVersionName)
+                                    // gh-proxy 加速优先，GitHub 原链接兜底
+                                    val downloadUrls = UpdateChecker.constructDownloadUrls(result.latestVersionName)
                                     scope.launch(Dispatchers.IO) {
                                         val downloadResult = ApkDownloader.downloadAndInstall(
                                             context,
-                                            downloadUrl,
+                                            downloadUrls,
                                             result.latestVersionName,
                                         ) { progress, downloaded, total ->
                                             downloadProgress = progress
