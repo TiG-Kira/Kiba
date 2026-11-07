@@ -143,7 +143,11 @@ object KibaLlm {
         val text: String = "",
         val reasoning: String = "",
         val reset: Boolean = false,
-        /** 增量回传「本次已调用过的工具」完整列表（流式实时展示技能卡用）。 */
+        /**
+         * 增量回传「本次刚执行完的工具」（不是累计列表）：
+         * UI 每收到一批就追加成一个独立分段，从而呈现
+         * 「进展 → 技能调用 → 进展 → … → 最终答复」的真实时序。
+         */
         val calls: List<KibaAgent.ToolInvocation> = emptyList(),
     )
 

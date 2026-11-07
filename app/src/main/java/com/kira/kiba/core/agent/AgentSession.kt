@@ -18,6 +18,23 @@ import kotlinx.coroutines.flow.asStateFlow
  */
 object AgentSession {
 
+    /** 回复内一个分段的类型。 */
+    enum class SegKind { TEXT, REASONING, CALLS }
+
+    /**
+     * 回复内部的一个进度分段。
+     *
+     * 为什么需要它：Agent 一次回复会「思考 → 调技能 → 再思考 → 再调 → 最终答复」，
+     * 过去把整轮拍平成 text / reasoning / calls 三个字段，多轮内容全被粘成一坨，
+     * 渲染顺序还被固定成「技能卡 → 思考 → 正文」，用户根本看不出先发生了什么。
+     * 现在按真实发生顺序逐段累积，UI 依次铺开即可。
+     */
+    data class Segment(
+        val kind: SegKind = SegKind.TEXT,
+        val text: String = "",
+        val calls: List<KibaAgent.ToolInvocation> = emptyList(),
+    )
+
     /** 一条对话记录。 */
     data class Turn(
         val fromUser: Boolean = false,
@@ -33,6 +50,11 @@ object AgentSession {
         val streaming: Boolean = false,
         /** 这一轮真正调用过的工具（WorkBuddy 式「技能调用」展示）。 */
         val calls: List<KibaAgent.ToolInvocation> = emptyList(),
+        /**
+         * 按时序排列的进度分段（正文 / 思考 / 技能调用交替）。
+         * 旧记录没有这个字段 → 空列表，UI 退化为原来的固定顺序。
+         */
+        val segments: List<Segment> = emptyList(),
     )
 
     private val gson = Gson()
@@ -65,7 +87,10 @@ object AgentSession {
      * 流式输出：把增量追加到最后一条（Agent）记录上。
      * 不落盘（避免高频写 SP），流式结束后由 [finishStream] 收尾。
      *
-     * @param reset 清空已累积的正文与思考内容（重试 / 兜底执行前丢弃上一轮的空谈）
+     * @param reset 清掉当前轮的叙事（正文 + 思考）：用于丢弃「我打算调用 X」这类
+     *   没有结论的空谈，或流式失败退回一次性请求时避免新旧文本拼接重复。
+     *   **已发生的技能调用不会被撤回**——技能确实执行过，卡片该留着。
+     * @param calls 本轮刚执行完的工具（增量，不是累计列表）
      */
     fun appendToLast(
         text: String = "",
@@ -77,11 +102,41 @@ object AgentSession {
         val list = _turns.value
         val last = list.lastOrNull() ?: return
         if (last.fromUser) return
+
+        var segs = last.segments
+        if (reset) {
+            // 只丢「最后一个技能调用之后」的叙事：那是本轮的空谈 / 半截流式内容。
+            // 更早的进度段是真实发生过的，不能一起抹掉。
+            while (segs.isNotEmpty() && segs.last().kind != SegKind.CALLS) {
+                segs = segs.dropLast(1)
+            }
+        }
+
+        // 只有紧邻的同类型段才续写；中间夹了技能调用就另起一段，
+        // 这样「查完 → 说一句 → 再查 → 再总结」不会被粘成一大坨。
+        fun put(kind: SegKind, piece: String) {
+            if (piece.isEmpty()) return
+            val tail = segs.lastOrNull()
+            segs = if (tail != null && tail.kind == kind) {
+                segs.dropLast(1) + tail.copy(text = tail.text + piece)
+            } else {
+                segs + Segment(kind = kind, text = piece)
+            }
+        }
+
+        put(SegKind.REASONING, reasoning)
+        put(SegKind.TEXT, text)
+
+        if (calls.isNotEmpty()) {
+            segs = segs + Segment(kind = SegKind.CALLS, calls = calls)
+        }
+
+        // 扁平字段只是分段的投影（历史上下文 / 旧 UI 兜底用），保持一致不会再对不上
         _turns.value = list.dropLast(1) + last.copy(
-            text = if (reset) "" else last.text + text,
-            reasoning = if (reset) "" else last.reasoning + reasoning,
-            // 技能调用卡实时：reset 时清空，chunk 携带 calls 时整体替换为当前已调用列表
-            calls = if (reset) emptyList() else if (calls.isNotEmpty()) calls else last.calls,
+            text = segs.filter { it.kind == SegKind.TEXT }.joinToString("") { it.text },
+            reasoning = segs.filter { it.kind == SegKind.REASONING }.joinToString("") { it.text },
+            calls = segs.flatMap { it.calls },
+            segments = segs,
             streaming = true,
         )
     }

@@ -509,88 +509,62 @@ private fun SkillStrip(
     }
 }
 
-/** 消息气泡（用户右 / Agent 左；颜色走 miuix 配色字段），并承载歌曲 / 技能 / B50 卡片。 */
-@OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
+/** 气泡内的一个渲染单元（按真实发生时序排列）。 */
+private sealed interface ChatBlock {
+    data class Text(val text: String) : ChatBlock
+    data class Reasoning(val text: String) : ChatBlock
+    data class Calls(val calls: List<KibaAgent.ToolInvocation>) : ChatBlock
+}
+
+/**
+ * 把一条记录拆成按时序排列的渲染单元。
+ *
+ * 新记录走 [AgentSession.Turn.segments]（流式过程中逐段累积）；
+ * 旧记录没有分段，退化成原来的固定顺序（技能卡 → 思考 → 正文）保持向后兼容。
+ */
+private fun chatBlocks(msg: AgentSession.Turn): List<ChatBlock> {
+    val raw = mutableListOf<ChatBlock>()
+    if (msg.segments.isNotEmpty()) {
+        msg.segments.forEach { seg ->
+            when (seg.kind) {
+                AgentSession.SegKind.CALLS ->
+                    if (seg.calls.isNotEmpty()) raw += ChatBlock.Calls(seg.calls)
+                AgentSession.SegKind.REASONING ->
+                    if (seg.text.isNotBlank()) raw += ChatBlock.Reasoning(seg.text)
+                AgentSession.SegKind.TEXT ->
+                    if (seg.text.isNotBlank()) raw += ChatBlock.Text(seg.text)
+            }
+        }
+    } else {
+        if (msg.calls.isNotEmpty()) raw += ChatBlock.Calls(msg.calls)
+        if (msg.reasoning.isNotBlank()) raw += ChatBlock.Reasoning(msg.reasoning)
+        if (msg.text.isNotBlank()) raw += ChatBlock.Text(msg.text)
+    }
+    // 去重：部分模型把同一段话同时塞进 content 和 reasoning_content，
+    // 不去重的话「深度思考」卡和正文气泡会显示一模一样的两段话。
+    return raw.filterIndexed { i, block ->
+        block !is ChatBlock.Text ||
+            (raw.getOrNull(i - 1) as? ChatBlock.Reasoning)?.text?.trim() != block.text.trim()
+    }
+}
+
+/** 消息气泡（用户右 / Agent 左），按发生时序依次铺开进度段与卡片。 */
 @Composable
 private fun ChatBubble(msg: AgentSession.Turn, onOpenSong: (Int, String) -> Unit) {
-    val context = LocalContext.current
     Column(modifier = Modifier.fillMaxWidth()) {
-        // 正文与思考内容去重：部分模型把同一段话同时塞进 content 和 reasoning_content，
-        // 不去重的话「深度思考」卡片和正文气泡会显示一模一样的两段话。
-        val bodyText = remember(msg.text, msg.reasoning) {
-            if (msg.reasoning.isNotBlank() && msg.text.trim() == msg.reasoning.trim()) {
-                ""
-            } else {
-                msg.text
+        // 关键：逐段铺开，而不是「技能卡整块 + 思考整块 + 正文整块」。
+        // 于是一次回复里的「查了再说 → 又说要再查 → 最终答复」各占一段，
+        // 技能卡天然夹在相邻两段进展之间，顺序就是真实发生顺序。
+        val blocks = remember(msg) { chatBlocks(msg) }
+        blocks.forEachIndexed { index, block ->
+            // 「进行中」动效只给最后一段，前面的进度段已经定型
+            val live = msg.streaming && index == blocks.lastIndex
+            when (block) {
+                is ChatBlock.Calls -> SkillInvocationCard(calls = block.calls, streaming = live)
+                is ChatBlock.Reasoning -> ReasoningCard(text = block.text, streaming = live)
+                is ChatBlock.Text -> ChatTextBubble(text = block.text, fromUser = msg.fromUser)
             }
-        }
-        // 技能调用展示（WorkBuddy 风格）：这一轮真正跑过的工具，成组展示在正文上方。
-        // 与下方 msg.skills（技能目录卡，点一下直接执行）不是一回事。
-        if (msg.calls.isNotEmpty()) {
-            SkillInvocationCard(calls = msg.calls, streaming = msg.streaming)
-            Spacer(Modifier.height(8.dp))
-        }
-        // 深度思考单独成卡，不和正文混在一起
-        if (msg.reasoning.isNotBlank()) {
-            ReasoningCard(text = msg.reasoning, streaming = msg.streaming)
-            Spacer(Modifier.height(8.dp))
-        }
-        if (bodyText.isNotBlank()) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = if (msg.fromUser) Arrangement.End else Arrangement.Start,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth(if (msg.fromUser) 0.82f else 0.92f)
-                        // 长按整段气泡复制文本：模型给的答案经常要粘到别处，之前只能手拖选中
-                        .combinedClickable(
-                            onClick = {},
-                            onLongClick = {
-                                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE)
-                                    as? ClipboardManager
-                                if (cm == null) {
-                                    Toast.makeText(context, "剪贴板不可用", Toast.LENGTH_SHORT).show()
-                                } else {
-                                    cm.setPrimaryClip(
-                                        ClipData.newPlainText("Kiba", bodyText)
-                                    )
-                                    Toast.makeText(context, "已复制这段文字", Toast.LENGTH_SHORT).show()
-                                }
-                            },
-                        )
-                        .background(
-                            if (msg.fromUser) {
-                                MiuixTheme.colorScheme.primary.copy(alpha = 0.14f)
-                            } else {
-                                MiuixTheme.colorScheme.surface
-                            },
-                            RoundedCornerShape(
-                                topStart = 14.dp,
-                                topEnd = 14.dp,
-                                bottomStart = if (msg.fromUser) 14.dp else 4.dp,
-                                bottomEnd = if (msg.fromUser) 4.dp else 14.dp,
-                            ),
-                        )
-                        .padding(horizontal = 12.dp, vertical = 9.dp),
-                ) {
-                    if (msg.fromUser) {
-                        // 用户消息保持原样（原文本，不做 markdown 解析）
-                        Text(
-                            text = bodyText,
-                            style = MiuixTheme.textStyles.body2,
-                            color = MiuixTheme.colorScheme.onSurface,
-                        )
-                    } else {
-                        // Agent 回复走 GFM 渲染：标题 / 列表 / 表格 / 代码块 / 粗斜体等
-                        MarkdownContent(
-                            text = bodyText,
-                            modifier = Modifier.fillMaxWidth(),
-                            bodyFontSizeSp = 15,
-                        )
-                    }
-                }
-            }
+            if (index != blocks.lastIndex) Spacer(Modifier.height(8.dp))
         }
 
         // 歌曲卡：点击进入歌曲详情
@@ -615,6 +589,68 @@ private fun ChatBubble(msg: AgentSession.Turn, onOpenSong: (Int, String) -> Unit
         if (msg.imageUri.isNotBlank()) {
             Spacer(Modifier.height(8.dp))
             AgentImage(uri = msg.imageUri)
+        }
+    }
+}
+
+/**
+ * 单段文本气泡。长按复制只复制这一段（进度段 / 最终答复各自可复制）。
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ChatTextBubble(text: String, fromUser: Boolean) {
+    val context = LocalContext.current
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = if (fromUser) Arrangement.End else Arrangement.Start,
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(if (fromUser) 0.82f else 0.92f)
+                // 长按整段气泡复制文本：模型给的答案经常要粘到别处，之前只能手拖选中
+                .combinedClickable(
+                    onClick = {},
+                    onLongClick = {
+                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE)
+                            as? ClipboardManager
+                        if (cm == null) {
+                            Toast.makeText(context, "剪贴板不可用", Toast.LENGTH_SHORT).show()
+                        } else {
+                            cm.setPrimaryClip(ClipData.newPlainText("Kiba", text))
+                            Toast.makeText(context, "已复制这段文字", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                )
+                .background(
+                    if (fromUser) {
+                        MiuixTheme.colorScheme.primary.copy(alpha = 0.14f)
+                    } else {
+                        MiuixTheme.colorScheme.surface
+                    },
+                    RoundedCornerShape(
+                        topStart = 14.dp,
+                        topEnd = 14.dp,
+                        bottomStart = if (fromUser) 14.dp else 4.dp,
+                        bottomEnd = if (fromUser) 4.dp else 14.dp,
+                    ),
+                )
+                .padding(horizontal = 12.dp, vertical = 9.dp),
+        ) {
+            if (fromUser) {
+                // 用户消息保持原样（原文本，不做 markdown 解析）
+                Text(
+                    text = text,
+                    style = MiuixTheme.textStyles.body2,
+                    color = MiuixTheme.colorScheme.onSurface,
+                )
+            } else {
+                // Agent 回复走 GFM 渲染：标题 / 列表 / 表格 / 代码块 / 粗斜体等
+                MarkdownContent(
+                    text = text,
+                    modifier = Modifier.fillMaxWidth(),
+                    bodyFontSizeSp = 15,
+                )
+            }
         }
     }
 }

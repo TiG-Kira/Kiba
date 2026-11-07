@@ -334,6 +334,16 @@ class KibaAgent(private val context: Context) {
         val executed = mutableSetOf<String>()
         // 本次回复里真正执行过的工具（对话流「技能调用」展示用）
         val invocations = mutableListOf<ToolInvocation>()
+        // 已经回传给 UI 的条数：只推增量，UI 才能按段追加而不是重复铺同一张卡
+        var emittedCalls = 0
+
+        /** 把新执行完的工具增量推给 UI（独立成段，跟在上面那段进展文字后面）。 */
+        suspend fun emitCalls() {
+            val sink = onChunk ?: return
+            if (invocations.size <= emittedCalls) return
+            sink(KibaLlm.StreamChunk(calls = invocations.drop(emittedCalls)))
+            emittedCalls = invocations.size
+        }
         // finish_reason == "length" 的续写次数（续写到的正文用 accumulated 累积，
         // 流式路径下 onChunk 已在追加，这里只保证非流式路径拼得出来）
         var accumulated = ""
@@ -394,8 +404,8 @@ class KibaAgent(private val context: Context) {
                     executed += call.name
                     invocations += invocationOf(call.name, call.arguments, reply)
                 }
-                // 实时回传已调用技能，让「技能调用」卡随执行逐张浮现
-                onChunk?.invoke(KibaLlm.StreamChunk(calls = invocations.toList()))
+                // 实时回传已调用技能（增量），让「技能调用」卡按段浮现
+                emitCalls()
 
                 if (nativeCalls.isNotEmpty()) {
                     // 原生 function calling：assistant(tool_calls) + tool(tool_call_id) 成对回灌
@@ -458,8 +468,8 @@ class KibaAgent(private val context: Context) {
                     executed += name
                     invocations += invocationOf(name, "", reply)
                 }
-                // 实时回传已调用技能，让「技能调用」卡随执行逐张浮现
-                onChunk?.invoke(KibaLlm.StreamChunk(calls = invocations.toList()))
+                // 实时回传已调用技能（增量），让「技能调用」卡按段浮现
+                emitCalls()
                 messages.add(KibaLlm.Message.assistant("[已执行技能 ${picked.joinToString("、")}]"))
                 picked.forEach { name ->
                     messages.add(
