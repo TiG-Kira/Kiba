@@ -107,6 +107,12 @@ import top.yukonga.miuix.kmp.glass.GlassNavigationItem
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
 import top.yukonga.miuix.kmp.icon.glass.*
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.ui.graphics.painter.BitmapPainter
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.core.content.ContextCompat
+import androidx.core.graphics.drawable.toBitmap
+import com.kira.kiba.R
 
 /**
  * Kiba 主框架：Termux Ultra 同款玻璃导航体系。
@@ -152,7 +158,7 @@ val LocalSystemNavBarBottom = staticCompositionLocalOf<Dp> { 0.dp }
 enum class KibaTab(val title: String) {
     Songs("曲目"),
     Listen("听"),
-    Agent("Agent"),
+    Agent("Kiba"),
     Me("我"),
     Settings("设置")
 }
@@ -360,6 +366,28 @@ fun KibaMainScreen() {
         topBarMemory[pageKey(page)] = topAppBarState.heightOffset to topAppBarState.contentOffset
     }
 
+    /**
+     * 出发时刻顶栏是否已「收窄 / 封面隐藏」，用于决定顶栏转场是否退化为瞬切。
+     *
+     * - 柔光玻璃+：沿用 [topAppBarState.heightOffset] 口径（顶栏真的靠收缩）。
+     * - 液态玻璃：顶栏高度恒定、不靠收缩，但谱面详情 / 播放页在折叠态用
+     *   [topAppBarState.contentOffset] < 0 隐藏封面。若只是把液态下所有退场都判成「收窄」，
+     *   会丢掉其它二级页的下沉动画（既有口径刻意避免）。因此仅对「带封面的三类二级页」
+     *   用 contentOffset 判定：返回该页时共享 state 被立即重置会闪一下封面，瞬切可掩盖，
+     *   与柔光玻璃+ 表现一致；其余液态子页仍保留下沉动画。
+     */
+    fun topBarCollapseSnapshot(): Boolean {
+        val out = subStack.lastOrNull()
+        val sinkWithCover = out is KibaSubPage.SongDetail ||
+            out is KibaSubPage.ChuniSongDetail ||
+            out is KibaSubPage.SongPlayer
+        return if (isLiquid) {
+            sinkWithCover && topAppBarState.contentOffset < 0f
+        } else {
+            topAppBarState.heightOffset < -1f
+        }
+    }
+
     fun restoreTopBar(page: Any) {
         val (h, c) = topBarMemory[pageKey(page)] ?: (0f to 0f)
         topAppBarState.heightOffset = h
@@ -389,7 +417,7 @@ fun KibaMainScreen() {
         // 液态玻璃顶栏高度恒定、不靠收缩，不存在「大标题残影」问题，
         // 也不能用 heightOffset 判定（它只是折叠进度的驱动量）——否则液态模式下
         // 进出二级页会被误判成「从收窄态出发」而退化成纯淡切，丢掉下沉动画。
-        topBarWasCollapsed = !isLiquid && topAppBarState.heightOffset < -1f
+        topBarWasCollapsed = topBarCollapseSnapshot()
         saveTopBar(subStack.lastOrNull() ?: selectedTab)
         // 进新子页 = 新导航：清掉该页残留的旧状态（比如之前访问过同一首歌）
         // 注意 holder/topBarMemory 实际都以 pageKey() 字符串为 key，必须传转换后的 key，
@@ -406,7 +434,7 @@ fun KibaMainScreen() {
             // 液态玻璃顶栏高度恒定、不靠收缩，不存在「大标题残影」问题，
         // 也不能用 heightOffset 判定（它只是折叠进度的驱动量）——否则液态模式下
         // 进出二级页会被误判成「从收窄态出发」而退化成纯淡切，丢掉下沉动画。
-        topBarWasCollapsed = !isLiquid && topAppBarState.heightOffset < -1f
+        topBarWasCollapsed = topBarCollapseSnapshot()
             val back = subStack.dropLast(1).lastOrNull() ?: selectedTab
             subStack = subStack.dropLast(1)
             // 返回上一页：恢复其滚动位置与顶栏塌缩状态，不强制回顶/展开
@@ -644,7 +672,40 @@ fun KibaMainScreen() {
                       derivedStateOf { PlayerBarSnapshot.of(playerStateSource.value) }
                   }
                   // 底栏导航项与切页回调：两套材质共用同一份数据，只换渲染控件
-                  val navItems = tabs.map { GlassNavigationItem(icon = tabIcon(it), label = it.title) }
+                  // Kiba 页用产品 Logo（按亮/暗色整体重着色：亮色黑、暗色白）
+                  val darkTheme = isSystemInDarkTheme()
+                  val kibaLogoPainter = remember(darkTheme) {
+                      val tintColor =
+                          if (darkTheme) android.graphics.Color.WHITE else android.graphics.Color.BLACK
+                      runCatching {
+                          ContextCompat.getDrawable(context, R.drawable.ic_launcher_foreground)
+                              ?.toBitmap()
+                      }.getOrNull()?.let { bm ->
+                          val copy = bm.copy(android.graphics.Bitmap.Config.ARGB_8888, true)
+                          val pixels = IntArray(copy.width * copy.height)
+                          copy.getPixels(pixels, 0, copy.width, 0, 0, copy.width, copy.height)
+                          for (i in pixels.indices) {
+                              val a = (pixels[i] shr 24) and 0xFF
+                              if (a > 128) {
+                                  // 非透明像素 → 统一染成目标色，alpha 保持原值（软边）
+                                  pixels[i] = (a shl 24) or (tintColor and 0x00FFFFFF)
+                              }
+                          }
+                          copy.setPixels(pixels, 0, copy.width, 0, 0, copy.width, copy.height)
+                          BitmapPainter(copy.asImageBitmap())
+                      }
+                  }
+                  val navItems = tabs.map { tab ->
+                      if (tab == KibaTab.Agent) {
+                          GlassNavigationItem(
+                              icon = MiuixGlassIcons.Regular.AiScan, // 占位：logo painter 优先
+                              label = tab.title,
+                              iconPainter = kibaLogoPainter,
+                          )
+                      } else {
+                          GlassNavigationItem(icon = tabIcon(tab), label = tab.title)
+                      }
+                  }
                   val onSelectTab: (Int) -> Unit = { index ->
                       val target = tabs.getOrElse(index) { selectedTab }
                       if (target != selectedTab) {

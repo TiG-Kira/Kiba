@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CornerSize
@@ -42,6 +43,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -86,6 +88,11 @@ data class GlassNavigationItem(
     val icon: ImageVector,
     val label: String? = null,
     val contentDescription: String? = null,
+    /**
+     * 可选栅格图标（如产品 Logo PNG）。设置后优先于 [icon] 渲染，
+     * 且不再跟随导航栏选中态变色（由调用方自行着色）。
+     */
+    val iconPainter: Painter? = null,
 )
 
 /** Default values for [GlassNavigationBar]. */
@@ -475,12 +482,20 @@ fun GlassNavigationBar(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(GlassNavigationBarDefaults.LabelSpacing),
                         ) {
-                            Icon(
-                                imageVector = item.icon,
-                                contentDescription = null,
-                                modifier = Modifier.size(GlassNavigationBarDefaults.IconSize),
-                                tint = tint,
-                            )
+                            if (item.iconPainter != null) {
+                                Image(
+                                    painter = item.iconPainter,
+                                    contentDescription = item.contentDescription ?: item.label,
+                                    modifier = Modifier.size(GlassNavigationBarDefaults.IconSize),
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = item.icon,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(GlassNavigationBarDefaults.IconSize),
+                                    tint = tint,
+                                )
+                            }
                             if (item.label != null) {
                                 Text(
                                     text = item.label,

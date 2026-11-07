@@ -31,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.material3.LinearProgressIndicator
 import com.kira.kiba.core.account.LxnsAccount
 import com.kira.kiba.core.data.ChuniRecordSync
 import com.kira.kiba.core.model.GameType
@@ -50,12 +51,16 @@ import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
+import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.preference.CheckboxPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import kotlin.random.Random
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+/** 机台成绩更新阶段：决定进度卡 / 难度卡 / 按钮文案的显隐。 */
+enum class UpdatePhase { Idle, Running, Done }
 
 /**
  * 机台成绩更新（VPN 抓包方案，移植自上游 MaimaiData 的"查分器代理"）。
@@ -90,6 +95,13 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
     val useLxns = source == ScoreSource.LXNS
     val lxnsState by LxnsAccount.state.collectAsState()
 
+    /** 更新阶段：决定进度卡 / 难度卡 / 按钮文案的显隐。 */
+    var phase by remember { mutableStateOf(UpdatePhase.Idle) }
+    /** 进度卡状态文案（正在抓取… / 正在上传… / 上传完成 / 上传失败）。 */
+    var statusText by remember { mutableStateOf("") }
+    /** 运行日志默认折叠，提供展开按钮。 */
+    var logsExpanded by remember { mutableStateOf(false) }
+
     DisposableEffect(Unit) {
         val listener = object : WechatCrawlerListener {
             override fun onMessageReceived(logString: String) {
@@ -98,14 +110,19 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
 
             override fun onStartAuth() {
                 logs.add("开始获取微信授权…")
+                // 微信授权回调已收到 → 抓取阶段结束、进入上传阶段
+                statusText = "正在上传…"
             }
 
             override fun onFinishUpdate() {
                 waitingCallback = false
                 logs.add("成绩更新完成")
+                // 进度卡定格为「上传完成」，难度卡恢复、按钮回到「开始抓包」
+                phase = UpdatePhase.Done
+                statusText = "上传完成"
                 // 立刻刷新对应游戏的成绩：防止回到「我」页时还挂着上一次失败的错误提示
                 if (isChunithm) {
-                    scope.launch { runCatching { ChuniRecordSync.refresh() } }
+                    ChuniRecordSync.refreshAsync()
                 } else {
                     KibaState.refreshRecords()
                 }
@@ -115,6 +132,8 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
                 waitingCallback = false
                 Log.e(TAG, "机台更新 onError", e)
                 logs.add("出错：${e.javaClass.simpleName}: ${e.message}")
+                phase = UpdatePhase.Done
+                statusText = "上传失败：${e.message}"
             }
         }
         CrawlerCaller.setOnWechatCrawlerListener(listener)
@@ -140,6 +159,9 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
         runCatching { LocalVpnService.shutdown() }
         running = false
         waitingCallback = false
+        // 中断后回到初始态：难度卡恢复、按钮回到「开始抓包」、进度卡收起
+        phase = UpdatePhase.Idle
+        statusText = ""
         logs.add("已停止抓包")
     }
 
@@ -161,6 +183,9 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
         }.onFailure { logs.add("服务启动失败：${it.javaClass.simpleName}: ${it.message}") }
         running = true
         waitingCallback = true
+        // 进入「运行中」：进度卡显示、难度卡隐藏、按钮变「停止上传」
+        phase = UpdatePhase.Running
+        statusText = "正在抓取…"
         HttpCapturerTunnel.resetCaptureState()
         // 生成随机链接并复制到剪贴板，引导用户在微信里打开
         val chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
@@ -306,6 +331,7 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
             item(key = "diff_title") {
                 SectionTitle(if (isChunithm) "更新难度（中二节奏）" else "更新难度（舞萌）")
             }
+            if (phase != UpdatePhase.Running) {
             item(key = "diff_card") {
                 Card(
                 modifier = (Modifier.fillMaxWidth()),
@@ -352,6 +378,45 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
                     }
                 }
             }
+            }
+
+            // ── 进度卡片：运行中显示进度条，完成显示结果文案 ──
+            if (phase != UpdatePhase.Idle) {
+                item(key = "progress_card") {
+                    Card(
+                        modifier = (Modifier.fillMaxWidth()),
+                        cornerRadius = CardDefaults.CornerRadius,
+                        insideMargin = CardDefaults.InsideMargin,
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            if (phase == UpdatePhase.Running) {
+                                LinearProgressIndicator(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    color = MiuixTheme.colorScheme.primary,
+                                )
+                                Spacer(Modifier.height(10.dp))
+                            }
+                            Text(
+                                text = statusText,
+                                style = MiuixTheme.textStyles.subtitle,
+                                color = if (phase == UpdatePhase.Done && statusText.startsWith("上传失败")) {
+                                    MiuixTheme.colorScheme.error
+                                } else {
+                                    MiuixTheme.colorScheme.onSurface
+                                },
+                            )
+                            if (phase == UpdatePhase.Done) {
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    text = "可点「开始抓包」再跑一次，或到「设置 → 查分器数据源」换源重试。",
+                                    style = MiuixTheme.textStyles.footnote1,
+                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
 
             item(key = "action_title") { SectionTitle("操作") }
             item(key = "action_card") {
@@ -368,7 +433,7 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
                             Button(
                                 colors = ButtonDefaults.buttonColorsPrimary(),
                                 onClick = {
-                                    if (running || waitingCallback) {
+                                    if (phase == UpdatePhase.Running) {
                                         stopServices()
                                     } else {
                                         val prepare = LocalVpnService.prepare(context)
@@ -383,8 +448,7 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
                             ) {
                                 Text(
                                     text = when {
-                                        running -> "停止抓包"
-                                        waitingCallback -> "抓取中…"
+                                        phase == UpdatePhase.Running -> "停止上传"
                                         else -> "开始抓包"
                                     }
                                 )
@@ -395,20 +459,34 @@ fun MachineUpdateScreen(scrollBehavior: ScrollBehavior) {
             }
 
             if (logs.isNotEmpty()) {
-                item(key = "log_title") { SectionTitle("运行日志") }
-                item(key = "log") {
-                    Card(
-                    modifier = (Modifier.fillMaxWidth()),
-                    cornerRadius = CardDefaults.CornerRadius,
-                        insideMargin = CardDefaults.InsideMargin,
+                item(key = "log_title") {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            logs.takeLast(30).forEach { line ->
-                                Text(
-                                    text = line,
-                                    style = MiuixTheme.textStyles.footnote2,
-                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                                )
+                        SectionTitle("运行日志")
+                        TextButton(
+                            text = if (logsExpanded) "收起" else "展开",
+                            onClick = { logsExpanded = !logsExpanded },
+                        )
+                    }
+                }
+                if (logsExpanded) {
+                    item(key = "log") {
+                        Card(
+                            modifier = (Modifier.fillMaxWidth()),
+                            cornerRadius = CardDefaults.CornerRadius,
+                            insideMargin = CardDefaults.InsideMargin,
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                logs.takeLast(30).forEach { line ->
+                                    Text(
+                                        text = line,
+                                        style = MiuixTheme.textStyles.footnote2,
+                                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                    )
+                                }
                             }
                         }
                     }

@@ -11,6 +11,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -569,12 +570,20 @@ private fun TabContent(
         verticalArrangement = Arrangement.spacedBy(1.dp, Alignment.CenterVertically),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Icon(
-            imageVector = item.icon,
-            contentDescription = item.contentDescription ?: item.label,
-            tint = tint,
-            modifier = Modifier.size(28.dp),
-        )
+        if (item.iconPainter != null) {
+            Image(
+                painter = item.iconPainter,
+                contentDescription = item.contentDescription ?: item.label,
+                modifier = Modifier.size(28.dp),
+            )
+        } else {
+            Icon(
+                imageVector = item.icon,
+                contentDescription = item.contentDescription ?: item.label,
+                tint = tint,
+                modifier = Modifier.size(28.dp),
+            )
+        }
         if (item.label != null) {
             Text(
                 text = item.label,

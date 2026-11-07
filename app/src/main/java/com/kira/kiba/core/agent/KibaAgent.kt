@@ -394,6 +394,8 @@ class KibaAgent(private val context: Context) {
                     executed += call.name
                     invocations += invocationOf(call.name, call.arguments, reply)
                 }
+                // 实时回传已调用技能，让「技能调用」卡随执行逐张浮现
+                onChunk?.invoke(KibaLlm.StreamChunk(calls = invocations.toList()))
 
                 if (nativeCalls.isNotEmpty()) {
                     // 原生 function calling：assistant(tool_calls) + tool(tool_call_id) 成对回灌
@@ -456,6 +458,8 @@ class KibaAgent(private val context: Context) {
                     executed += name
                     invocations += invocationOf(name, "", reply)
                 }
+                // 实时回传已调用技能，让「技能调用」卡随执行逐张浮现
+                onChunk?.invoke(KibaLlm.StreamChunk(calls = invocations.toList()))
                 messages.add(KibaLlm.Message.assistant("[已执行技能 ${picked.joinToString("、")}]"))
                 picked.forEach { name ->
                     messages.add(

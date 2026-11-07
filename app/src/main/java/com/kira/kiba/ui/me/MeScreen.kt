@@ -104,8 +104,10 @@ fun MeScreen(
     val lxnsBound = lxnsState.bound
     val lxnsName = lxnsState.name
     val lxnsOauth = lxnsState.oauth
-    val maimaiSource = remember { SpUtil.getScoreSource(GameType.MAIMAI) }
-    val chuniSource = remember { SpUtil.getScoreSource(GameType.CHUNITHM) }
+    // 数据源响应式：切源后本页立刻跟着变（源标签 / 引导文案 / 分支判定），
+    // 不能停留在进入页面那一刻读到的旧值（否则切到落雪源还显示「水鱼源」）。
+    val maimaiSource by SpUtil.maimaiSourceFlow.collectAsState()
+    val chuniSource by SpUtil.chuniSourceFlow.collectAsState()
     val chuniReady = remember(chuniSource, chuniJwtPresent) {
         if (chuniSource == ScoreSource.LXNS) LxnsAccount.isBound() else chuniJwtPresent
     }
@@ -211,15 +213,16 @@ fun MeScreen(
             item(key = "checker_card") {
                 Card(modifier = (Modifier.fillMaxWidth())) {
                     ArrowPreference(
-                        // 水鱼卡只看**水鱼凭据**：落雪源下 account.bound 也会是 true（成绩来自落雪），
-                        // 拿它判断会把落雪账户显示成「当前水鱼账户」。
+                        // 水鱼卡只看**水鱼凭据**：落雪源下 account.bound / account.nickname /
+                        // account.rating 会被落雪数据覆盖，若直接读 account 就会把落雪账户
+                        // 显示成「当前水鱼账户」。这里固定读水鱼自己的持久化身份。
                         title = when {
                             account.dfLoggedIn -> "重新登录水鱼账户"
                             else -> "水鱼账户登录"
                         },
                         summary = when {
                             account.dfLoggedIn ->
-                                "当前水鱼账户：${account.nickname.ifBlank { "水鱼用户" }}（Rating ${account.rating}）· 点击重新登录"
+                                "当前水鱼账户：${SpUtil.getDivingFishOAuthNickname().ifBlank { "水鱼用户" }}（Rating ${SpUtil.getDivingFishRating()}）· 点击重新登录"
                             else -> "水鱼源专用：支持水鱼账号密码登录（OAuth 授权已暂时停用）"
                         },
                         startAction = { PrefIcon(MiuixGlassIcons.Regular.Lock) },

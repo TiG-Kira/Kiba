@@ -10,6 +10,9 @@ import com.kira.kiba.core.model.GameType
 import com.kira.kiba.core.model.ScoreSource
 import com.kira.kiba.core.model.SongGroupMode
 import java.util.UUID
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 object SpUtil {
     private lateinit var application: Application
@@ -168,6 +171,20 @@ object SpUtil {
 
     fun getDivingFishOAuthNickname(): String =
         userInfoPrefs.getString(KEY_DF_NICKNAME_OAUTH, "") ?: ""
+
+    /**
+     * 水鱼**成绩 Rating**（Best 50 口径，本地算出的总分）。
+     * 与 [getDivingFishOAuthNickname] 分开存：账户卡（「我」页查分器组）要一直显示
+     * **水鱼自己的**昵称与 Rating，不能因为切到落雪源、[DivingFishAccount.state]
+     * 被落雪数据覆盖就跟着变成落雪账户。
+     */
+    private const val KEY_DF_RATING = "diving_fish_rating"
+
+    fun saveDivingFishRating(rating: Int) {
+        userInfoPrefs.edit { putInt(KEY_DF_RATING, rating) }
+    }
+
+    fun getDivingFishRating(): Int = userInfoPrefs.getInt(KEY_DF_RATING, 0)
 
     // ================= DIVINGFISH 原版账号密码登录 =================
 
@@ -329,6 +346,17 @@ object SpUtil {
         ),
     )
 
+    /**
+     * 数据源**响应式**镜像：切换源后「我」页的 Rating 卡要立刻跟着变（源标签、引导文案、
+     * 以及「水鱼源 / 落雪源」分支判定），不能还停留在进入页面那一刻读到的旧值。
+     * 设置页改源时一并推流（[setScoreSource]）。
+     */
+    private val _maimaiSourceFlow = MutableStateFlow(getScoreSource(GameType.MAIMAI))
+    val maimaiSourceFlow: StateFlow<ScoreSource> = _maimaiSourceFlow.asStateFlow()
+
+    private val _chuniSourceFlow = MutableStateFlow(getScoreSource(GameType.CHUNITHM))
+    val chuniSourceFlow: StateFlow<ScoreSource> = _chuniSourceFlow.asStateFlow()
+
     fun setScoreSource(gameType: GameType, source: ScoreSource) {
         userInfoPrefs.edit {
             putString(
@@ -336,6 +364,8 @@ object SpUtil {
                 source.key,
             )
         }
+        if (gameType == GameType.MAIMAI) _maimaiSourceFlow.value = source
+        else _chuniSourceFlow.value = source
     }
 
     // ================= 落雪 LXNS 账号（个人 API Key） =================

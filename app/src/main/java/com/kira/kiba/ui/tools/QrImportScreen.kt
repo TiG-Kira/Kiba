@@ -27,6 +27,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.Alignment
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -36,6 +38,7 @@ import com.kira.kiba.core.state.KibaState
 import com.kira.kiba.core.utils.SpUtil
 import com.kira.kiba.ui.common.SectionTitle
 import com.kira.kiba.ui.common.pageContentPadding
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
@@ -71,6 +74,10 @@ fun QrImportScreen(scrollBehavior: ScrollBehavior) {
     var importToken by remember { mutableStateOf(SpUtil.getDivingFishImportToken()) }
     var importing by remember { mutableStateOf(false) }
     var showCamera by remember { mutableStateOf(false) }
+    /** 运行日志默认折叠，提供展开按钮。 */
+    var logsExpanded by remember { mutableStateOf(false) }
+    /** 当前导入协程，用于「停止上传」时中断。 */
+    var importJob by remember { mutableStateOf<Job?>(null) }
 
     val cameraPermLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
@@ -94,7 +101,7 @@ fun QrImportScreen(scrollBehavior: ScrollBehavior) {
     fun startImport() {
         if (importing) return
         importing = true
-        scope.launch {
+        importJob = scope.launch {
             val result = QrScoreImport.importFromQr(
                 qrCodeRaw = qrText,
                 importToken = importToken,
@@ -111,7 +118,17 @@ fun QrImportScreen(scrollBehavior: ScrollBehavior) {
             // 用完即毁：无论成败，二维码立即清空丢弃；令牌保留方便再次导入
             qrText = ""
             importing = false
+            importJob = null
         }
+    }
+
+    /** 中断正在进行的导入（按钮变「停止上传」时可点）。 */
+    fun stopImport() {
+        importJob?.cancel()
+        importJob = null
+        importing = false
+        qrText = ""
+        logs.add("已停止导入")
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -290,16 +307,42 @@ fun QrImportScreen(scrollBehavior: ScrollBehavior) {
                     }
                 }
 
+                // ── 进度卡片：导入中显示进度条 ──
+                if (importing) {
+                    item(key = "progress_card") {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            cornerRadius = CardDefaults.CornerRadius,
+                            insideMargin = CardDefaults.InsideMargin,
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                LinearProgressIndicator(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    color = MiuixTheme.colorScheme.primary,
+                                )
+                                Spacer(Modifier.height(10.dp))
+                                Text(
+                                    text = "正在导入…",
+                                    style = MiuixTheme.textStyles.subtitle,
+                                    color = MiuixTheme.colorScheme.onSurface,
+                                )
+                            }
+                        }
+                    }
+                }
+
                 item(key = "action_card") {
                     Button(
                         colors = ButtonDefaults.buttonColorsPrimary(),
-                        onClick = { startImport() },
+                        onClick = {
+                            if (importing) stopImport() else startImport()
+                        },
                         modifier = Modifier.fillMaxWidth(),
-                        enabled = !importing && qrText.isNotBlank() &&
-                            (importToken.isNotBlank() || account.bound),
+                        enabled = importing || (qrText.isNotBlank() &&
+                            (importToken.isNotBlank() || account.bound)),
                     ) {
                         Text(
-                            text = if (importing) "正在导入…" else "开始导入",
+                            text = if (importing) "停止上传" else "开始导入",
                             fontWeight = FontWeight.Bold,
                             color = Color.White,
                         )
@@ -332,20 +375,34 @@ fun QrImportScreen(scrollBehavior: ScrollBehavior) {
                 }
 
                 if (logs.isNotEmpty()) {
-                    item(key = "log_title") { SectionTitle("运行日志") }
-                    item(key = "log") {
-                        Card(
+                    item(key = "log_title") {
+                        Row(
                             modifier = Modifier.fillMaxWidth(),
-                            cornerRadius = CardDefaults.CornerRadius,
-                            insideMargin = CardDefaults.InsideMargin,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Column(modifier = Modifier.padding(16.dp)) {
-                                logs.takeLast(30).forEach { line ->
-                                    Text(
-                                        text = line,
-                                        style = MiuixTheme.textStyles.footnote2,
-                                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                                    )
+                            SectionTitle("运行日志")
+                            TextButton(
+                                text = if (logsExpanded) "收起" else "展开",
+                                onClick = { logsExpanded = !logsExpanded },
+                            )
+                        }
+                    }
+                    if (logsExpanded) {
+                        item(key = "log") {
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                cornerRadius = CardDefaults.CornerRadius,
+                                insideMargin = CardDefaults.InsideMargin,
+                            ) {
+                                Column(modifier = Modifier.padding(16.dp)) {
+                                    logs.takeLast(30).forEach { line ->
+                                        Text(
+                                            text = line,
+                                            style = MiuixTheme.textStyles.footnote2,
+                                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                        )
+                                    }
                                 }
                             }
                         }

@@ -303,8 +303,9 @@ fun SettingsScreen(
                             ScoreSource.entries.getOrNull(index)?.let { picked ->
                                 maimaiSource = picked
                                 SpUtil.setScoreSource(GameType.MAIMAI, picked)
-                                // 切源后立刻按新源刷新一次；失败由「我」页状态条提示，不打断设置操作
-                                scope.launch { runCatching { DivingFishAccount.refreshRecords() } }
+                                // 切源后立刻按新源刷新一次；用应用级作用域触发，
+                                // 避免离开设置页（UI 协程取消）把刷新掐死在半路、Rating 卡卡在「正在获取成绩…」
+                                DivingFishAccount.refreshRecordsAsync()
                             }
                         },
                     )
@@ -318,7 +319,7 @@ fun SettingsScreen(
                             ScoreSource.entries.getOrNull(index)?.let { picked ->
                                 chuniSource = picked
                                 SpUtil.setScoreSource(GameType.CHUNITHM, picked)
-                                scope.launch { runCatching { ChuniRecordSync.refresh() } }
+                                ChuniRecordSync.refreshAsync()
                             }
                         },
                     )

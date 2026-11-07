@@ -143,6 +143,8 @@ object KibaLlm {
         val text: String = "",
         val reasoning: String = "",
         val reset: Boolean = false,
+        /** 增量回传「本次已调用过的工具」完整列表（流式实时展示技能卡用）。 */
+        val calls: List<KibaAgent.ToolInvocation> = emptyList(),
     )
 
     private data class ChatRequest(

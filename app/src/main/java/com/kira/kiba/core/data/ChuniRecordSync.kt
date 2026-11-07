@@ -9,10 +9,13 @@ import com.kira.kiba.core.db.entity.ChuniRecordEntity
 import com.kira.kiba.core.model.GameType
 import com.kira.kiba.core.model.ScoreSource
 import com.kira.kiba.core.utils.SpUtil
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -75,6 +78,18 @@ object ChuniRecordSync {
 
     private val _state = MutableStateFlow<SyncState>(SyncState.Idle)
     val state: StateFlow<SyncState> = _state.asStateFlow()
+
+    /**
+     * 应用级作用域：切源刷新需要脱离 UI 协程（设置页 `rememberCoroutineScope` 在返回
+     * 「我」页时会被取消），否则中二同步可能被掐死在半路、[SyncState.Syncing] 永不结束，
+     * Rating 卡卡在「正在同步中二成绩…」。
+     */
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    /** 应用级作用域触发刷新（见 [appScope] 注释）。 */
+    fun refreshAsync() {
+        appScope.launch { runCatching { refresh() } }
+    }
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)

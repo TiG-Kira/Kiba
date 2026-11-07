@@ -67,7 +67,12 @@ object AgentSession {
      *
      * @param reset 清空已累积的正文与思考内容（重试 / 兜底执行前丢弃上一轮的空谈）
      */
-    fun appendToLast(text: String = "", reasoning: String = "", reset: Boolean = false) {
+    fun appendToLast(
+        text: String = "",
+        reasoning: String = "",
+        reset: Boolean = false,
+        calls: List<KibaAgent.ToolInvocation> = emptyList(),
+    ) {
         ensureLoaded()
         val list = _turns.value
         val last = list.lastOrNull() ?: return
@@ -75,6 +80,8 @@ object AgentSession {
         _turns.value = list.dropLast(1) + last.copy(
             text = if (reset) "" else last.text + text,
             reasoning = if (reset) "" else last.reasoning + reasoning,
+            // 技能调用卡实时：reset 时清空，chunk 携带 calls 时整体替换为当前已调用列表
+            calls = if (reset) emptyList() else if (calls.isNotEmpty()) calls else last.calls,
             streaming = true,
         )
     }

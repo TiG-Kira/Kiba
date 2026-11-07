@@ -253,13 +253,15 @@ fun AgentScreen(
                         text = chunk.text,
                         reasoning = chunk.reasoning,
                         reset = chunk.reset,
+                        calls = chunk.calls,
                     )
                 }
             }.getOrElse {
                 KibaAgent.AgentReply("出错了：${it.message ?: "未知错误"}", skills = KibaAgent.SKILLS)
             }
             AgentSession.finishStream()
-            // 技能数据（歌曲 / B50 / 梗图）等非流式产物，合并到最后一条
+            // 技能数据（歌曲 / B50 / 梗图）等非流式产物，合并到最后一条。
+            // 注意：技能调用卡（calls）已在流式过程中实时写入，这里不再覆盖，避免清空。
             val last = AgentSession.turns.value.lastOrNull()
             if (last != null && !last.fromUser) {
                 AgentSession.replaceLast(
@@ -268,7 +270,6 @@ fun AgentScreen(
                         skills = reply.skills,
                         b50 = reply.b50,
                         imageUri = reply.imageUri.ifBlank { last.imageUri },
-                        calls = reply.calls,
                     )
                 )
             }

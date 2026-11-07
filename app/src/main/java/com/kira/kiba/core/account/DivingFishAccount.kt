@@ -530,6 +530,9 @@ object DivingFishAccount {
             if (nickname.isNotBlank()) {
                 SpUtil.saveDivingFishOAuthNickname(nickname)
             }
+            // 落盘水鱼自己的 Rating：账户卡要一直显示水鱼身份，不能因切到落雪源
+            // 让 account.nickname/rating 被落雪数据覆盖。
+            SpUtil.saveDivingFishRating(best50Cache.rating)
             _state.value = AccountState(
                 bound = true,
                 nickname = nickname.ifBlank { SpUtil.getDivingFishOAuthNickname() },
@@ -546,6 +549,16 @@ object DivingFishAccount {
                 error = "成绩获取失败：${e.message}（将展示本地缓存）",
             )
         }
+    }
+
+    /**
+     * 应用级作用域触发刷新：**脱离 UI 协程作用域**，避免切源后用户从设置页返回「我」页、
+     * 设置页的 `rememberCoroutineScope` 被取消，把刷新掐死在半路（[AccountState.loading]
+     * 永远停在 true，Rating 卡卡在「正在获取成绩…」，只能重启 Activity 救活）。
+     * 设置页切源、以及任何非 UI 持有的调用方都用这个。
+     */
+    fun refreshRecordsAsync() {
+        appScope.launch { runCatching { refreshRecords() } }
     }
 
     /**
