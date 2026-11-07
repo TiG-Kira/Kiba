@@ -1461,6 +1461,7 @@ class KibaAgent(private val context: Context) {
      *
      * 与舞萌推分**口径不同**：中二 SSS+ 要 1009000（满分才 1010000，余量只有 1000 分，
      * 漏一个 note 就掉线），比 SSS 只多 0.15 ra —— 死磕 SSS+ 是典型的高投入低回报。所以这里
+     * 先按**综合定数**（Best50 定数平均）卡出 −0.5 ~ +1.0 的定数区间，只在区间内
      * 「按定数从高到低排、同定数取能压过地板的最低档位」，SSS+ 结构性沉底但保留，
      * 详见 [ChuniPushRecommender]。
      */
@@ -1519,6 +1520,12 @@ class KibaAgent(private val context: Context) {
                 )
             }
 
+        // 综合定数 = Best50（非当前 30 + 当前 20）的定数平均；曲线区间的锚点。
+        val poolDs = (stats.nonCurrent + stats.current).map { it.ds }.filter { it > 0.0 }
+        val avgDs = if (poolDs.isEmpty()) 0.0 else poolDs.average()
+        val libMaxDs = chartInputs.maxOfOrNull { it.ds } ?: 0.0
+        val band = ChuniPushRecommender.bandOf(avgDs, libMaxDs)
+
         val candidates = ChuniPushRecommender.recommend(
             charts = chartInputs,
             scores = records
@@ -1541,6 +1548,7 @@ class KibaAgent(private val context: Context) {
                 size = stats.current.size,
                 capacity = ChuniRating.CURRENT_SIZE,
             ),
+            band = band,
             limit = 10,
         )
 
@@ -1551,6 +1559,12 @@ class KibaAgent(private val context: Context) {
                 " · 当前 TOP20 地板 ra ${currentFloor?.let { "%.2f".format(it) } ?: "—"}\n\n"
         )
         sb.append(
+            "综合定数 ${"%.2f".format(band.center)}（Best50 定数平均）→ " +
+                "推荐区间定数 **${"%.1f".format(band.low)} ~ ${"%.1f".format(band.high)}**" +
+                "（曲库最高 ${"%.1f".format(libMaxDs)}）：区间外的谱不推 —— " +
+                "低于区间只能靠 SSS+ 硬顶，高于区间打不动也拿不到 ra。\n\n"
+        )
+        sb.append(
             "SSS+ 要 ${ChuniPushRecommender.SSS_PLUS_SCORE}（满分 ${ChuniPushRecommender.MAX_SCORE}），" +
                 "余量只有 ${ChuniPushRecommender.SSS_PLUS_MARGIN} 分 —— 一个 note 就值上千分，" +
                 "漏一个基本就掉线，却只比 SSS 多 0.15 ra；所以压在最后，" +
@@ -1558,7 +1572,11 @@ class KibaAgent(private val context: Context) {
                 "同定数挑最容易压过地板的档位。\n\n"
         )
         if (candidates.isEmpty()) {
-            sb.append("暂时没有合适目标：高于地板的谱面你都贴着档位上限了，去冲更高定数的新谱吧。")
+            sb.append(
+                "综合定数区间 ${"%.1f".format(band.low)} ~ ${"%.1f".format(band.high)} 内暂时没有" +
+                    "能压过地板的目标：区间里的谱要么已经打到位，要么分数还差得远。" +
+                    "先把这段的谱刷稳，或者等新曲进曲库再看。"
+            )
         } else {
             candidates.forEachIndexed { index, c ->
                 if (index > 0) sb.append("\n---\n\n")
@@ -1599,7 +1617,10 @@ class KibaAgent(private val context: Context) {
             "\n\n档位由易到难：AAA < S < S+ < SS < SS+ < SSS < SSS+；" +
                 "排在前面的定数更高、打起来不一定更累，SSS+ 会沉在末尾。"
         )
-        sb.append("\n数据来自本地曲库定数 + 官方 ra 公式，实际增益以落雪 / 机台结算为准。")
+        sb.append(
+            "\n数据来自本地曲库定数 + 官方 ra 公式，实际增益以落雪 / 机台结算为准。" +
+                "综合定数 = Best50 的定数平均，同步新成绩后会跟着变。"
+        )
         return AgentReply(sb.toString().trimEnd())
     }
 
@@ -2298,7 +2319,8 @@ class KibaAgent(private val context: Context) {
             ),
             AgentSkill(
                 "chuni_push", "中二推分推荐",
-                "按官方单曲 ra 公式推「高定数 + 低档位就能压过地板」的谱面，按定数从高到低排；" +
+                "按官方单曲 ra 公式推「高定数 + 低档位就能压过地板」的谱面，" +
+                    "只在你的综合定数（Best50 定数平均）−0.5 ~ +1.0 区间内挑，按定数从高到低排；" +
                     "SSS+ 大幅降权（要 1009000、距满分只剩 1000 分，只比 SSS 多 0.15 ra），" +
                     "只在 rating 17+ 推无可推时出现",
             ),

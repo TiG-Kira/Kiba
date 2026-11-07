@@ -9,13 +9,15 @@ import org.junit.Test
 /**
  * [ChuniPushRecommender] 的单元测试。
  *
- * 两条铁律（都是真实体验问题）：
+ * 三条铁律（都是真实体验问题）：
  * 1. **SSS+ 大幅降权**：线是 1009000，满分 1010000，余量只有 **1000 分**（漏一个 note 就掉线），
  *    却只比 SSS（1007500）多 0.15 ra —— 沉底，但 rating 17+ 推无可推时保留；
- * 2. **高定数优先、低 rank 优先**：同样收益下，换高定数的谱永远比在同一定数上硬顶 rank 省力。
+ * 2. **高定数优先、低 rank 优先**：同样收益下，换高定数的谱永远比在同一定数上硬顶 rank 省力；
+ * 3. **按综合定数卡区间**：只在 Best50 平均定数 −0.5 ~ +1.0 内推荐，
+ *    不推低定数硬顶 SSS+ 的亏本谱，也不推超水平的 BOSS 谱（rating 14 的人不打 15+）。
  *
  * 旧实现把档位表按**降序**排列后取 `firstOrNull`，结果对每个谱面都命中最高档 SSS+，
- * 推荐列表全是「差几万分到 SSS+」——这两条全违反。
+ * 推荐列表全是「差几万分到 SSS+」——这些全违反。
  */
 class ChuniPushRecommenderTest {
 
@@ -284,5 +286,66 @@ class ChuniPushRecommenderTest {
         // SSS+ 只允许出现在末尾
         assertTrue(result.dropLast(1).none { it.tierName == "SSS+" })
         assertEquals("SSS+", result.last().tierName)
+    }
+
+    @Test
+    fun `综合定数决定推荐区间`() {
+        // 综合定数 14.0 → [13.5, 15.0]；曲库最高 15.5 也压不住上沿
+        val band = ChuniPushRecommender.bandOf(avgDs = 14.0, maxDs = 15.5)
+        assertEquals(14.0, band.center, 1e-9)
+        assertEquals(13.5, band.low, 1e-9)
+        assertEquals(15.0, band.high, 1e-9)
+        assertTrue(band.contains(14.6))
+        assertFalse(band.contains(15.1))
+        assertFalse(band.contains(13.4))
+        // 上沿不超过曲库最高定数
+        val capped = ChuniPushRecommender.bandOf(avgDs = 15.0, maxDs = 15.4)
+        assertEquals(15.4, capped.high, 1e-9)
+        // 下沿不会掉到负数
+        assertTrue(ChuniPushRecommender.bandOf(avgDs = 0.2, maxDs = 15.5).low >= 0.0)
+    }
+
+    @Test
+    fun `rating14的人不会被推去打15+的boss谱`() {
+        // 综合定数 14.0 → 区间 [13.5, 15.0]；地板 14.8
+        //   14.6 → S+（15.2）能过地板，且在区间内 ✓
+        //   15.4 → S（15.4）也能过地板，但超出区间 ✗（这就是「别推 BOSS 谱」）
+        //   13.0 → SSS+ 勉强 15.15，也在区间外 ✗（低定数高 rank，亏本）
+        val result = ChuniPushRecommender.recommend(
+            charts = listOf(chart(1, 14.6), chart(2, 15.4), chart(3, 13.0)),
+            scores = emptyList(),
+            nonCurrent = pool(14.8),
+            current = empty20,
+            band = ChuniPushRecommender.bandOf(avgDs = 14.0, maxDs = 15.5),
+        )
+        assertEquals(listOf(14.6), result.map { it.ds })
+    }
+
+    @Test
+    fun `区间内只剩SSS+时仍然给建议`() {
+        // 综合定数 15.0 → 区间 [14.5, 15.5]；地板 17.2 只有 15.2 能靠 SSS+ 过
+        val result = ChuniPushRecommender.recommend(
+            charts = listOf(chart(1, 15.2), chart(2, 14.0)),
+            scores = emptyList(),
+            nonCurrent = pool(17.2),
+            current = empty20,
+            band = ChuniPushRecommender.bandOf(avgDs = 15.0, maxDs = 15.5),
+        )
+        val c = result.single()
+        assertEquals(15.2, c.ds, 1e-9)
+        assertEquals("SSS+", c.tierName)
+    }
+
+    @Test
+    fun `区间内没有目标时返回空 不退化成全曲库搜索`() {
+        // 综合定数 14.0 → [13.5, 15.0]，地板 16.8：区间内 14.6 靠 SSS+ 也只有 16.75 → 空
+        val result = ChuniPushRecommender.recommend(
+            charts = listOf(chart(1, 14.6), chart(2, 15.4)),
+            scores = emptyList(),
+            nonCurrent = pool(16.8),
+            current = empty20,
+            band = ChuniPushRecommender.bandOf(avgDs = 14.0, maxDs = 15.5),
+        )
+        assertTrue(result.isEmpty())
     }
 }

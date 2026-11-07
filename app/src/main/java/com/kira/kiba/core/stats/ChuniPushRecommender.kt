@@ -21,6 +21,8 @@ import com.kira.kiba.core.data.ChuniRating
  * 目标，就轮不到它。
  *
  * ## 推荐口径
+ * 0. **先卡定数区间**（[Band]）：区间由 Best50 的平均定数（综合定数）+0.0/−0.5/+1.0 决定，
+ *    区间外的谱面直接不进候选 —— rating 14~15 的玩家不会被推去啃 15+ 的 BOSS 谱；
  * 1. **档位从最省力的一档往上挑**：能 S 压过地板就绝不要 SS+，SSS+ 只在没得选时才成为目标；
  * 2. **按定数从高到低排**：定数越高，同一档位拿到的 ra 越高，换谱永远比在同一定数上硬顶 rank 划算；
  * 3. **同定数优先更低档位**：同等收益下挑更容易的那个（SSS+ 天然排在 SSS 之后）。
@@ -115,6 +117,49 @@ object ChuniPushRecommender {
         val isFull: Boolean get() = size >= capacity
     }
 
+    /**
+     * 玩家水平对应的**可推荐定数区间**。
+     *
+     * 由 Best50 的平均定数（综合定数）推出：推荐只在这个区间内挑，避免出现
+     * 「rating 14~15 的玩家被推去打 15+ 的 BOSS 谱面」这种根本打不动的建议。
+     *
+     * @param center 综合定数（Best50 的定数平均）。
+     * @param low 下沿。
+     * @param high 上沿（不超过曲库当前最高定数）。
+     */
+    data class Band(val center: Double, val low: Double, val high: Double) {
+        fun contains(ds: Double): Boolean = ds >= low - 1e-9 && ds <= high + 1e-9
+    }
+
+    /**
+     * 区间下沿：比综合定数低 0.5 以上就不太值得打了。
+     *
+     * 这种谱只能靠 SSS+ 硬顶（定数 −2.0 的谱要打 1009000 才追平），正是要避开的亏本买卖。
+     */
+    const val BAND_DOWN = 0.5
+
+    /**
+     * 区间上沿：比综合定数高 1.0 以内是「跳一跳够得着」。
+     *
+     * 定数每高 0.1 多 0.1 ra，但同时掉一档评级大约是 −0.5 ra —— 高 1.0 定数基本等于掉两档，
+     * 再多就变成「打得动但拿不到 ra」，所以上沿卡在 +1.0。
+     */
+    const val BAND_UP = 1.0
+
+    /**
+     * 由综合定数 + 曲库最高定数算出可推荐区间。
+     *
+     * @param avgDs Best50 的定数平均（综合定数）。
+     * @param maxDs 曲库当前最高定数（上沿不会超过它，满难度就是满难度）。
+     */
+    fun bandOf(avgDs: Double, maxDs: Double): Band {
+        val center = avgDs.coerceAtLeast(0.0)
+        val top = maxDs.coerceAtLeast(center)
+        val high = minOf(center + BAND_UP, top)
+        val low = (center - BAND_DOWN).coerceAtLeast(0.0).coerceAtMost(high)
+        return Band(center, low, high)
+    }
+
     /** 推荐候选。 */
     data class Candidate(
         val songId: Int,
@@ -153,6 +198,7 @@ object ChuniPushRecommender {
      * @param scores 全部成绩（World's End 已排除）
      * @param nonCurrent 非当前版本 TOP30 枠
      * @param current 当前版本 TOP20 枠
+     * @param band 可推荐定数区间；null = 不按玩家水平收窄（仅测试 / 特殊场景用）
      * @param limit 候选上限
      */
     fun recommend(
@@ -160,6 +206,7 @@ object ChuniPushRecommender {
         scores: List<Score>,
         nonCurrent: Pool,
         current: Pool,
+        band: Band? = null,
         limit: Int = 10,
     ): List<Candidate> {
         val scoreByChart = scores.associateBy { ChuniRating.chartKey(it.songId, it.levelIndex) }
@@ -168,6 +215,8 @@ object ChuniPushRecommender {
         for (chart in charts) {
             if (chart.levelIndex !in MIN_LEVEL_INDEX..MAX_LEVEL_INDEX) continue
             if (chart.ds <= 0.0) continue
+            // 水平区间外的一律不推：低定数高 rank 是亏本买卖，高定数 BOSS 谱打不动
+            if (band != null && !band.contains(chart.ds)) continue
             val key = ChuniRating.chartKey(chart.songId, chart.levelIndex)
             if (!seen.add(key)) continue // 曲库重复条目只留第一条
 
