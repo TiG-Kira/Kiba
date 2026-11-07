@@ -39,6 +39,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.GraphicsLayerScope
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -571,10 +572,13 @@ private fun TabContent(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         if (item.iconPainter != null) {
+            // 位图图标（产品 Logo）同样跟随 tint：SrcIn 只保留 alpha，颜色取 tint，
+            // 与矢量图标一样能随选中态变主色 / 变灰。
             Image(
                 painter = item.iconPainter,
                 contentDescription = item.contentDescription ?: item.label,
                 modifier = Modifier.size(28.dp),
+                colorFilter = ColorFilter.tint(tint),
             )
         } else {
             Icon(

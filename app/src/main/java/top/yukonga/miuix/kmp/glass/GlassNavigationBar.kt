@@ -40,6 +40,7 @@ import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -483,10 +484,14 @@ fun GlassNavigationBar(
                             verticalArrangement = Arrangement.spacedBy(GlassNavigationBarDefaults.LabelSpacing),
                         ) {
                             if (item.iconPainter != null) {
+                                // 位图图标（产品 Logo）也必须跟随选中态染色：
+                                // 用 tint 的默认 SrcIn 混合，只取 alpha、颜色全交给 tint，
+                                // 这样选中主色 / 未选中的灰与矢量图标完全一致。
                                 Image(
                                     painter = item.iconPainter,
                                     contentDescription = item.contentDescription ?: item.label,
                                     modifier = Modifier.size(GlassNavigationBarDefaults.IconSize),
+                                    colorFilter = ColorFilter.tint(tint),
                                 )
                             } else {
                                 Icon(
