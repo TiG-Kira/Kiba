@@ -677,10 +677,11 @@ fun KibaMainScreen() {
                   val kibaLogoPainter = remember(darkTheme) {
                       val tintColor =
                           if (darkTheme) android.graphics.Color.WHITE else android.graphics.Color.BLACK
+                      // 整段（含 copy/getPixels/BitmapPainter）都放 runCatching：
+                      // 任何机型/资源异常都只退回占位图标，绝不因底部导航拖垮启动。
                       runCatching {
-                          ContextCompat.getDrawable(context, R.drawable.ic_launcher_foreground)
-                              ?.toBitmap()
-                      }.getOrNull()?.let { bm ->
+                          val bm = ContextCompat.getDrawable(context, R.drawable.ic_launcher_foreground)
+                              ?.toBitmap() ?: return@runCatching null
                           val copy = bm.copy(android.graphics.Bitmap.Config.ARGB_8888, true)
                           val pixels = IntArray(copy.width * copy.height)
                           copy.getPixels(pixels, 0, copy.width, 0, 0, copy.width, copy.height)
@@ -693,7 +694,7 @@ fun KibaMainScreen() {
                           }
                           copy.setPixels(pixels, 0, copy.width, 0, 0, copy.width, copy.height)
                           BitmapPainter(copy.asImageBitmap())
-                      }
+                      }.getOrNull()
                   }
                   val navItems = tabs.map { tab ->
                       if (tab == KibaTab.Agent) {

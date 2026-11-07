@@ -351,11 +351,25 @@ object SpUtil {
      * 以及「水鱼源 / 落雪源」分支判定），不能还停留在进入页面那一刻读到的旧值。
      * 设置页改源时一并推流（[setScoreSource]）。
      */
-    private val _maimaiSourceFlow = MutableStateFlow(getScoreSource(GameType.MAIMAI))
-    val maimaiSourceFlow: StateFlow<ScoreSource> = _maimaiSourceFlow.asStateFlow()
+    // ⚠️ 必须 lazy：SpUtil 是 object，属性初始化发生在「类初始化」阶段，而
+    // KibaApplication.onCreate 里调用 `SpUtil.init(this)` 之前就会触发类初始化。
+    // 若这里写成 `MutableStateFlow(getScoreSource(...))` 会在 application 赋值前
+    // 就读 SharedPreferences → checkInitialization() 抛 IllegalStateException → 启动闪退。
+    // 改成 lazy 后只在首次真正访问（UI 层）时才读，此时 init 已执行完；
+    // 外层再包 runCatching，即使存储异常也回落默认值，绝不拖垮启动。
+    private val _maimaiSourceFlow by lazy {
+        MutableStateFlow(
+            runCatching { getScoreSource(GameType.MAIMAI) }.getOrDefault(ScoreSource.WATER_FISH)
+        )
+    }
+    val maimaiSourceFlow: StateFlow<ScoreSource> by lazy { _maimaiSourceFlow.asStateFlow() }
 
-    private val _chuniSourceFlow = MutableStateFlow(getScoreSource(GameType.CHUNITHM))
-    val chuniSourceFlow: StateFlow<ScoreSource> = _chuniSourceFlow.asStateFlow()
+    private val _chuniSourceFlow by lazy {
+        MutableStateFlow(
+            runCatching { getScoreSource(GameType.CHUNITHM) }.getOrDefault(ScoreSource.WATER_FISH)
+        )
+    }
+    val chuniSourceFlow: StateFlow<ScoreSource> by lazy { _chuniSourceFlow.asStateFlow() }
 
     fun setScoreSource(gameType: GameType, source: ScoreSource) {
         userInfoPrefs.edit {
