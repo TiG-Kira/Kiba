@@ -24,7 +24,7 @@
 |---|---|
 | 静止 | 一条强折射玻璃底栏；选中项只有淡灰色提示胶囊（纯色、无特效）+ 图标变色。无浮起玻璃。 |
 | **按住当前 tab** | 手指正落在胶囊上 → Initial pass 立即 `press()`：玻璃浮现、横纵不同阻尼地鼓起、镜面光斑亮起；松手等位置收敛后凝回灰提示。**v1 这里完全没反应。** |
-| 点击其它 tab | `onClick` 直接上报换页，`selectedIndex` 回流驱动液滴从当前 tab 飞向目标；飞行中玻璃被速度拉长。 |
+| 点击其它 tab | **按下（Initial pass）即刻** `animateToValue` + `onSelect`：玻璃浮现与液滴飞行并行启动，页面同步切换；按住期间玻璃保持，松手才凝回灰提示。不等抬手、不等 `selectedIndex` 回流（见第 2 节「切换出口」）。 |
 | 拖动 | 胶囊 `updateValue` 跟手（带一点弹簧），整条底栏 EaseOut 让位最多 4dp；松手吸附最近 tab 并回弹。 |
 | 图标高亮 | 跟随胶囊**实际位置**（`round(damped.value)`），不跟随目标 tab。 |
 
@@ -41,10 +41,12 @@
 | `scaleY` | `spring(0.7f, 250f, 0.001f)` | 纵向鼓起，阻尼不同 → **果冻感**（v1 是 `lerp(1, 1.39, press)` 等比线性，毫无弹性） |
 
 - `MutatorMutex` 串行化 `animateToValue`：press → 飞行 → release 是一个整体，新切换不会把
-  上一次的玻璃收尾拦腰截断。
+  上一次的玻璃收尾拦腰截断；外层 `launch(start = UNDISPATCHED)` 让按下事件当帧就把
+  press / 飞行两条 Animatable 排进队列，不多等一次协程调度帧。
 - `release()` 先 `withFrameNanos` 稳住第一帧，再
   `snapshotFlow { value }.first { abs(it - targetValue) < 2.5% }` **等飞行真正收敛**才把
-  press / scale 落回 0——不是抬手瞬间就把玻璃抹掉。
+  press / scale 落回 0——不是抬手瞬间就把玻璃抹掉。`holdPress()` 为 true（手指仍按在
+  目标 tab）时继续维持玻璃直到抬手，60 帧兜底防 up 事件丢失导致永不散。
 - `updateValue` 用 `animateTo(..., spring(1f,1000f)) { updateVelocity() }` 跟手，
   不是生硬的 `snapTo`；`velocityTracker.addPosition(SystemClock.uptimeMillis(), Offset(value,0))`。
 - **v2 不再有 `dragMotion` 门控**：v1 为了避免"飞行被拉成色块"关掉了飞行拉伸，
@@ -69,15 +71,26 @@ awaitEachGesture {
 - 该 modifier **挂在胶囊本体**（最上层、覆盖当前 tab），这是「按住当前 tab 有反馈」的根因：
   v1 把 press 挂在 Row A 上，down 会被同 index 的 settle 立刻把 press 归零。
 
-### 切换出口（v2 简化）
+### 切换出口（2.3.20 修订：按下即飞）
 
-- TabContent 的 `onClick` → `onSelect(i)` 直接上报；`LaunchedEffect` 里
-  `snapshotFlow { latestSelectedIndexState.value }.collectLatest` 统一驱动 `animateToValue`。
+v2 初版把点按做成「抬手 `onClick` → `onSelect` → 等父级 `selectedIndex` 回流 →
+`snapshotFlow.collectLatest` → `animateToValue`」。真机实测这条链比 2.3.18 慢半拍：
+多花抬手、父级重组、快照流好几帧，液滴要等页面切过去才起跑。胶囊手势只压在**当前 tab**
+上，点其它 tab 时它根本收不到 down，所以必须有一个独立的即时入口。
+
+- **Row A 链尾** `pointerInput(dragAnimation, items.size)`：
+  `awaitFirstDown(requireUnconsumed = false, pass = Initial)` 按 down.x 算出 hit tab，
+  `hit != selectedIndex` 时同一帧内依次做 `lastAnimatedState = hit`（去重）→
+  `holdingOtherTab = true` → `animateToValue(hit) { holdingOtherTab }` → `onSelect(hit)`，
+  再用 Initial pass 等 up 把 holding 置 false。全程**不 consume**，
+  TabContent 的 clickable 照常收抬手事件。
+- `TabContent.onClick` 只作键盘 / 无障碍兜底：`i != lastAnimatedState` 才驱动；
+  普通点按已由观察器处理，不会播两次玻璃，`onSelect` 本身也幂等。
+- `LaunchedEffect` 的 `snapshotFlow { selectedIndex }` 退化为**外部入口**（其它代码改 tab），
+  靠 `lastAnimatedState` 去重，不与底栏点按重复。
 - 拖动松手 → `onDragStopped` 里 `onSelect(target)` + `animateToValue(target)` +
-  `offsetAnimation.animateTo(0f, spring(1f,300f,0.5f))`。
-- `lastAnimatedState` 去重，避免「吸附 + selectedIndex 回流」播两次玻璃；
-  纯按住当前 tab（未换页、胶囊没离开整数位）**跳过** `animateToValue`，只让 `release()` 收尾，
-  否则两个 press 动画抢同一个 Animatable 会闪。
+  `offsetAnimation.animateTo(0f, spring(1f,300f,0.5f))`；纯按住当前 tab 跳过
+  `animateToValue`，只让 `release()` 收尾，否则两个 press 动画抢同一 Animatable 会闪。
 
 > 所有 `latestSelectedIndex` / `latestOnSelect` 必须保存 `rememberUpdatedState` 返回的
 > **State 对象**并读 `.value`。用 `by` 解包后再在 remember 构造的 lambda 里捕获，
@@ -168,6 +181,10 @@ z 序从下到上：
 10. **验证手段**：动画中间态单张截图抓不准，用
     `adb shell screenrecord --size 480x1068 --time-limit 3` + `ffmpeg -i nav.mp4 -vf fps=60 f_%03d.png`
     抽帧 + PIL 帧差定位切换区间。也可长按期间并发 `screencap` 抓按压中间态。
+11. **点按起飞不能等 `selectedIndex` 回流**：父级改 tab 会连带整页重组，
+    `snapshotFlow` 还要等下一帧快照，叠加起来就是「按下 → 液滴起跑」的可见延迟。
+    胶囊手势覆盖不到其它 tab，即时入口必须挂在 Row A 的 Initial pass，
+    再用 `lastAnimatedState` 与回流去重（v2.3.19 真机实测慢半拍，v2.3.20 修）。
 
 ## 7. AVD 验证液态档的必做步骤
 
@@ -189,3 +206,13 @@ v2 实测记录（Pixel_10_Pro，2026-11-08）：
 - logcat 无 `FATAL EXCEPTION` / `ANR in com.kira.kiba.debug`；
 - `:app:assembleDebug :app:testDebugUnitTest` 通过，回滚后再次
   `:app:compileDebugKotlin :app:testDebugUnitTest` 通过。
+
+2.3.20 修订实测（Pixel_10_Pro，2026-11-08，5 tab 底栏 bounds `[72,2622][1208,2784]`）：
+- 长按「我」tab（x≈863, y≈2703）1500ms，0.5s 时抓图：该 tab 区域平均亮度
+  idle 217.6 → 按住 229.6（白气泡已浮现）→ 松手 206.3（凝回灰提示）；
+  证明**手指还按着液滴就已经飞到目标处**，且 hold 生效；
+- 长按 0.4s 时的 `uiautomator dump` 顶栏已是「我」→ 页面与液滴在 down 同步切换；
+- 快速连点「曲目」→「设置」最终停在「设置」；从「设置」横拖到「曲目」
+  吸附回「曲目」，胶囊手势未被新增观察器破坏；
+- logcat 无 `FATAL EXCEPTION` / `ANR in com.kira.kiba.debug`；
+- 验完 `adb emu kill` + 残留 emulator 进程清干净，临时闸门回滚后再次编译单测通过。

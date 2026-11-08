@@ -9,6 +9,8 @@ import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -41,6 +43,8 @@ import androidx.compose.ui.graphics.GraphicsLayerScope
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -138,6 +142,8 @@ fun LiquidNavigationBar(
         var isLtr: Boolean = true
         // 拖动时每帧都会 cancel/重建，绝不能用 State（会把含 glass 的子树拖进逐帧重组）
         var offsetSnapJob: Job? = null
+        /** 手指仍按在「其它 tab」上：玻璃保持到抬手（对齐 2.3.18 的按住手感）。 */
+        var holdingOtherTab: Boolean = false
     }
     val metrics = remember { Metrics() }
     metrics.isLtr = isLtr
@@ -214,8 +220,9 @@ fun LiquidNavigationBar(
         ).also { holder.animation = it }
     }
 
-    // 外部切 Tab（含点按 tab 后的 selectedIndex 回流）→ 驱动液滴飞行。
-    // 拖动吸附已经自己播过动画，靠 lastAnimated 去重，避免玻璃起落两次。
+    // 外部切 Tab（其它入口改 selectedIndex）→ 驱动液滴飞行。
+    // 底栏自身的点按已在按下瞬间驱动并记账，拖动吸附也已自己播过动画，
+    // 这里靠 lastAnimated 去重，避免玻璃起落两次。
     LaunchedEffect(dragAnimation) {
         snapshotFlow { latestSelectedIndexState.value }.collectLatest { index ->
             val target = index.fastCoerceIn(0, items.size - 1)
@@ -368,7 +375,7 @@ fun LiquidNavigationBar(
             (constraints.maxWidth.toFloat() - 8f.dp.toPx()) / items.size
         }
 
-        // Row A：可见底栏。手势已全部收归胶囊，这里只负责取景 + tab 点击。
+        // Row A：可见底栏。胶囊手势只覆盖当前 tab，点其它 tab 的即时入口在链尾的 pointerInput。
         Row(
             Modifier
                 .onGloballyPositioned { coordinates ->
@@ -403,7 +410,48 @@ fun LiquidNavigationBar(
                 )
                 .height(height)
                 .fillMaxWidth()
-                .padding(4f.dp),
+                .padding(4f.dp)
+                // 按下（Initial pass）立刻让液滴飞向手指所在 tab —— 与 2.3.18 及之前一致。
+                // v2 曾改成「抬手 onClick → onSelect → 等父级 selectedIndex 回流 →
+                // snapshotFlow → 才起飞」，比旧版多花抬手 + 重组 + flow 好几帧，
+                // 真机上就是「点其它 tab 切入慢半拍」。胶囊手势只压在当前 tab 上，
+                // 点其它 tab 时这里才是唯一的即时入口。
+                .pointerInput(dragAnimation, items.size) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(
+                            requireUnconsumed = false,
+                            pass = PointerEventPass.Initial,
+                        )
+                        val w = metrics.tabWidth
+                        if (w > 0f) {
+                            // 内容区宽 = tabWidth * n（左右各 4dp padding 已排除）
+                            val x = if (metrics.isLtr) {
+                                down.position.x
+                            } else {
+                                w * items.size - down.position.x
+                            }
+                            val hit = (x / w).toInt().fastCoerceIn(0, items.size - 1)
+                            if (hit != latestSelectedIndexState.value) {
+                                // 先记账：selectedIndex 回流时 snapshotFlow 不再重复播一次飞行
+                                lastAnimatedState.intValue = hit
+                                metrics.holdingOtherTab = true
+                                // 按下即起飞：玻璃浮现与位置飞行并行，不等抬手；
+                                // 手指仍按住时玻璃保持，松手才凝回提示
+                                dragAnimation.animateToValue(hit.toFloat()) {
+                                    metrics.holdingOtherTab
+                                }
+                                // 页面同步切换（onSelect 幂等，抬手时 onClick 再调一次也无副作用）
+                                latestOnSelectState.value(hit)
+                                // Initial pass 等抬起、全程不 consume，TabContent 的 clickable 照常收 up
+                                while (true) {
+                                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                                    if (event.changes.none { it.pressed }) break
+                                }
+                                metrics.holdingOtherTab = false
+                            }
+                        }
+                    }
+                },
             verticalAlignment = Alignment.CenterVertically,
         ) {
             items.forEachIndexed { i, item ->
@@ -411,8 +459,15 @@ fun LiquidNavigationBar(
                     item = item,
                     tint = if (i == highlightIndex) accentColor else unselectedTint(),
                     modifier = Modifier.weight(1f).fillMaxHeight(),
-                    // 直接上报换页：selectedIndex 回流后由 snapshotFlow 统一驱动液滴飞行
-                    onClick = { latestOnSelectState.value(i) },
+                    // 键盘 / 无障碍点击没有 down 事件，这里兜底；普通点按已由上面的
+                    // Initial pass 观察器驱动，lastAnimatedState 去重避免玻璃起落两次。
+                    onClick = {
+                        if (i != lastAnimatedState.intValue) {
+                            lastAnimatedState.intValue = i
+                            dragAnimation.animateToValue(i.toFloat())
+                        }
+                        latestOnSelectState.value(i)
+                    },
                 )
             }
         }

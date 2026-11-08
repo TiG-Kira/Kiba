@@ -29,6 +29,7 @@ import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.util.fastFirstOrNull
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlin.math.abs
@@ -121,14 +122,22 @@ class DampedDragAnimation(
     /**
      * 松手：等胶囊位置真正接近目标后才凝回灰色提示（而不是抬手瞬间就把玻璃抹掉）。
      * `withFrameNanos` 让第一帧的玻璃稳定可见；`snapshotFlow.first` 等飞行收敛。
+     *
+     * [holdPress] 为 true 表示手指仍按在目标 tab 上（旧版「按住期间玻璃保持」）：
+     * 此时继续维持玻璃直到抬手；60 帧兜底防止 up 事件意外丢失导致玻璃永不散。
      */
-    private fun release() {
+    private fun release(holdPress: () -> Boolean = { false }) {
         animationScope.launch {
             withFrameNanos { }
             if (value != targetValue) {
                 val threshold = (valueRange.endInclusive - valueRange.start) * 0.025f
                 snapshotFlow { valueAnimation.value }
                     .first { abs(it - valueAnimation.targetValue) < threshold }
+            }
+            var frames = 0
+            while (holdPress() && frames < 60) {
+                withFrameNanos { }
+                frames++
             }
             launch { pressAnimation.animateTo(0f, spring(1f, 1000f, 0.001f)) }
             launch { scaleXAnimation.animateTo(1f, spring(0.6f, 250f, 0.001f)) }
@@ -144,9 +153,15 @@ class DampedDragAnimation(
         }
     }
 
-    /** 点按 / 程序化切换 / 松手吸附：整段动画由 [mutex] 串行，不被下一次切换打断收尾。 */
-    fun animateToValue(target: Float) {
-        animationScope.launch {
+    /**
+     * 点按 / 程序化切换 / 松手吸附：整段动画由 [mutex] 串行，不被下一次切换打断收尾。
+     *
+     * [CoroutineStart.UNDISPATCHED]：调用点就在按下事件的 Initial pass，
+     * 立即进入 mutate 并把 press / 飞行两条 Animatable 排进队列，省掉一次协程调度帧
+     * （否则「按下→玻璃浮现→起飞」会整体慢一帧，真机上就是切入慢半拍）。
+     */
+    fun animateToValue(target: Float, holdPress: () -> Boolean = { false }) {
+        animationScope.launch(start = CoroutineStart.UNDISPATCHED) {
             mutex.mutate {
                 press()
                 launch {
@@ -158,7 +173,7 @@ class DampedDragAnimation(
                 if (velocity != 0f) {
                     launch { velocityAnimation.animateTo(0f, spring(0.5f, 300f, 0.01f)) }
                 }
-                release()
+                release(holdPress)
             }
         }
     }
