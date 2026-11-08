@@ -185,3 +185,15 @@ fun KibaSortAction(onClick: () -> Unit) {
         )
     }
 }
+
+/** 顶栏「功能」按钮（glass 系，Kiba 对话页用；技能二级级联菜单入口）。 */
+@Composable
+fun KibaFunctionAction(onClick: () -> Unit) {
+    KibaActionButton(onClick = onClick) {
+        Icon(
+            MiuixGlassIcons.Regular.GridView,
+            contentDescription = "功能",
+            tint = MiuixTheme.colorScheme.onSurface,
+        )
+    }
+}

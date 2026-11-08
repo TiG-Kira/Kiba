@@ -98,18 +98,25 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  * Agent 对话页：
  * - 引擎 [KibaAgent]：**聊天一律走 LLM**（模型可 tool-call 本地技能）；
  *   本地技能逻辑只在**从「功能」菜单点选**时直接执行（不消耗 LLM）；
- * - 原顶部横滑技能卡已全部迁入「功能」按钮的二级级联弹层
- *   （舞萌功能 / 中二节奏功能 / 娱乐功能 / 清除对话），卡片本身不再显示；
+ * - 原顶部横滑技能卡已全部迁入**顶栏「功能」按钮**的二级级联弹层
+ *   （舞萌功能 / 中二节奏功能 / 娱乐功能 / 清除对话），页内不再放按钮或卡片；
  *   分类只改 UI 入口，[KibaAgent.SKILLS] 仍是完整的 LLM tool 表，模型调用不受影响；
  * - 会话记录持久化（[AgentSession]），重启后恢复；
- * - 布局：顶部顶栏 clearance（防遮挡）+ 功能按钮 + 消息列表 + 底部输入栏
+ * - 布局：顶部顶栏 clearance（防遮挡）+ 消息列表 + 底部输入栏
  *   （含悬浮底栏留白与键盘避让）。
+ *
+ * 「功能」按钮位于 [com.kira.kiba.ui.navigation.KibaMainScreen] 的顶栏动作区
+ * （与曲目页排序 / 搜索按钮同款 KibaActionButton），开关由外层持有；
+ * [OverlayCascadingListPopup] 依赖 Scaffold 的 MiuixPopupHost，必须留在本页
+ * Scaffold content 内，用一个右上角零尺寸锚点让菜单落在顶栏按钮下方。
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AgentScreen(
     scrollBehavior: ScrollBehavior,
     onOpenSong: (songId: Int, game: String) -> Unit,
+    showFunctionPopup: Boolean = false,
+    onDismissFunctionPopup: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val agent = remember { KibaAgent(context) }
@@ -119,8 +126,7 @@ fun AgentScreen(
     var thinking by remember { mutableStateOf(false) }
     // 带参技能：从「功能」菜单点选后先弹输入层（离线可用，不依赖 LLM）
     var paramSkill by remember { mutableStateOf<KibaAgent.AgentSkill?>(null) }
-    // 「功能」按钮的级联弹层开关
-    var showFunctionPopup by remember { mutableStateOf(false) }
+    // 「功能」弹层开关由顶栏所在的外层持有（见 showFunctionPopup 参数）
 
     // 会话持久化：首次进入恢复历史
     AgentSession.ensureLoaded()
@@ -148,7 +154,7 @@ fun AgentScreen(
             AgentSession.add(
                 AgentSession.Turn(
                     fromUser = false,
-                    text = "点上方「功能」按钮即可直接使用（不消耗 LLM）：\n" +
+                    text = "点顶栏右侧的「功能」图标按钮即可直接使用（不消耗 LLM）：\n" +
                         "· 舞萌功能 —— Best 50 / 推分 / 随机选曲 / 查歌 / 运势 / 分数线 / 猜歌\n" +
                         "· 中二节奏功能 —— 中二查歌 / 定数 / 随机 / Rating / 推分\n" +
                         "· 娱乐功能 —— 随机数 / 骰子 / 今日性癖 / 今天吃什么 / 低情商高情商 / gocho 梗图\n" +
@@ -169,7 +175,7 @@ fun AgentScreen(
             AgentSession.add(
                 AgentSession.Turn(
                     fromUser = false,
-                    text = "功能卡已迁移到页面上方的「功能」按钮里了：\n" +
+                    text = "功能卡已迁移到顶栏右侧的「功能」图标按钮里了：\n" +
                         "点开后按「舞萌功能 / 中二节奏功能 / 娱乐功能 / 清除对话」分类查找，" +
                         "原来的横滑技能卡不再显示。\n" +
                         "所有技能都还在，直接打字提问时我照样会自动调用，功能没有减少。",
@@ -281,19 +287,19 @@ fun AgentScreen(
      * 与旧技能卡的点击路径完全同一条，保证迁移不改行为。
      */
     fun openSkill(skill: KibaAgent.AgentSkill) {
-        showFunctionPopup = false
+        onDismissFunctionPopup()
         if (skill.params.isEmpty()) runSkill(skill) else paramSkill = skill
     }
 
     /** 清除对话（原技能卡区末尾那张卡的动作）。 */
     fun clearChat() {
-        showFunctionPopup = false
+        onDismissFunctionPopup()
         AgentSession.clear()
         scope.launch {
             AgentSession.add(
                 AgentSession.Turn(
                     fromUser = false,
-                    text = "对话已清除。点上方「功能」按钮重新开始，或直接提问。",
+                    text = "对话已清除。点顶栏「功能」按钮重新开始，或直接提问。",
                 )
             )
         }
@@ -436,41 +442,22 @@ fun AgentScreen(
                 .padding(top = clearance)
                 .imePadding(),
         ) {
-            // ── 功能按钮（原横滑技能卡全部迁入二级级联弹层）──
-            // OverlayCascadingListPopup 依赖 Scaffold 提供的 MiuixPopupHost，
-            // 必须与按钮同处这个 Scaffold 的 content 之内。
-            Row(
+            // ── 顶栏「功能」按钮的级联弹层锚点 ──
+            // 按钮已上移到外层顶栏动作区（与曲目页 Sort / 搜索按钮同款）。
+            // OverlayCascadingListPopup 依赖 Scaffold 提供的 MiuixPopupHost，必须留在
+            // content 内；默认 alignment=End + DropdownPositionProvider 让菜单从锚点
+            // 右缘向左、向下展开，正好贴着顶栏右侧的按钮。renderInRootScaffold=true
+            // 会把锚点坐标补偿到窗口，内层 Scaffold 不会让菜单偏移。
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                    .align(Alignment.End)
+                    .size(1.dp),
             ) {
-                Box {
-                    Button(
-                        onClick = { showFunctionPopup = true },
-                        colors = ButtonDefaults.buttonColorsPrimary(),
-                    ) {
-                        Icon(
-                            MiuixGlassIcons.Regular.GridView,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
-                            tint = MiuixTheme.colorScheme.onPrimary,
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(text = "功能", color = MiuixTheme.colorScheme.onPrimary)
-                    }
-                    OverlayCascadingListPopup(
-                        show = showFunctionPopup,
-                        entries = functionEntries,
-                        onDismissRequest = { showFunctionPopup = false },
-                        collapseOnSelection = true,
-                    )
-                }
-                Spacer(Modifier.width(12.dp))
-                Text(
-                    text = "技能按舞萌 / 中二节奏 / 娱乐分组",
-                    style = MiuixTheme.textStyles.footnote1,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                OverlayCascadingListPopup(
+                    show = showFunctionPopup,
+                    entries = functionEntries,
+                    onDismissRequest = onDismissFunctionPopup,
+                    collapseOnSelection = true,
                 )
             }
 
@@ -580,7 +567,7 @@ fun AgentScreen(
                     }
                 }
                 else -> Text(
-                    text = "未配置 LLM · 点上方「功能」按钮可直接使用（设置 → Agent 模型配置 可开启对话）",
+                    text = "未配置 LLM · 点顶栏「功能」按钮可直接使用（设置 → Agent 模型配置 可开启对话）",
                     style = MiuixTheme.textStyles.footnote1,
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                     modifier = Modifier

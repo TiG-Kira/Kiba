@@ -482,6 +482,9 @@ fun KibaMainScreen() {
     var songsSearchTrigger by remember { mutableIntStateOf(0) }
     // 曲目页顶栏 Sort 按钮 → 排序 / 归类选择弹层（曲目页不再放独立归类卡）
     var songsShowGroupPicker by remember { mutableStateOf(false) }
+    // Kiba 页顶栏「功能」按钮 → 技能级联弹层（与曲目页 Sort 按钮同一套接线：
+    // 顶栏只负责触发，弹层本体留在 AgentScreen 的 Scaffold content 内取 MiuixPopupHost）
+    var agentShowFunctionPopup by remember { mutableStateOf(false) }
     // 曲库同步状态：曲目页顶栏刷新按钮用（同步中禁点；有新版直接立即更新）
     val songSyncState by SongDataSync.state.collectAsState()
     val songUpdateAvailable by SongDataSync.updateAvailable.collectAsState()
@@ -580,6 +583,10 @@ fun KibaMainScreen() {
                                       // 排序与归类（舞萌 / 中二节奏共用排序，归类仅舞萌）
                                       KibaSortAction { songsShowGroupPicker = true }
                                       KibaSearchAction { songsSearchTrigger++ }
+                                  }
+                                  KibaTab.Agent -> KibaFunctionAction {
+                                      // 技能菜单入口与曲目页的排序 / 搜索按钮同处顶栏动作区
+                                      agentShowFunctionPopup = true
                                   }
                                   KibaTab.Me -> KibaRefreshAction {
                                       // 顶栏刷新按当前游戏分流：中二走 ChuniRecordSync，
@@ -695,6 +702,8 @@ fun KibaMainScreen() {
                           // （同样必须用 pageKey() 字符串，否则匹配不到已保存的状态）
                           pageStateHolder.removeState(pageKey(target))
                           topBarMemory.remove(pageKey(target))
+                          // 顶栏按钮唤起的弹层跨 Tab 收起，避免切回来时菜单凭空复现
+                          agentShowFunctionPopup = false
                           selectedTab = target
                           resetTopBar()
                       }
@@ -916,6 +925,8 @@ fun KibaMainScreen() {
                               )
                               KibaTab.Agent -> AgentScreen(
                                   scrollBehavior = scrollBehavior,
+                                  showFunctionPopup = agentShowFunctionPopup,
+                                  onDismissFunctionPopup = { agentShowFunctionPopup = false },
                                   onOpenSong = { songId, game ->
                                       pushPage(
                                           if (game == KibaAgent.GAME_CHUNITHM) {
