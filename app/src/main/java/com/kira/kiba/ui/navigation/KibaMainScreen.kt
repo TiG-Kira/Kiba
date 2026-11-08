@@ -347,6 +347,23 @@ fun KibaMainScreen() {
     val topAppBarState = rememberTopAppBarState()
     val scrollBehavior: ScrollBehavior = MiuixScrollBehavior(topAppBarState)
 
+    // 大标题行里的「舞萌 / 中二」开关是否还该接收点击。
+    //
+    // 折叠后大标题只是被 miuix 画成透明，那颗开关仍挂在原位；它的两个 44dp 段各有一颗
+    // clickable，Compose 命中带 pointerInput 的节点后就不再往下探，于是这块**看不见**的
+    // 区域会把顶栏右侧按钮的点击整块吃掉（折叠态按钮全点不动，展开就正常）。
+    // 折叠过半就置 false → [KibaGameSwitch] 内部干脆不组合 clickable，事件穿透给按钮。
+    //
+    // 阈值取折叠量的一半而不是「contentOffset < 0」：轻微回弹时大标题还基本可见，
+    // 此时点开关应该照常生效。heightOffsetLimit 不是 snapshot state，但 derivedStateOf
+    // 每次随 contentOffset 重算时都会读到它的当前值，不会卡住。
+    val gameSwitchInteractive by remember(topAppBarState) {
+        derivedStateOf {
+            val limit = topAppBarState.heightOffsetLimit
+            limit >= 0f || topAppBarState.contentOffset > limit * 0.5f
+        }
+    }
+
     // 材质风格：LIQUID（液态玻璃）走 Kyant0/AndroidLiquidGlass 的独立控件；
     // SOFT（柔光玻璃+，默认）沿用 miuix-glass，与「未开启真·高级材质」时完全同一套控件。
     // 必须同时满足「高级材质开关打开」——否则液态玻璃会在开关关闭时仍然生效。
@@ -590,6 +607,9 @@ fun KibaMainScreen() {
                                   KibaGameSwitch(
                                       current = gameType,
                                       onSelect = { selectGameType(it) },
+                                      // 折叠后大标题只是透明了，开关仍会吃掉按钮的点击——
+                                      // 折叠过半就摘掉它的 clickable，让事件穿透（见 gameSwitchInteractive）
+                                      interactive = gameSwitchInteractive,
                                   )
                               }
                           } else {

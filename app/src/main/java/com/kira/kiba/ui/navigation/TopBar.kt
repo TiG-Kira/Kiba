@@ -235,12 +235,25 @@ fun KibaFunctionAction(onClick: () -> Unit) {
  * - 折叠态隐藏由 miuix 大标题自己的 alpha 负责——本组件不监听滚动，挂在大标题行里即可同频。
  *
  * 选中位移用 spring（无回弹过冲），点按命中区是整段，重复点当前项不下发。
+ *
+ * ## [interactive] 为什么必须存在（2.4.10 修复）
+ *
+ * 折叠后大标题只是被 miuix **画成透明**，组件本身还在原位、两个 44dp 段各挂着一颗
+ * `Modifier.clickable`。Compose 的命中测试在命中带 pointerInput 的节点后就不再往下探
+ * （`clickable` 的 `sharePointerInputWithSiblings` 为 false），于是这颗**看不见**的开关
+ * 会把同一区域顶栏按钮的点击整块吃掉 —— 表现成「折叠态所有按钮都点不动、展开就正常」。
+ *
+ * 视觉隐藏对命中链无效，所以折叠态必须干脆**不组合 clickable**：这块区域彻底不参与命中，
+ * 事件穿透给下面的按钮。判定沿用顶栏自己的折叠信号，与按钮材质切换同频。
+ *
+ * @param interactive 是否接收点击；折叠态传 false（视觉隐藏由大标题 alpha 负责）
  */
 @Composable
 fun KibaGameSwitch(
     current: GameType,
     onSelect: (GameType) -> Unit,
     modifier: Modifier = Modifier,
+    interactive: Boolean = true,
 ) {
     val options = listOf(
         GameType.MAIMAI to "舞萌",
@@ -276,16 +289,24 @@ fun KibaGameSwitch(
         Row(modifier = Modifier.matchParentSize()) {
             options.forEachIndexed { index, (type, label) ->
                 val isSelected = index == selectedIndex
+                val interactionSource = remember { MutableInteractionSource() }
+                // 折叠态（interactive = false）**不组合 clickable**：仅靠 alpha 隐藏挡不住命中，
+                // 见 KDoc。留下 clickable 会让这块透明区域继续吃掉顶栏按钮的点击。
+                val tapModifier = if (interactive) {
+                    Modifier.clickable(
+                        interactionSource = interactionSource,
+                        indication = null,
+                    ) {
+                        if (type != current) onSelect(type)
+                    }
+                } else {
+                    Modifier
+                }
                 Box(
                     modifier = Modifier
                         .width(segmentWidth)
                         .fillMaxHeight()
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                        ) {
-                            if (type != current) onSelect(type)
-                        },
+                        .then(tapModifier),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
