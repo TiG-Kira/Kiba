@@ -2,6 +2,7 @@ package com.kira.kiba.ui.settings
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -228,6 +229,14 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
                             color = headerFg,
                         ),
                     )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "舞萌 DX / 中二节奏 · 曲库与查分工具",
+                        style = TextStyle(
+                            fontSize = 13.sp,
+                            color = headerFg.copy(alpha = 0.7f),
+                        ),
+                    )
                     Spacer(modifier = Modifier.height(8.dp))
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -245,6 +254,34 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
                             UpdateChecker.ReleaseStatus.NOT_FOUND -> StatusTag("Internal", Color(0xFFFF9800))
                             else -> {}
                         }
+                    }
+                }
+            }
+
+            // ── 关于 Kiba ──
+            item(key = "intro_title") { SectionTitle("关于") }
+            item(key = "intro_card") {
+                Card(
+                    modifier = (Modifier.fillMaxWidth()),
+                    cornerRadius = CardDefaults.CornerRadius,
+                    insideMargin = CardDefaults.InsideMargin,
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Text(
+                            text = "Kiba 是 MaimaiData 的 Compose 重写版，面向舞萌 DX 与中二节奏：" +
+                                "曲库浏览、成绩同步、Best 50 / B20、推分建议、谱面预览与乐曲试听。",
+                            style = MiuixTheme.textStyles.body2,
+                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        )
+                        Text(
+                            text = "界面基于 miuix 组件库与自研液态玻璃材质，可在设置中切换材质档位；" +
+                                "成绩与 Rating 全部在本机计算，不上传服务器。",
+                            style = MiuixTheme.textStyles.body2,
+                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        )
                     }
                 }
             }
@@ -281,7 +318,7 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
                 }
             }
 
-            // ── 数据来源（保留原有文案）──
+            // ── 数据来源 ──
             item(key = "data_title") { SectionTitle("数据来源") }
             item(key = "data_card") {
                 Card(
@@ -289,13 +326,26 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
                     cornerRadius = CardDefaults.CornerRadius,
                     insideMargin = CardDefaults.InsideMargin,
                 ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            text = "· 曲库 / 歌曲数据：水鱼（diving-fish）公共曲库；\n" +
-                                "· 成绩 / Best 50 / Rating：水鱼查分器（用户本人授权只读）；\n" +
-                                "· 账号密码通道的 jwt 仅存本机私有目录，不保存任何账号口令。",
-                            style = MiuixTheme.textStyles.body2,
-                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        CreditGroupLabel("曲库与谱面")
+                        CreditNote(
+                            "舞萌 DX 的曲目、定数与谱面数据取自水鱼（diving-fish）公共曲库；" +
+                                "中二节奏的曲库、谱面与 WE 分类取自落雪（lxns）。" +
+                                "谱面预览、封面与试听音源均由落雪 CDN 提供。",
+                        )
+                        CreditGroupLabel("成绩与 Rating")
+                        CreditNote(
+                            "成绩同步支持水鱼查分器与落雪查分器，两个游戏可分别选择数据源；" +
+                                "Best 50 / B20、Rating 与推分建议全部由本机数据现算，断网也能查看。",
+                        )
+                        CreditGroupLabel("凭据与隐私")
+                        CreditNote(
+                            "水鱼 jwt 与落雪个人 Token / OAuth 凭据只保存在本机应用私有目录，" +
+                                "不会上传到任何第三方；开发者 API 凭据在构建期加密，运行时本机解封。" +
+                                "所有联网同步都需要手动触发。",
                         )
                     }
                 }
@@ -379,7 +429,8 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
                         }
                         Text(
                             text = "versionCode ${BuildConfig.VERSION_CODE}\n" +
-                                "更新包经 GitHub Release 分发，安装前会校验签名与版本。",
+                                "更新包经 GitHub Release 分发；应用不会静默自更新，" +
+                                "下载完成后需手动确认安装。",
                             style = MiuixTheme.textStyles.footnote1,
                             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                         )
@@ -387,7 +438,7 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
                 }
             }
 
-            // ── 致谢（保留原有文案）──
+            // ── 致谢：按「上游项目 / 组件与库 / 资料与数据」分组，条目可点开链接 ──
             item(key = "thanks_title") { SectionTitle("致谢") }
             item(key = "thanks_card") {
                 Card(
@@ -395,13 +446,57 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
                     cornerRadius = CardDefaults.CornerRadius,
                     insideMargin = CardDefaults.InsideMargin,
                 ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            text = "· MaimaiData（PaperPig）—— 数据链路与 UI 交互参考；\n" +
-                                "· miuix（YuKongA）—— 组件库；\n" +
-                                "· Termux-Ultra —— 玻璃拟态设计参考。",
-                            style = MiuixTheme.textStyles.body2,
-                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                    ) {
+                        CreditGroup(
+                            label = "上游项目",
+                            entries = listOf(
+                                KibaCredit(
+                                    "MaimaiData · PaperPig",
+                                    "数据链路与交互设计参考",
+                                    "https://github.com/PaperPig/MaimaiData",
+                                ),
+                                KibaCredit("Termux Ultra", "玻璃拟态与关于页设计参考"),
+                                KibaCredit(
+                                    "HyperIsland · 1812z",
+                                    "液态玻璃导航栏的交互状态机",
+                                    "https://github.com/1812z/HyperIsland",
+                                ),
+                            ),
+                        )
+                        CreditGroup(
+                            label = "组件与库",
+                            entries = listOf(
+                                KibaCredit(
+                                    "miuix · YuKongA",
+                                    "组件库与主题规范",
+                                    "https://github.com/YuKongA/miuix",
+                                ),
+                                KibaCredit("Kyant0 backdrop / shapes", "液态玻璃取景、折射与形体"),
+                                KibaCredit("Coil · Retrofit · Room", "图片加载、网络与本地存储"),
+                            ),
+                        )
+                        CreditGroup(
+                            label = "资料与数据",
+                            entries = listOf(
+                                KibaCredit(
+                                    "水鱼查分器",
+                                    "舞萌成绩与公共曲库",
+                                    "https://www.diving-fish.com/maimaidx/prober/",
+                                ),
+                                KibaCredit(
+                                    "落雪查分器",
+                                    "中二数据、谱面预览与媒体资源",
+                                    "https://maimai.lxns.net/",
+                                ),
+                                KibaCredit(
+                                    "萌娘百科",
+                                    "本地知识库的词条取材",
+                                    "https://zh.moegirl.org.cn",
+                                ),
+                            ),
                         )
                     }
                 }
@@ -775,6 +870,83 @@ private fun formatUpdateFileSize(bytes: Long): String {
         bytes < 1024L * 1024 * 1024 -> "${(bytes / (1024.0 * 1024.0)).let { String.format("%.1f", it) }} MB"
         else -> "${(bytes / (1024.0 * 1024.0 * 1024.0)).let { String.format("%.2f", it) }} GB"
     }
+}
+
+// ── 致谢 / 数据来源排版组件 ──
+
+/** 一条致谢条目：[url] 非空时整行可点开。 */
+private data class KibaCredit(
+    val name: String,
+    val description: String,
+    val url: String? = null,
+)
+
+/** 分组小标题（上游项目 / 组件与库 / …）。 */
+@Composable
+private fun CreditGroupLabel(text: String) {
+    Text(
+        text = text,
+        style = MiuixTheme.textStyles.body2.copy(fontWeight = FontWeight.Bold),
+        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+    )
+}
+
+/** 一组致谢：小标题 + 条目列表。 */
+@Composable
+private fun CreditGroup(label: String, entries: List<KibaCredit>) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        CreditGroupLabel(label)
+        entries.forEach { CreditRow(it) }
+    }
+}
+
+/** 单条致谢：左侧圆点 + 名称 + 说明；有链接时整行可点。 */
+@Composable
+private fun CreditRow(credit: KibaCredit) {
+    val context = LocalContext.current
+    val clickable = if (credit.url != null) {
+        Modifier.clickable { openUrl(context, credit.url) }
+    } else {
+        Modifier
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(clickable),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Box(
+            modifier = Modifier
+                .padding(top = 7.dp)
+                .size(4.dp)
+                .clip(CircleShape)
+                .background(MiuixTheme.colorScheme.onSurface.copy(alpha = 0.35f)),
+        )
+        Spacer(Modifier.width(10.dp))
+        Column {
+            Text(
+                text = credit.name,
+                style = MiuixTheme.textStyles.body2.copy(fontWeight = FontWeight.Medium),
+                color = MiuixTheme.colorScheme.onSurface,
+            )
+            Text(
+                text = credit.description,
+                style = MiuixTheme.textStyles.footnote1,
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            )
+        }
+    }
+}
+
+/** 数据来源用的正文段落（与致谢的条目排版区分开）。 */
+@Composable
+private fun CreditNote(text: String) {
+    Text(
+        text = text,
+        style = MiuixTheme.textStyles.body2,
+        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+        modifier = Modifier.padding(start = 14.dp),
+    )
 }
 
 private const val PREF_UPDATE = "update_preferences"

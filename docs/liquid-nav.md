@@ -195,6 +195,17 @@ z 序从下到上：
 12. **「按下即飞」后必须保留按住拖动**：只等 up 的观察器会让液滴到位后锁死
     （v2.3.20 真机反馈）。首帧基准取真实视觉位置（否则回跳）、纯点按的 up 提前
     break（否则飞行半程被吸附到中途 tab），两条缺一不可。
+13. **轻扫卡在两 tab 之间（v2.3.21 真机，极低概率）**：`updateValue` 每帧 `launch`
+    一个独立协程写 `valueAnimation`，末帧可能排到手势收尾之后执行，把 `targetValue`
+    改回半程小数；而 `onDragStopped` 用瞬时 `value` 判断「已就位」并跳过收敛，
+    于是胶囊永久停在中间、`onSelect` 又因 `target == selectedIndex` 被跳过。
+    修法：所有位置写入收敛到唯一入口 `animateValue()`（先 `valueJob?.cancel()` 再
+    `UNDISPATCHED` 启动），用同步记账的 `pendingTarget / dragTarget` 读落点，
+    `onDragStopped` **无条件**上报 + `settleTo`，`release()` 末尾再兜一次
+    `onGestureSettled`（`onSelect` 幂等）。
+14. **松手带速度时胶囊形状变形**：速度弹簧（`spring(0.5f,300f)`）衰减比玻璃凝回慢，
+    残余 `velocity` 会继续横向拉伸静止形状，最右 tab 直接顶出底栏圆角。
+    形变必须按 `pressProgress` 加权——`lerp(1f, 变形值, press)`，p=0 时严格 1:1。
 
 ## 7. AVD 验证液态档的必做步骤
 

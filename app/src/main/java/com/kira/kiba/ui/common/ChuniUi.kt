@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -18,9 +19,11 @@ import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil.compose.SubcomposeAsyncImage
+import coil.compose.SubcomposeAsyncImageContent
 import com.kira.kiba.R
 import java.util.Locale
 import com.kira.kiba.core.model.ChuniDiffType
+import com.kira.kiba.core.utils.CoverHits
 import com.kira.kiba.core.utils.CoverSources
 import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
 import top.yukonga.miuix.kmp.icon.glass.*
@@ -46,7 +49,7 @@ fun ChuniCoverFrame(
             .border(2.dp, stroke, RoundedCornerShape(10.dp))
     ) {
         ChuniCoverChain(
-            candidates = candidates, index = 0, stroke = stroke, size = size,
+            songId = songId, candidates = candidates, index = 0, stroke = stroke, size = size,
             modifier = Modifier.fillMaxSize().padding(2.dp)
                 .clip(RoundedCornerShape(8.dp)),
         )
@@ -55,7 +58,7 @@ fun ChuniCoverFrame(
 
 @Composable
 private fun ChuniCoverChain(
-    candidates: List<String>, index: Int, stroke: Color, size: Dp, modifier: Modifier,
+    songId: Int, candidates: List<String>, index: Int, stroke: Color, size: Dp, modifier: Modifier,
 ) {
     val url = candidates.getOrNull(index)
     if (url == null) {
@@ -65,8 +68,16 @@ private fun ChuniCoverChain(
     SubcomposeAsyncImage(
         model = url, contentDescription = null, contentScale = ContentScale.Crop,
         loading = { ChuniCoverPlaceholder(stroke = stroke, size = size, modifier = modifier) },
+        success = {
+            LaunchedEffect(url) { CoverHits.recordSuccess(songId, url) }
+            SubcomposeAsyncImageContent()
+        },
         error = {
-            ChuniCoverChain(candidates = candidates, index = index + 1, stroke = stroke, size = size, modifier = modifier)
+            LaunchedEffect(url) { CoverHits.recordFailure(url) }
+            ChuniCoverChain(
+                songId = songId, candidates = candidates, index = index + 1,
+                stroke = stroke, size = size, modifier = modifier,
+            )
         },
         modifier = modifier,
     )

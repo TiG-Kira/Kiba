@@ -189,17 +189,17 @@ fun LiquidNavigationBar(
                 touchX in 0f..metrics.totalWidth
             },
             onDragStopped = {
-                val target = targetValue.fastRoundToInt().fastCoerceIn(0, items.size - 1)
-                if (target != latestSelectedIndexState.value) latestOnSelectState.value(target)
-                // 纯按住当前 tab（没换页、胶囊也没离开整数位）：release() 自己收尾即可，
-                // 再播一次 animateToValue 会和 release 抢同一条 press 动画，玻璃会闪。
-                // 拖动后吸附回原 tab 时 value 是半程点，仍需动画把它带回整数位。
-                val needsSettle = target != lastAnimatedState.intValue ||
-                    abs(value - target.toFloat()) > 0.01f
-                if (needsSettle) {
-                    lastAnimatedState.intValue = target
-                    holder.animation?.animateToValue(target.toFloat())
-                }
+                // 用「动画目标」而不是瞬时视觉值算落点：轻扫末帧 value 还来不及
+                // 跟上 targetValue，拿 value 判断会误以为胶囊已就位。
+                val target = dragTarget.fastRoundToInt().fastCoerceIn(0, items.size - 1)
+                // 无条件上报（onSelect 幂等）：轻扫时 target 可能恰好等于当前页，
+                // 但不能因此整段跳过，否则胶囊位置与 selectedIndex 会永久不一致。
+                latestOnSelectState.value(target)
+                lastAnimatedState.intValue = target
+                // 无条件收敛位置：value 接近整数不代表 targetValue 不是半程残留值。
+                // settleTo 只收位置、不重启 press/release，玻璃收尾仍归 onDragEnd 的 release
+                // （它会等位置收敛后才凝回，飞行余韵不受影响）。
+                settleTo(target.toFloat())
                 metrics.offsetSnapJob?.cancel()
                 metrics.offsetSnapJob = null
                 scope.launch { offsetAnimation.animateTo(0f, spring(1f, 300f, 0.5f)) }
@@ -217,6 +217,13 @@ fun LiquidNavigationBar(
                     }
                 }
             },
+            // release 收敛完成后统一对齐：万一某条手势链完全漏掉 onDragStopped，
+            // 这里也能把页面索引拉回胶囊最终落点（极低概率竞态的最后一道兜底）。
+            onGestureSettled = { index ->
+                val target = index.fastCoerceIn(0, items.size - 1)
+                lastAnimatedState.intValue = target
+                if (target != latestSelectedIndexState.value) latestOnSelectState.value(target)
+            },
         ).also { holder.animation = it }
     }
 
@@ -226,7 +233,12 @@ fun LiquidNavigationBar(
     LaunchedEffect(dragAnimation) {
         snapshotFlow { latestSelectedIndexState.value }.collectLatest { index ->
             val target = index.fastCoerceIn(0, items.size - 1)
-            if (target != lastAnimatedState.intValue) {
+            // 除了 index 变化，静止状态下胶囊位置偏离整数 tab 时也强制对齐，
+            // 让任何一次外部回流都能自愈「卡在两 tab 之间」的残留状态。
+            // 飞行中必须跳过，否则每次点按的 selectedIndex 回流都会重播一次起飞。
+            val drifted = !dragAnimation.isAnimatingValue &&
+                abs(dragAnimation.value - target.toFloat()) > 0.02f
+            if (target != lastAnimatedState.intValue || drifted) {
                 lastAnimatedState.intValue = target
                 dragAnimation.animateToValue(target.toFloat())
             }
@@ -340,11 +352,15 @@ fun LiquidNavigationBar(
     }
     val pillLayerBlock: GraphicsLayerScope.() -> Unit = remember(dragAnimation) {
         {
-            scaleX = dragAnimation.scaleX
-            scaleY = dragAnimation.scaleY
+            val press = dragAnimation.pressProgress
+            // 按压鼓起 + 速度拉伸都只属于「浮动玻璃」阶段。松手后玻璃凝回灰色选中提示，
+            // 形状必须严格回到 1:1 的标准胶囊：否则残余速度（spring 0.5/300 还在衰减）
+            // 会在玻璃消失后继续横向拉伸静止形状，最右 tab 会顶出底栏圆角。
             val velocity = dragAnimation.velocity / 10f
-            scaleX /= 1f - (velocity * 0.75f).fastCoerceIn(-0.2f, 0.2f)
-            scaleY *= 1f - (velocity * 0.25f).fastCoerceIn(-0.2f, 0.2f)
+            val stretchX = (velocity * 0.75f).fastCoerceIn(-0.2f, 0.2f)
+            val stretchY = (velocity * 0.25f).fastCoerceIn(-0.2f, 0.2f)
+            scaleX = lerp(1f, dragAnimation.scaleX / (1f - stretchX), press)
+            scaleY = lerp(1f, dragAnimation.scaleY * (1f - stretchY), press)
         }
     }
     val pillSurface: DrawScope.() -> Unit = remember(isLightTheme, dragAnimation) {
@@ -488,15 +504,16 @@ fun LiquidNavigationBar(
                                 }
                                 if (dragging) {
                                     // 纯点按绝不重发吸附：此刻起飞动画可能还在飞，
-                                    // round 半程点会把目标改成中途 tab 并掐断在飞的动画
-                                    val target = dragAnimation.value.fastRoundToInt()
+                                    // round 半程点会把目标改成中途 tab 并掐断在飞的动画。
+                                    // 拖动过则用 targetValue 而非瞬时 value 算落点：
+                                    // 轻扫末帧的写入可能还没落到 value 上。
+                                    val target = dragAnimation.dragTarget.fastRoundToInt()
                                         .fastCoerceIn(0, items.size - 1)
                                     lastAnimatedState.intValue = target
                                     // 只收敛位置，玻璃收尾仍交给按住链那次 release
                                     dragAnimation.settleTo(target.toFloat())
-                                    if (target != latestSelectedIndexState.value) {
-                                        latestOnSelectState.value(target)
-                                    }
+                                    // 无条件上报，保证页面与胶囊落点一致
+                                    latestOnSelectState.value(target)
                                 }
                             }
                         }

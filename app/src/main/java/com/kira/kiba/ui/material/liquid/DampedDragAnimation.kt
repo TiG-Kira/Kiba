@@ -30,9 +30,11 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.util.fastFirstOrNull
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
  * 液态底栏胶囊的完整动画状态机（HyperIsland 口径）。
@@ -62,6 +64,8 @@ class DampedDragAnimation(
     private val canDrag: (Offset) -> Boolean = { true },
     private val onDragStopped: DampedDragAnimation.() -> Unit,
     private val onDrag: DampedDragAnimation.(IntSize, Offset) -> Unit,
+    /** 每次 release 收敛完成后上报最终 tab，用于把页面索引与胶囊落点强制对齐（兜底）。 */
+    private val onGestureSettled: (Int) -> Unit = {},
 ) {
     private val valueAnimation = Animatable(initialValue, 0.001f)
     private val velocityAnimation = Animatable(0f, 5f)
@@ -71,11 +75,35 @@ class DampedDragAnimation(
     private val mutex = MutatorMutex()
     private val velocityTracker = VelocityTracker()
 
+    /**
+     * 位移写入的唯一所有者。
+     *
+     * 旧实现里 `updateValue` 每来一帧 move 就 `launch` 一个独立协程去 `animateTo`，
+     * 轻扫时最后几帧可能排在手势收尾**之后**才被主线程调度，把
+     * [valueAnimation] 的 `targetValue` 改回一个半程小数；此时
+     * `onDragStopped` 已经用瞬时 [value] 判定过"已就位"并跳过收敛，
+     * 胶囊就永久卡在两个 tab 之间，页面也不会切。
+     * 所有写入统一从这里先取消旧 job、再当帧启动新动画，杜绝残留写入。
+     */
+    private var valueJob: Job? = null
+
+    /**
+     * 同步维护的逻辑目标：不依赖 `Animatable.targetValue` 何时被赋值。
+     * 手势 up 与最后一帧 move 可能同帧到达，只有这里能保证读到真实落点。
+     */
+    private var pendingTarget: Float = initialValue
+
     /** 胶囊当前位置（tab 下标，可为小数 = 正在两 tab 之间）。 */
     val value: Float get() = valueAnimation.value
 
+    /** 手势落点：最后一帧 move 的写入即使还没落到 Animatable 上，这里也已经是最新值。 */
+    val dragTarget: Float get() = pendingTarget
+
     /** 当前位置动画的目标（松手吸附、release 判定都用它）。 */
     val targetValue: Float get() = valueAnimation.targetValue
+
+    /** 位置动画是否仍在跑：外部回流去重时判断「飞行中」用，避免重复播一次起飞。 */
+    val isAnimatingValue: Boolean get() = valueJob?.isActive == true
 
     /** 平滑后的拖动速度（tab/秒），胶囊拉伸公式直接读它。 */
     val velocity: Float get() = velocityAnimation.value
@@ -142,28 +170,43 @@ class DampedDragAnimation(
             launch { pressAnimation.animateTo(0f, spring(1f, 1000f, 0.001f)) }
             launch { scaleXAnimation.animateTo(1f, spring(0.6f, 250f, 0.001f)) }
             launch { scaleYAnimation.animateTo(1f, spring(0.7f, 250f, 0.001f)) }
+            // 最后一道兜底：万一某条手势链完全没走到 onDragStopped，胶囊也必须
+            // 停在整数 tab，且页面索引要与它一致（onSelect 幂等）。
+            val settledIndex = valueAnimation.value.roundToInt()
+                .coerceIn(valueRange.start.toInt(), valueRange.endInclusive.toInt())
+            if (abs(valueAnimation.value - settledIndex.toFloat()) > 0.01f) {
+                animateValue(settledIndex.toFloat(), trackVelocity = false)
+            }
+            onGestureSettled(settledIndex)
+        }
+    }
+
+    /** 所有对 [valueAnimation] 的写入必须经过这里：取消旧 job + 当帧启动新动画。 */
+    private fun animateValue(target: Float, trackVelocity: Boolean) {
+        val coerced = target.coerceIn(valueRange.start, valueRange.endInclusive)
+        // 先同步记账，再启动动画：手势 up 可能在同一帧内紧接着读它
+        pendingTarget = coerced
+        valueJob?.cancel()
+        valueJob = animationScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            valueAnimation.animateTo(coerced, spring(1f, 1000f, 0.001f)) {
+                if (trackVelocity) updateVelocity()
+            }
         }
     }
 
     /** 拖动跟手（带一点弹簧，不是生硬 snapTo），并把真实手指速度喂给 [velocityAnimation]。 */
     fun updateValue(target: Float) {
-        val coerced = target.coerceIn(valueRange.start, valueRange.endInclusive)
-        animationScope.launch {
-            valueAnimation.animateTo(coerced, spring(1f, 1000f, 0.001f)) { updateVelocity() }
-        }
+        animateValue(target, trackVelocity = true)
     }
 
     /**
-     * 按住拖动后的吸附：只把位置收敛到整数 tab，**不重启 press / release**。
-     * 按住链的那一次 [animateToValue] 仍负责玻璃收尾；这里若再播一次 press，
-     * 会与它抢同一条 Animatable，松手瞬间玻璃明暗闪一下。
+     * 松手吸附：无条件把位置收敛到整数 tab、速度平滑归零，**不重启 press / release**。
+     * 玻璃收尾仍归按下链那次 [release]；这里若再播一次 press，会与它抢同一条
+     * Animatable，松手瞬间玻璃明暗闪一下。
      */
     fun settleTo(target: Float) {
+        animateValue(target, trackVelocity = false)
         animationScope.launch(start = CoroutineStart.UNDISPATCHED) {
-            valueAnimation.animateTo(
-                target.coerceIn(valueRange.start, valueRange.endInclusive),
-                spring(1f, 1000f, 0.001f),
-            )
             velocityAnimation.animateTo(0f, spring(0.5f, 300f, 0.01f))
         }
     }
@@ -179,12 +222,9 @@ class DampedDragAnimation(
         animationScope.launch(start = CoroutineStart.UNDISPATCHED) {
             mutex.mutate {
                 press()
-                launch {
-                    valueAnimation.animateTo(
-                        target.coerceIn(valueRange.start, valueRange.endInclusive),
-                        spring(1f, 1000f, 0.001f),
-                    )
-                }
+                // 与 updateValue / settleTo 共用同一个 job：新切换会取消上一次飞行，
+                // 也能取消仍在排队的「拖动末帧」，保证 targetValue 最终一定是整数。
+                animateValue(target, trackVelocity = false)
                 if (velocity != 0f) {
                     launch { velocityAnimation.animateTo(0f, spring(0.5f, 300f, 0.01f)) }
                 }

@@ -29,9 +29,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.Image
+import androidx.compose.runtime.LaunchedEffect
 import coil.compose.SubcomposeAsyncImage
+import coil.compose.SubcomposeAsyncImageContent
 import com.kira.kiba.R
 import com.kira.kiba.core.model.DifficultyType
+import com.kira.kiba.core.utils.CoverHits
 import com.kira.kiba.core.utils.CoverSources
 import com.kira.kiba.ui.navigation.LocalNavBarBottomPadding
 import com.kira.kiba.ui.navigation.LocalSystemNavBarBottom
@@ -116,6 +119,7 @@ fun CoverFrame(
             .border(2.dp, stroke, RoundedCornerShape(10.dp))
     ) {
         CoverImageChain(
+            songId = songId,
             candidates = candidates,
             index = 0,
             stroke = stroke,
@@ -131,9 +135,14 @@ fun CoverFrame(
 /**
  * 封面候选链加载：逐个尝试，任一成功即显示；全部失败落回占位。
  * 用 SubcomposeAsyncImage 的 error slot 递归实现，避免依赖 painter 状态判断。
+ *
+ * 成功 / 失败都会写进 [CoverHits]：下一次组合直接用上次命中的源，
+ * 并跳过 10 分钟内已知失败的源，避免每次都串行重放一遍必然 404 的请求
+ * （Coil 只缓存 2xx，失败候选永远不会进磁盘缓存）。
  */
 @Composable
 private fun CoverImageChain(
+    songId: Int,
     candidates: List<String>,
     index: Int,
     stroke: Color,
@@ -150,8 +159,16 @@ private fun CoverImageChain(
         contentDescription = null,
         contentScale = ContentScale.Crop,
         loading = { CoverPlaceholder(stroke = stroke, size = size, modifier = modifier) },
+        success = {
+            // 记住命中源：下次这首先试它，直接命中磁盘缓存
+            LaunchedEffect(url) { CoverHits.recordSuccess(songId, url) }
+            SubcomposeAsyncImageContent()
+        },
         error = {
+            // 失败源短期拉黑：404 / 超时都不进 Coil 缓存，重试只会白等
+            LaunchedEffect(url) { CoverHits.recordFailure(url) }
             CoverImageChain(
+                songId = songId,
                 candidates = candidates,
                 index = index + 1,
                 stroke = stroke,
