@@ -16,7 +16,10 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.asFlow
 import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.model.SongGroupMode
+import com.kira.kiba.core.model.SongSortMode
+import com.kira.kiba.core.model.sortedBySongMode
 import com.kira.kiba.core.repository.SongWithChartRepository
+import com.kira.kiba.core.utils.SpUtil
 import com.kira.kiba.ui.common.collectAsStateCached
 import com.kira.kiba.ui.common.EmptyStateCard
 import com.kira.kiba.ui.common.pageContentPadding
@@ -54,7 +57,12 @@ fun SongGroupScreen(
         ).asFlow()
     }
     val songs by songsFlow.collectAsStateCached(SongsListCache)
-    val filtered = songs.filter { songInGroup(it, mode, groupKey) }
+    // 与曲目页保持同一套排序方式（分组内也按用户选的定数 / 等级 / 曲名排序）
+    val sortMode = remember { SongSortMode.fromKey(SpUtil.getSongSortMode()) }
+    val filtered = remember(songs, sortMode, mode, groupKey) {
+        songs.filter { songInGroup(it, mode, groupKey) }
+            .sortedBySongMode(sortMode, ::maimaiSongSortKey)
+    }
 
     Scaffold(
         modifier = Modifier

@@ -91,7 +91,7 @@ fun LlmConfigScreen(scrollBehavior: ScrollBehavior) {
                         summary = if (enabled) {
                             "已开启：聊天提问会交给下方配置的模型回答"
                         } else {
-                            "已关闭：Agent 只保留技能卡（点击技能卡仍可离线使用）"
+                            "已关闭：Agent 只保留「功能」菜单里的本地技能（仍可离线使用）"
                         },
                     )
                 }

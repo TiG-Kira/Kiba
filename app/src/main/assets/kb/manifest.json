@@ -1,7 +1,7 @@
 {
-  "version": 1,
-  "generatedAt": "2026-11-06",
-  "note": "由 tools/update_moegirl_kb.py 生成；docs 数组里登记的 file 会被 App 载入知识库。",
+  "version": 2,
+  "generatedAt": "2026-11-08",
+  "note": "原条目由 tools/update_moegirl_kb.py 生成；v2 追加百科 / 玩家站 / 镜像的机制补充，来源核验层级见各 md 头部",
   "docs": [
     {
       "file": "maimai_dx.md",

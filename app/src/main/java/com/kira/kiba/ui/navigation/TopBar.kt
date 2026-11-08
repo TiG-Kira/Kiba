@@ -174,13 +174,13 @@ fun KibaRefreshAction(onClick: () -> Unit) {
     }
 }
 
-/** 顶栏归类按钮（glass 系，曲目页用）。 */
+/** 顶栏排序 / 归类按钮（glass 系，曲目页用；舞萌与中二节奏都能排序）。 */
 @Composable
 fun KibaSortAction(onClick: () -> Unit) {
     KibaActionButton(onClick = onClick) {
         Icon(
             MiuixGlassIcons.Regular.Sort,
-            contentDescription = "归类方式",
+            contentDescription = "排序与归类",
             tint = MiuixTheme.colorScheme.onSurface,
         )
     }

@@ -40,7 +40,7 @@ import kotlin.random.Random
  * 设计原则（v0.3.0 起）：
  * - **聊天一律走 LLM**：用户输入不匹配任何本地意图，直接交给 LLM；
  *   LLM 通过 tool calling 调用本地技能，技能数据回灌给模型让它总结。
- * - **本地逻辑只在点技能卡时触发**：`runSkill()` 是唯一的本地执行入口，
+ * - **本地逻辑只在点功能菜单项时触发**：`runSkill()` 是唯一的本地执行入口，
  *   卡片点击直接产出结果卡片，不经过 LLM。
  * - 所有技能既能离线调用（点卡片），也能被 LLM 调用（作为 tool）。
  *
@@ -71,7 +71,7 @@ class KibaAgent(private val context: Context) {
     )
 
     /**
-     * 技能卡：可点击直接执行（无需 LLM），同时作为 LLM 的 tool。
+     * 功能菜单项：可点击直接执行（无需 LLM），同时作为 LLM 的 tool。
      *
      * @property params 技能入参；既是 LLM 的 JSON Schema，也是卡片说明。
      * @property paramHint 卡片点击时弹层里的输入提示（只有带参技能用到）。
@@ -133,7 +133,7 @@ class KibaAgent(private val context: Context) {
 
     /**
      * 聊天统一入口：**只走 LLM**。
-     * 未配置 LLM 时给出明确引导（技能卡仍可离线使用）。
+     * 未配置 LLM 时给出明确引导（功能菜单项仍可离线使用）。
      */
     suspend fun handle(input: String): AgentReply {
         val text = input.trim()
@@ -141,7 +141,7 @@ class KibaAgent(private val context: Context) {
         if (!KibaLlm.isConfigured()) {
             return AgentReply(
                 "当前未配置 LLM，无法自由提问。\n" +
-                    "请点上方技能卡直接使用（Best 50 / 推分 / 随机 / 查歌 / 运势 / 猜歌…），" +
+                    "请点上方「功能」按钮直接使用（Best 50 / 推分 / 随机 / 查歌 / 运势 / 猜歌…），" +
                     "或到「设置 → Agent 模型配置」开启对话能力。",
                 skills = SKILLS,
             )
@@ -162,7 +162,7 @@ class KibaAgent(private val context: Context) {
         if (!KibaLlm.isConfigured()) {
             return AgentReply(
                 "当前未配置 LLM，无法自由提问。\n" +
-                    "请点上方技能卡直接使用（Best 50 / 推分 / 随机 / 查歌 / 运势 / 猜歌…），" +
+                    "请点上方「功能」按钮直接使用（Best 50 / 推分 / 随机 / 查歌 / 运势 / 猜歌…），" +
                     "或到「设置 → Agent 模型配置」开启对话能力。",
                 skills = SKILLS,
             )
@@ -170,7 +170,7 @@ class KibaAgent(private val context: Context) {
         return runAgent(text, onChunk)
     }
 
-    /** 直接执行某个技能（技能卡点击专用，不经过 LLM）。 */
+    /** 直接执行某个技能（功能菜单项点击专用，不经过 LLM）。 */
     suspend fun runSkill(id: String, arg: String = ""): AgentReply = when (id) {
         "best50" -> best50()
         "push_rating" -> pushRating()
@@ -324,7 +324,7 @@ class KibaAgent(private val context: Context) {
         messages += AgentSession.llmHistory(maxTurns = 8)
         messages += KibaLlm.Message.user(input)
 
-        // LLM 专用工具（如联网搜索）也一并暴露给模型，但不进技能卡
+        // LLM 专用工具（如联网搜索）也一并暴露给模型，但不进功能菜单项
         val tools = (SKILLS + LLM_ONLY_TOOLS).map { KibaLlm.ToolDef(it.id, it.summary, it.params) }
         var collected = AgentReply("")
         // 思考型模型可能把 token 全烧在 reasoning 上，正文一个字都没吐出来。
@@ -522,7 +522,7 @@ class KibaAgent(private val context: Context) {
                 text = (accumulated + answer).ifBlank {
                     collected.text.ifBlank {
                         if (result.reasoning.isNotBlank()) {
-                            "模型只输出了思考过程，没有给出结论。可以换个说法再问一次，或点上方技能卡直接使用。"
+                            "模型只输出了思考过程，没有给出结论。可以换个说法再问一次，或点上方「功能」按钮直接使用。"
                         } else {
                             "（模型没有返回内容）"
                         }
@@ -2195,7 +2195,7 @@ class KibaAgent(private val context: Context) {
         private const val MAX_TOKENS_CAP = 16384
 
         /**
-         * 技能表：既是技能卡，也是 LLM 的 tool 定义。
+         * 技能表：既是功能菜单项，也是 LLM 的 tool 定义。
          *
          * 来源：Kiba 原有能力 + KibaBot（KilluaSakata/Kiba）独有能力提炼。
          * 已剔除：塔罗 / 运势外的占卜、群管理（戳一戳、禁言）、雀魂、Arcaea，
@@ -2371,20 +2371,22 @@ class KibaAgent(private val context: Context) {
         )
 
         /**
-         * LLM 专用工具：不进技能卡（不展示在对话顶部），只作为 tool 定义暴露给模型。
+         * LLM 专用工具：不进功能菜单项（不展示在对话顶部），只作为 tool 定义暴露给模型。
          * 用于让模型对 maimai 游戏机制 / 新版本内容等「本地没有的数据」能联网查证，
          * 查到的结果回灌后由模型总结给用户——不允许 agent 对 maimai 的事完全不知道。
          */
         private val LLM_ONLY_TOOLS = listOf(
             AgentSkill(
                 "moegirl_kb", "萌娘百科知识库",
-                "查舞萌 / 舞萌DX / 中二节奏的**机制与设定**（定数、Rating 公式、判定、音符种类、" +
-                    "段位、模式、术语、版本差异、联动）。回答机制类问题**先用它**，比联网快且不会编造；" +
-                    "本地没检索到再用 web_search。",
+                "查舞萌 / 舞萌DX / 中二节奏的**机制与设定**：定数、Rating 公式与分代、判定档位与帧数、" +
+                    "音符种类、达成率 / BREAK 加成、评级区间、段位认定、宴会场与特殊谱面、集章卡 / 区域、" +
+                    "国服登录与功能差异、CHUNITHM 技能数值 / 角色界限突破 / 地图格 / CLASS 认定、" +
+                    "版本沿革、术语黑话。回答机制类问题**先用它**，比联网快且不会编造；" +
+                    "本地没检索到再用 web_search。资料含玩家站与镜像口径，数值类结论要注明「可能随版本变化」。",
                 params = listOf(
                     KibaLlm.ToolParam(
                         "query", "string",
-                        "要查的名词或短句，例：单曲 Rating 公式 / 判定档位 / 段位认定 / 宴会场 / 金框体",
+                        "要查的名词或短句，例：单曲 Rating 公式 / 判定档位 / 段位认定 / 宴会场 / 金框体 / BREAK 加成 / 界限突破",
                         required = true,
                     ),
                 ),

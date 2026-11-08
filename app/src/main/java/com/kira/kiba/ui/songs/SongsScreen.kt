@@ -22,9 +22,12 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -63,6 +66,8 @@ import com.kira.kiba.core.db.entity.SongWithChartsEntity
 import com.kira.kiba.core.model.ChuniDiffType
 import com.kira.kiba.core.model.GameType
 import com.kira.kiba.core.model.SongGroupMode
+import com.kira.kiba.core.model.SongSortMode
+import com.kira.kiba.core.model.sortedBySongMode
 import com.kira.kiba.core.repository.ChuniSongWithChartRepository
 import com.kira.kiba.core.repository.SongWithChartRepository
 import com.kira.kiba.core.state.KibaState
@@ -207,16 +212,31 @@ fun SongsScreen(
     }
     val chuniSongs by chuniSongsFlow.collectAsStateCached(ChuniSongsListCache)
 
-    // World's End 谱面（等级为汉字的特殊谱面，标题形如 [X]歌名）单独归类，不混入常规列表
-    val chuniNormalSongs = remember(chuniSongs) {
-        chuniSongs.filter { s -> s.charts.none { it.difficultyIndex == ChuniDiffType.WORLD_END.ordinal } }
+    // ── 排序（舞萌 / 中二节奏通用）──
+    // 旧实现里顶栏 Sort 按钮只做「归类」，而归类被 gameType == MAIMAI 门控；
+    // 中二节奏走 ChuniDao 写死的 ORDER BY id DESC，从头到尾没有任何排序环节，
+    // 所以切到中二节奏后点排序选什么都毫无反应。这里两套曲库各自映射成
+    // SongSortKey 后共用同一套比较器，排序对两个游戏同时生效。
+    var sortMode by remember {
+        mutableStateOf(SongSortMode.fromKey(SpUtil.getSongSortMode()))
     }
-    val chuniWeSongs = remember(chuniSongs) {
-        chuniSongs.filter { s -> s.charts.any { it.difficultyIndex == ChuniDiffType.WORLD_END.ordinal } }
+    val sortedSongs = remember(songs, sortMode) {
+        songs.sortedBySongMode(sortMode, ::maimaiSongSortKey)
+    }
+    val sortedChuniSongs = remember(chuniSongs, sortMode) {
+        chuniSongs.sortedBySongMode(sortMode, ::chuniSongSortKey)
+    }
+
+    // World's End 谱面（等级为汉字的特殊谱面，标题形如 [X]歌名）单独归类，不混入常规列表
+    val chuniNormalSongs = remember(sortedChuniSongs) {
+        sortedChuniSongs.filter { s -> s.charts.none { it.difficultyIndex == ChuniDiffType.WORLD_END.ordinal } }
+    }
+    val chuniWeSongs = remember(sortedChuniSongs) {
+        sortedChuniSongs.filter { s -> s.charts.any { it.difficultyIndex == ChuniDiffType.WORLD_END.ordinal } }
     }
 
     // ── 归类：不归类（默认）/ 按版本 / 按 MASTER 谱师 / 按曲师 ──
-    // 中二节奏暂不支持归类（其 genre/版本语义不同），强制平铺。
+    // 归类是舞萌专用（分组子页只查舞萌曲库）；中二节奏用上面的排序，不参与归类。
     // 搜索进行中强制平铺（搜索结果跨分组，归类入口暂隐），搜索清空后恢复。
     // 注意：groupMode 必须先于 grouping 声明（Kotlin 局部属性初始化顺序）。
     var groupMode by remember {
@@ -224,8 +244,8 @@ fun SongsScreen(
     }
     val grouping = gameType == GameType.MAIMAI &&
         groupMode != SongGroupMode.NONE && query.isBlank()
-    val groups = remember(songs, groupMode, grouping) {
-        if (grouping) buildSongGroups(songs, groupMode) else emptyList()
+    val groups = remember(sortedSongs, groupMode, grouping) {
+        if (grouping) buildSongGroups(sortedSongs, groupMode) else emptyList()
     }
 
     val syncState by SongDataSync.state.collectAsState()
@@ -420,7 +440,7 @@ fun SongsScreen(
                         }
                     }
                 } else {
-                    items(items = songs, key = { it.songData.id }) { song ->
+                    items(items = sortedSongs, key = { it.songData.id }) { song ->
                         SongCard(song = song, onClick = { onSongClick(song) })
                     }
                 }
@@ -467,55 +487,113 @@ fun SongsScreen(
         }
     }
 
-    // 归类方式选择弹层（单选圆点指示；由顶栏归类按钮唤起）
+    // 排序 / 归类选择弹层（单选圆点指示；由顶栏 Sort 按钮唤起）
+    // 排序对舞萌和中二节奏同时生效；归类是舞萌专用，中二节奏给明确说明，
+    // 不再出现「选了没有任何反应」的假选项。
     if (showGroupPicker) {
         KibaGlassDialog(
             show = true,
-            title = "归类方式",
-            summary = "选择曲目列表的归类维度，子页面展示对应谱面",
+            title = "排序与归类",
+            summary = "排序对舞萌 / 中二节奏同时生效；归类仅舞萌可用",
             onDismissRequest = onDismissGroupPicker,
         ) {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                SongGroupMode.entries.forEach { mode ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 460.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                Text(
+                    text = "排序方式（两游戏通用）",
+                    style = MiuixTheme.textStyles.footnote1,
+                    color = MiuixTheme.colorScheme.primary,
+                )
+                Spacer(Modifier.height(4.dp))
+                SongSortMode.entries.forEach { mode ->
+                    SongListOptionRow(
+                        label = mode.label,
+                        selected = sortMode == mode,
+                        onClick = {
+                            sortMode = mode
+                            SpUtil.setSongSortMode(mode.key)
+                            // 换排序后回到顶部，否则用户停留在旧列表的中段看不出变化
+                            scope.launch { listState.scrollToItem(0) }
+                            onDismissGroupPicker()
+                        },
+                    )
+                }
+
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    text = if (gameType == GameType.MAIMAI) {
+                        "归类方式（仅舞萌）"
+                    } else {
+                        "归类方式（中二节奏暂不支持）"
+                    },
+                    style = MiuixTheme.textStyles.footnote1,
+                    color = MiuixTheme.colorScheme.primary,
+                )
+                Spacer(Modifier.height(4.dp))
+                if (gameType == GameType.MAIMAI) {
+                    SongGroupMode.entries.forEach { mode ->
+                        SongListOptionRow(
+                            label = mode.label,
+                            selected = groupMode == mode,
+                            onClick = {
                                 groupMode = mode
                                 SpUtil.setSongGroupMode(mode.key)
+                                scope.launch { listState.scrollToItem(0) }
                                 onDismissGroupPicker()
-                            }
-                            .padding(horizontal = 8.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(20.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    if (groupMode == mode) {
-                                        MiuixTheme.colorScheme.primary
-                                    } else {
-                                        Color.Transparent
-                                    },
-                                )
-                                .border(
-                                    width = if (groupMode == mode) 0.dp else 1.5.dp,
-                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                                    shape = CircleShape,
-                                ),
-                        )
-                        Spacer(Modifier.width(12.dp))
-                        Text(
-                            text = mode.label,
-                            style = MiuixTheme.textStyles.body1,
-                            color = MiuixTheme.colorScheme.onSurface,
+                            },
                         )
                     }
+                } else {
+                    Text(
+                        text = "中二节奏曲库的分组语义与舞萌不同，请用上方排序方式重排列表。",
+                        style = MiuixTheme.textStyles.footnote1,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                    )
                 }
             }
         }
+    }
+}
+
+/** 排序 / 归类弹层里的单选项行（选中圆点 + 文案）。 */
+@Composable
+private fun SongListOptionRow(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(20.dp)
+                .clip(CircleShape)
+                .background(
+                    if (selected) MiuixTheme.colorScheme.primary else Color.Transparent
+                )
+                .border(
+                    width = if (selected) 0.dp else 1.5.dp,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    shape = CircleShape,
+                ),
+        )
+        Spacer(Modifier.width(12.dp))
+        Text(
+            text = label,
+            style = MiuixTheme.textStyles.body1,
+            color = MiuixTheme.colorScheme.onSurface,
+        )
     }
 }
 

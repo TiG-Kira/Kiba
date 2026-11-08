@@ -480,7 +480,7 @@ fun KibaMainScreen() {
 
     // 顶栏搜索按钮：每次点击 +1，曲目页据此聚焦搜索框
     var songsSearchTrigger by remember { mutableIntStateOf(0) }
-    // 曲目页顶栏归类按钮 → 归类方式选择弹层（曲目页不再放独立归类卡）
+    // 曲目页顶栏 Sort 按钮 → 排序 / 归类选择弹层（曲目页不再放独立归类卡）
     var songsShowGroupPicker by remember { mutableStateOf(false) }
     // 曲库同步状态：曲目页顶栏刷新按钮用（同步中禁点；有新版直接立即更新）
     val songSyncState by SongDataSync.state.collectAsState()
@@ -577,7 +577,7 @@ fun KibaMainScreen() {
                                               KibaState.checkSongUpdate(showProgress = true)
                                           }
                                       }
-                                      // 归类方式（原曲目页「归类方式」卡迁入顶栏）
+                                      // 排序与归类（舞萌 / 中二节奏共用排序，归类仅舞萌）
                                       KibaSortAction { songsShowGroupPicker = true }
                                       KibaSearchAction { songsSearchTrigger++ }
                                   }

@@ -5,7 +5,17 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.net.Uri
 import android.widget.Toast
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -32,9 +42,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.ui.unit.Constraints
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -52,7 +60,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.kira.kiba.core.agent.AgentSession
@@ -74,20 +81,29 @@ import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
+import top.yukonga.miuix.kmp.basic.DropdownEntry
+import top.yukonga.miuix.kmp.basic.DropdownItem
+import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
+import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
+import top.yukonga.miuix.kmp.icon.glass.*
+import top.yukonga.miuix.kmp.overlay.OverlayCascadingListPopup
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
  * Agent 对话页：
  * - 引擎 [KibaAgent]：**聊天一律走 LLM**（模型可 tool-call 本地技能）；
- *   本地技能逻辑只在**点击技能卡**时直接执行（不消耗 LLM）；
- * - 技能卡区常驻对话框上方，末尾附「清除对话」卡片（非技能）；
+ *   本地技能逻辑只在**从「功能」菜单点选**时直接执行（不消耗 LLM）；
+ * - 原顶部横滑技能卡已全部迁入「功能」按钮的二级级联弹层
+ *   （舞萌功能 / 中二节奏功能 / 娱乐功能 / 清除对话），卡片本身不再显示；
+ *   分类只改 UI 入口，[KibaAgent.SKILLS] 仍是完整的 LLM tool 表，模型调用不受影响；
  * - 会话记录持久化（[AgentSession]），重启后恢复；
- * - 布局：顶部顶栏 clearance（防遮挡）+ 消息列表 + 底部输入栏（含悬浮底栏留白与键盘避让）。
+ * - 布局：顶部顶栏 clearance（防遮挡）+ 功能按钮 + 消息列表 + 底部输入栏
+ *   （含悬浮底栏留白与键盘避让）。
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -101,8 +117,10 @@ fun AgentScreen(
     val listState = rememberLazyListState()
     var input by remember { mutableStateOf("") }
     var thinking by remember { mutableStateOf(false) }
-    // 带参技能：点击卡片先弹输入层（离线可用，不依赖 LLM）
+    // 带参技能：从「功能」菜单点选后先弹输入层（离线可用，不依赖 LLM）
     var paramSkill by remember { mutableStateOf<KibaAgent.AgentSkill?>(null) }
+    // 「功能」按钮的级联弹层开关
+    var showFunctionPopup by remember { mutableStateOf(false) }
 
     // 会话持久化：首次进入恢复历史
     AgentSession.ensureLoaded()
@@ -120,7 +138,7 @@ fun AgentScreen(
     val density = LocalDensity.current
     val imeBottomDp = with(density) { WindowInsets.ime.getBottom(density).toDp() }
     val inputRowBottom = (navBarBottom + 22.dp - imeBottomDp).coerceAtLeast(12.dp)
-    // 已配置 LLM 才允许自由提问；否则只能点技能卡
+    // 已配置 LLM 才允许自由提问；否则只能从「功能」按钮点技能
     val llmReady = remember {
         SpUtil.isLlmEnabled() && (SpUtil.getLlmApiKey().isNotBlank() || SpUtil.getLlmBaseUrl().isNotBlank())
     }
@@ -130,20 +148,31 @@ fun AgentScreen(
             AgentSession.add(
                 AgentSession.Turn(
                     fromUser = false,
-                    text = "点上方技能卡即可直接使用（不消耗 LLM）：\n" +
-                        "· 我的 Best 50 —— 查分器成绩单（总分 + 旧曲/新曲）\n" +
-                        "· 推荐推分曲目 —— 针对性上分\n" +
-                        "· 随机来一首 —— 曲库随机选曲\n" +
-                        "· 查歌曲信息 —— 按歌名/别名/ID 查谱面\n" +
-                        "· 今日舞萌运势 —— 今日运势与推荐曲目\n" +
-                        "· 定数查歌 / 分数线 / 随机条件曲 —— KibaBot 移植技能（带参数，点卡片填条件）\n" +
-                        "· 猜歌 —— 给线索猜答案，在输入框提交（歌名 / 别名 / ID 均可），猜错逐步揭示\n" +
-                        "· 中二查歌 / 中二定数 / 中二随机 / 我的中二 Rating / 中二推分 —— 中二节奏专用技能\n" +
+                    text = "点上方「功能」按钮即可直接使用（不消耗 LLM）：\n" +
+                        "· 舞萌功能 —— Best 50 / 推分 / 随机选曲 / 查歌 / 运势 / 分数线 / 猜歌\n" +
+                        "· 中二节奏功能 —— 中二查歌 / 定数 / 随机 / Rating / 推分\n" +
+                        "· 娱乐功能 —— 随机数 / 骰子 / 今日性癖 / 今天吃什么 / 低情商高情商 / gocho 梗图\n" +
+                        "· 清除对话 —— 清空聊天记录\n" +
+                        "带参数的技能点开后会先弹出输入框填条件。\n" +
                         "配置 LLM 后还可以直接提问，我会自动调用对应技能；\n" +
                         "问「我该怎么推分」这类问题时，我会先读你的 Best 50 再给针对性结论。\n" +
                         "机制类问题（定数 / Rating 公式 / 判定档位 / 段位 / 宴会场 / 术语）我会先查" +
                         "**内置的萌娘百科知识库**（舞萌DX / 舞萌系列 / CHUNITHM），查不到才联网。\n" +
                         "（Best 50 / 推分需要先在「我」页面登录查分器）",
+                )
+            )
+        }
+        // 技能卡迁移提示：只在对话页出现一次（SP 标记），清除对话后也不会反复刷屏。
+        // 老用户已有历史，不会看到上面改写过的欢迎语，这条提示就是给他们的。
+        if (!SpUtil.isAgentToolsMigrationHintShown()) {
+            SpUtil.setAgentToolsMigrationHintShown()
+            AgentSession.add(
+                AgentSession.Turn(
+                    fromUser = false,
+                    text = "功能卡已迁移到页面上方的「功能」按钮里了：\n" +
+                        "点开后按「舞萌功能 / 中二节奏功能 / 娱乐功能 / 清除对话」分类查找，" +
+                        "原来的横滑技能卡不再显示。\n" +
+                        "所有技能都还在，直接打字提问时我照样会自动调用，功能没有减少。",
                 )
             )
         }
@@ -181,7 +210,47 @@ fun AgentScreen(
         }
     }
 
-    /** 直接执行技能卡（不走 LLM）。[arg] 为带参技能的输入。 */
+    // 「回到对话底部」浮动按钮：只有还能继续往下滚（说明用户翻上去看历史了）才出现。
+    // canScrollForward 是滚动期间的高频 State，用 derivedStateOf 收一层，
+    // 否则每帧滚动都会把整个对话页带着重组一遍。
+    val showJumpToBottom by remember(listState) {
+        derivedStateOf { listState.canScrollForward }
+    }
+
+    /**
+     * 回到最新一条消息，并顺手把顶栏压到完全折叠 —— 回到底部时把大标题让出来，多露一屏聊天。
+     *
+     * - 折叠量取 `scrollBehavior.state.heightOffsetLimit`（负值，顶栏自己登记的大标题高度）。
+     *   heightOffset 的 setter 会 clamp 到 [limit, 0]，写 limit 就是 100% 折叠；液态皮肤读
+     *   collapsedFraction，同一份数值同时驱动玻璃带，不必分材质各写一套。材质关闭时顶栏
+     *   没登记 limit（为 0），跳过即可，不会崩。
+     * - contentOffset 同步置负：它既是「内容已滚离原位」的信号（液态按钮材质、详情页封面
+     *   判定都看它），也是 nestedScroll 下一次累计的起点。只改 heightOffset 的话，用户接着
+     *   滚一下就会按旧起点把顶栏弹回展开态。
+     * - autoFollow 复位：上翻时视口跟随会脱钩，不复位的话下一条流式消息不会自动贴底。
+     */
+    fun jumpToBottom() {
+        autoFollow = true
+        val topBarState = scrollBehavior.state
+        val collapsed = topBarState.heightOffsetLimit
+        if (collapsed < 0f) {
+            topBarState.contentOffset = collapsed
+            scope.launch {
+                Animatable(topBarState.heightOffset).animateTo(
+                    targetValue = collapsed,
+                    animationSpec = tween(durationMillis = 240),
+                ) { topBarState.heightOffset = value }
+            }
+        }
+        scope.launch {
+            // 用列表自身的 totalItemsCount 而不是 turns.lastIndex：thinking 时列表末尾
+            // 还挂着一条「思考中…」，按会话数算会差一项、滚不到真正的底部。
+            val last = listState.layoutInfo.totalItemsCount - 1
+            if (last >= 0) listState.animateScrollToItem(last)
+        }
+    }
+
+    /** 直接执行技能（功能菜单点选专用，不走 LLM）。[arg] 为带参技能的输入。 */
     fun runSkill(skill: KibaAgent.AgentSkill, arg: String = "") {
         if (thinking) return
         // 开新猜歌局：清掉输入框残留，免得上一局没发出去的话被当成答案误提交
@@ -205,6 +274,83 @@ fun AgentScreen(
             val last = AgentSession.turns.value.lastIndex
             if (last >= 0) listState.animateScrollToItem(last)
         }
+    }
+
+    /**
+     * 从「功能」菜单点选技能：无参直跑、带参先弹输入层。
+     * 与旧技能卡的点击路径完全同一条，保证迁移不改行为。
+     */
+    fun openSkill(skill: KibaAgent.AgentSkill) {
+        showFunctionPopup = false
+        if (skill.params.isEmpty()) runSkill(skill) else paramSkill = skill
+    }
+
+    /** 清除对话（原技能卡区末尾那张卡的动作）。 */
+    fun clearChat() {
+        showFunctionPopup = false
+        AgentSession.clear()
+        scope.launch {
+            AgentSession.add(
+                AgentSession.Turn(
+                    fromUser = false,
+                    text = "对话已清除。点上方「功能」按钮重新开始，或直接提问。",
+                )
+            )
+        }
+    }
+
+    /**
+     * 「功能」按钮的二级级联菜单。
+     *
+     * 分类只作用于 UI 入口：**不改动、不删减 [KibaAgent.SKILLS]** —— 它同时是
+     * LLM 的 tool 定义与 `skillHint()` 的技能说明书，模型 tool-calling 照常能点到
+     * 全部技能。这里用「id 前缀 + 娱乐白名单」做划分而不是硬编码完整清单，
+     * 这样以后往 SKILLS 里加新技能时，菜单也不会漏掉任何一个。
+     */
+    val functionEntries: List<DropdownEntry> = buildList {
+        val funIds = setOf(
+            "random_number", "roll_dice", "today_kink",
+            "eat_what", "low_high_eq", "gocho",
+        )
+        val chuniSkills = KibaAgent.SKILLS.filter { it.id.startsWith("chuni_") }
+        val funSkills = KibaAgent.SKILLS.filter { it.id in funIds }
+        val classifiedIds = (chuniSkills.map { it.id } + funSkills.map { it.id }).toSet()
+        // 其余一律归舞萌（含未来新增的舞萌技能），保证 SKILLS 全覆盖
+        val maimaiSkills = KibaAgent.SKILLS.filter { it.id !in classifiedIds }
+        fun children(skills: List<KibaAgent.AgentSkill>): List<DropdownItem> =
+            skills.map { skill ->
+                DropdownItem(
+                    text = skill.title,
+                    summary = skill.summary,
+                    onClick = { openSkill(skill) },
+                )
+            }
+        fun category(name: String, hint: String, skills: List<KibaAgent.AgentSkill>): DropdownEntry {
+            val items = children(skills)
+            return DropdownEntry(
+                items = listOf(
+                    DropdownItem(
+                        text = name,
+                        summary = "$hint（${items.size} 项）",
+                        children = items,
+                    ),
+                ),
+            )
+        }
+        add(category("舞萌功能", "查分 / 推分 / 选曲", maimaiSkills))
+        add(category("中二节奏功能", "中二查歌 / 定数 / Rating", chuniSkills))
+        add(category("娱乐功能", "随机数 / 梗图 / 整活", funSkills))
+        add(
+            DropdownEntry(
+                items = listOf(
+                    DropdownItem(
+                        text = "清除对话",
+                        summary = "清空聊天记录",
+                        onClick = { clearChat() },
+                    ),
+                ),
+            )
+        )
     }
 
     /** 发送消息 → 全量走 LLM（流式输出：正文边收边显示，思考过程单独成卡）。 */
@@ -290,51 +436,109 @@ fun AgentScreen(
                 .padding(top = clearance)
                 .imePadding(),
         ) {
-            // ── 技能卡区（对话框上方）：点击直接执行，不经过 LLM ──
-            SkillStrip(
-                skills = KibaAgent.SKILLS,
-                onSkillClick = { skill ->
-                    if (skill.params.isEmpty()) runSkill(skill) else paramSkill = skill
-                },
-                onClear = {
-                    AgentSession.clear()
-                    scope.launch {
-                        AgentSession.add(
-                            AgentSession.Turn(
-                                fromUser = false,
-                                text = "对话已清除。点上方技能卡重新开始，或直接提问。",
-                            )
+            // ── 功能按钮（原横滑技能卡全部迁入二级级联弹层）──
+            // OverlayCascadingListPopup 依赖 Scaffold 提供的 MiuixPopupHost，
+            // 必须与按钮同处这个 Scaffold 的 content 之内。
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box {
+                    Button(
+                        onClick = { showFunctionPopup = true },
+                        colors = ButtonDefaults.buttonColorsPrimary(),
+                    ) {
+                        Icon(
+                            MiuixGlassIcons.Regular.GridView,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                            tint = MiuixTheme.colorScheme.onPrimary,
                         )
+                        Spacer(Modifier.width(6.dp))
+                        Text(text = "功能", color = MiuixTheme.colorScheme.onPrimary)
                     }
-                },
-            )
+                    OverlayCascadingListPopup(
+                        show = showFunctionPopup,
+                        entries = functionEntries,
+                        onDismissRequest = { showFunctionPopup = false },
+                        collapseOnSelection = true,
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Text(
+                    text = "技能按舞萌 / 中二节奏 / 娱乐分组",
+                    style = MiuixTheme.textStyles.footnote1,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                )
+            }
 
-            LazyColumn(
-                state = listState,
+            // 消息列表 + 「回到底部」浮动按钮。按钮浮在列表底部、输入框正上方；
+            // 放进同一个 Box 才能跟着外层 imePadding 一起被键盘顶起，不会压住输入栏。
+            Box(
                 modifier = Modifier
                     .weight(1f)
-                    .fillMaxWidth()
-                    .nestedScroll(scrollBehavior.nestedScrollConnection),
-                contentPadding = PaddingValues(
-                    start = 16.dp,
-                    end = 16.dp,
-                    top = 8.dp,
-                    bottom = 8.dp,
-                ),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                    .fillMaxWidth(),
             ) {
-                items(messages.size) { index ->
-                    ChatBubble(messages[index], onOpenSong = onOpenSong)
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .nestedScroll(scrollBehavior.nestedScrollConnection),
+                    contentPadding = PaddingValues(
+                        start = 16.dp,
+                        end = 16.dp,
+                        top = 8.dp,
+                        bottom = 8.dp,
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    items(messages.size) { index ->
+                        ChatBubble(messages[index], onOpenSong = onOpenSong)
+                    }
+                    if (thinking) {
+                        item {
+                            ChatBubble(AgentSession.Turn(text = "思考中…"), onOpenSong = onOpenSong)
+                        }
+                    }
                 }
-                if (thinking) {
-                    item {
-                        ChatBubble(AgentSession.Turn(text = "思考中…"), onOpenSong = onOpenSong)
+
+                // 已在最底部（含内容不足一屏）时整颗按钮淡出；上翻看历史才浮出来。
+                // 完全限定顶层函数：外层 Column 的隐式 receiver 会把简写解析成
+                // ColumnScope.AnimatedVisibility 扩展，触发 Compose 的 DSL 作用域报错。
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = showJumpToBottom,
+                    modifier = Modifier.align(Alignment.BottomEnd),
+                    enter = fadeIn(tween(180)) + scaleIn(tween(220), initialScale = 0.8f),
+                    exit = fadeOut(tween(140)) + scaleOut(tween(160), targetScale = 0.8f),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .padding(end = 16.dp, bottom = 12.dp)
+                            .size(40.dp)
+                            .shadow(6.dp, CircleShape)
+                            .clip(CircleShape)
+                            .background(MiuixTheme.colorScheme.primary)
+                            .clickable { jumpToBottom() },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        // 玻璃图标库没有独立的 ArrowDown；拿右向 chevron 顺时针转 90°
+                        // 得到干净的向下箭头，比语义为「下载」的 Download 更贴切。
+                        Icon(
+                            MiuixGlassIcons.Regular.ChevronForward,
+                            contentDescription = "回到对话底部",
+                            modifier = Modifier
+                                .size(22.dp)
+                                .rotate(90f),
+                            tint = MiuixTheme.colorScheme.onPrimary,
+                        )
                     }
                 }
             }
 
             // ── 底部输入区：猜歌对局中 → 答题卡（无需 LLM）；
-            //    否则已配置 LLM 才是聊天输入框；都没有则提示走技能卡 ──
+            //    否则已配置 LLM 才是聊天输入框；都没有则提示走「功能」按钮 ──
             when {
                 guessing -> Row(
                     modifier = Modifier
@@ -376,7 +580,7 @@ fun AgentScreen(
                     }
                 }
                 else -> Text(
-                    text = "未配置 LLM · 点上方技能卡可直接使用（设置 → Agent 模型配置 可开启对话）",
+                    text = "未配置 LLM · 点上方「功能」按钮可直接使用（设置 → Agent 模型配置 可开启对话）",
                     style = MiuixTheme.textStyles.footnote1,
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                     modifier = Modifier
@@ -404,108 +608,6 @@ fun AgentScreen(
                 runSkill(skill, value)
             },
         )
-    }
-}
-
-/**
- * 技能卡区（顶部横滑）：点击直接执行技能。
- * 末尾附「清除对话」卡片（不是技能，仅清空会话记录）。
- */
-@Composable
-private fun SkillStrip(
-    skills: List<KibaAgent.AgentSkill>,
-    onSkillClick: (KibaAgent.AgentSkill) -> Unit,
-    onClear: () -> Unit,
-) {
-    // 统一卡宽/卡高：宽度取「所有卡片标题与说明完整单行显示所需的最大宽度」
-    // 与上限 240.dp 的较小者；说明若在统一宽度内装不下则自动换行（不截断），
-    // 卡高取「标题 + 最高一条说明换行后的高度」的统一值，保证横向不超屏、
-    // 纵向紧凑且所有卡等高。
-    val textMeasurer = rememberTextMeasurer()
-    val density = LocalDensity.current
-    val titleStyle = MiuixTheme.textStyles.subtitle
-    val summaryStyle = MiuixTheme.textStyles.footnote2
-    val allTitles = skills.map { it.title } + "清除对话"
-    val allSummaries = skills.map { it.summary } + "清空聊天记录"
-    val cardSize = remember(skills, titleStyle, summaryStyle, density) {
-        val horizontalPadding = 24.dp /* 左右 padding */
-        val maxCardWidth = 240.dp
-        val titlePx = allTitles.maxOf { textMeasurer.measure(it, titleStyle).size.width }
-        val summaryPx = allSummaries.maxOf { textMeasurer.measure(it, summaryStyle).size.width }
-        val naturalWidth = with(density) {
-            maxOf(titlePx, summaryPx).toDp() + horizontalPadding + 1.dp /* 取整余量 */
-        }
-        val width = minOf(naturalWidth, maxCardWidth)
-        val innerPx = with(density) { (width - horizontalPadding).toPx() }.toInt()
-        val titleHeightPx = allTitles.maxOf { textMeasurer.measure(it, titleStyle).size.height }
-        val summaryHeightPx = allSummaries.maxOf {
-            textMeasurer.measure(
-                it,
-                summaryStyle,
-                constraints = Constraints(maxWidth = innerPx),
-            ).size.height
-        }
-        with(density) {
-            val innerHeight = titleHeightPx + summaryHeightPx
-            width to (innerHeight.toDp() + 4.dp /* 标题与说明间距 */ +
-                24.dp /* 上下 padding */ + 1.dp /* 取整余量 */)
-        }
-    }
-    val (uniformCardWidth, uniformCardHeight) = cardSize
-    LazyRow(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        items(skills.size) { index ->
-            val skill = skills[index]
-            Card(
-                modifier = (Modifier
-                    .width(uniformCardWidth)
-                    .height(uniformCardHeight)),
-                onClick = { onSkillClick(skill) },
-            ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Text(
-                        text = skill.title,
-                        style = MiuixTheme.textStyles.subtitle,
-                        color = MiuixTheme.colorScheme.onSurface,
-                        softWrap = false,
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = skill.summary,
-                        style = MiuixTheme.textStyles.footnote2,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    )
-                }
-            }
-        }
-        // ── 清除对话（非技能）──
-        item {
-            Card(
-                modifier = (Modifier
-                    .width(uniformCardWidth)
-                    .height(uniformCardHeight)),
-                onClick = onClear,
-            ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Text(
-                        text = "清除对话",
-                        style = MiuixTheme.textStyles.subtitle,
-                        color = MiuixTheme.colorScheme.primary,
-                        softWrap = false,
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = "清空聊天记录",
-                        style = MiuixTheme.textStyles.footnote2,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    )
-                }
-            }
-        }
     }
 }
 

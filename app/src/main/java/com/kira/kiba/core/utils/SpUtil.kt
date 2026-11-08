@@ -9,6 +9,7 @@ import com.google.gson.reflect.TypeToken
 import com.kira.kiba.core.model.GameType
 import com.kira.kiba.core.model.ScoreSource
 import com.kira.kiba.core.model.SongGroupMode
+import com.kira.kiba.core.model.SongSortMode
 import java.util.UUID
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -785,6 +786,34 @@ object SpUtil {
 
     fun setSongGroupMode(mode: String) {
         userInfoPrefs.edit { putString(KEY_SONG_GROUP_MODE, mode) }
+    }
+
+    // ================= 曲目列表排序 =================
+
+    private const val KEY_SONG_SORT_MODE = "song_sort_mode"
+
+    /**
+     * 曲目列表排序方式（舞萌 / 中二节奏通用，默认曲库顺序）。
+     * 与归类分开存：归类只对舞萌生效，排序两个游戏都要用。
+     */
+    fun getSongSortMode(): String =
+        userInfoPrefs.getString(KEY_SONG_SORT_MODE, SongSortMode.DEFAULT.key)
+            ?: SongSortMode.DEFAULT.key
+
+    fun setSongSortMode(mode: String) {
+        userInfoPrefs.edit { putString(KEY_SONG_SORT_MODE, mode) }
+    }
+
+    // ================= 对话页「功能」迁移提示 =================
+
+    private const val KEY_AGENT_TOOLS_MIGRATION_HINT_SHOWN = "agent_tools_migration_hint_shown"
+
+    /** 技能卡收进「功能」按钮后的一次性提示是否已展示过（清除对话不会让它再出现）。 */
+    fun isAgentToolsMigrationHintShown(): Boolean =
+        userInfoPrefs.getBoolean(KEY_AGENT_TOOLS_MIGRATION_HINT_SHOWN, false)
+
+    fun setAgentToolsMigrationHintShown() {
+        userInfoPrefs.edit { putBoolean(KEY_AGENT_TOOLS_MIGRATION_HINT_SHOWN, true) }
     }
 
     // ================= 听页（Agent 专属歌单）=================

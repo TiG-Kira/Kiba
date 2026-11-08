@@ -49,8 +49,12 @@ object MoegirlKb {
     private const val DIR = "kb"
     private const val MANIFEST = "$DIR/manifest.json"
 
-    /** 单次检索回灌给模型的最大字符数：太大挤占上下文，太小又答不全。 */
-    private const val MAX_RETURN_CHARS = 4500
+    /**
+     * 单次检索回灌给模型的最大字符数：太大挤占上下文，太小又答不全。
+     * v2 知识库从 35 节扩到 60 节、单节正文也更长了，原 4500 常常只够装下 2 节就被截断，
+     * 因此放宽到 7000；具体装几节仍由 search() 的 limit 与这里的字符上限共同决定。
+     */
+    private const val MAX_RETURN_CHARS = 7000
 
     @Volatile
     private var docs: List<Doc>? = null
@@ -148,8 +152,11 @@ object MoegirlKb {
      *
      * 返回空串 = 没命中（调用方据此告诉模型「知识库里没有，建议联网或让用户提供」），
      * 而不是硬塞一段不相关的正文诱导模型瞎编。
+     *
+     * v2 起默认取 6 节（原 4 节）：机制类问题常同时涉及「公式 + 评级区间 + 口径冲突」，
+     * 只给 4 节容易漏掉互相矛盾的那条注解；最终长度仍由 MAX_RETURN_CHARS 兜底。
      */
-    fun search(context: Context, query: String, limit: Int = 4): String {
+    fun search(context: Context, query: String, limit: Int = 6): String {
         ensureLoaded(context)
         val all = docs.orEmpty().flatMap { it.sections }
         if (all.isEmpty() || query.isBlank()) return ""
