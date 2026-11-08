@@ -68,7 +68,20 @@ jobs:
             export KIBA_KEY_PASSWORD="${{ secrets.KIBA_KEY_PASSWORD }}"
           fi
           echo "store type=$KIBA_KEYSTORE_TYPE"
-          ./gradlew assembleRelease --no-daemon
+          # GitHub runner 到 services.gradle.org / Maven Central → GitHub releases 偶发
+          # 504 或读超时，而 Gradle 对下载失败不重试。循环 3 次：已成功下载的部分
+          # 留在 GRADLE_USER_HOME 里，重试只补缺失的依赖，避免整包重下。
+          for attempt in 1 2 3; do
+            echo "::group::assembleRelease attempt $attempt"
+            if ./gradlew assembleRelease --no-daemon; then
+              echo "::endgroup::"
+              break
+            fi
+            echo "::endgroup::"
+            if [ "$attempt" -eq 3 ]; then exit 1; fi
+            echo "attempt $attempt failed (CDN 504/timeout), retrying in 20s..."
+            sleep 20
+          done
 
       - name: Resolve version
         id: ver
