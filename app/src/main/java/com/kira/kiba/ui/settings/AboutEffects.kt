@@ -59,7 +59,7 @@ import top.yukonga.miuix.kmp.basic.Text
 private const val COLOR_INTERPOLATION_SECONDS = 12f
 
 /** 背景光斑漂移速度（时间为秒，乘该系数后驱动三角/正弦函数）。 */
-private const val BACKGROUND_SPEED = 0.20f
+private const val BACKGROUND_SPEED = 0.12f
 
 /** 亮色三套调色板（不透明）。 */
 private val LightPalettes: List<List<Color>> = listOf(
@@ -68,31 +68,25 @@ private val LightPalettes: List<List<Color>> = listOf(
     listOf(Color(0xFFFADBE6), Color(0xFF99BAFA), Color(0xFFEBEDFF), Color(0xFF8FB0FF)),
 )
 
-/**
- * 暗色三套调色板（带 alpha，叠在深色底上形成柔光）。
- *
- * 2.4.1 调整：原来三套全是同一族的深蓝紫（而且 alpha 只有 0.4~0.5），
- * 叠在深色底上几乎看不出色相变化，观感像一张静态深蓝壁纸。
- * 现在拉开色相差（靛蓝 / 品红 / 青），并抬一点 alpha，让 12 秒一轮的交叉肉眼可辨。
- */
+/** 暗色三套调色板（带 alpha，叠在深色底上形成柔光）。 */
 private val DarkPalettes: List<List<Color>> = listOf(
     listOf(
-        Color(0.16f, 0.10f, 0.92f, 0.58f),
-        Color(0.48f, 0.14f, 0.86f, 0.54f),
-        Color(0.00f, 0.72f, 1.00f, 0.56f),
-        Color(0.10f, 0.20f, 0.95f, 0.50f),
+        Color(0.20f, 0.06f, 0.88f, 0.40f),
+        Color(0.30f, 0.14f, 0.55f, 0.50f),
+        Color(0f, 0.64f, 0.96f, 0.50f),
+        Color(0.11f, 0.16f, 0.83f, 0.40f),
     ),
     listOf(
-        Color(0.05f, 0.30f, 0.95f, 0.60f),
-        Color(0.74f, 0.16f, 0.78f, 0.54f),
-        Color(0.10f, 0.55f, 1.00f, 0.56f),
-        Color(0.22f, 0.08f, 0.70f, 0.58f),
+        Color(0.07f, 0.15f, 0.79f, 0.50f),
+        Color(0.62f, 0.21f, 0.67f, 0.50f),
+        Color(0.06f, 0.25f, 0.84f, 0.50f),
+        Color(0f, 0.20f, 0.78f, 0.50f),
     ),
     listOf(
-        Color(0.62f, 0.18f, 0.82f, 0.54f),
-        Color(0.22f, 0.14f, 0.78f, 0.54f),
-        Color(0.00f, 0.85f, 0.90f, 0.50f),
-        Color(0.10f, 0.14f, 0.72f, 0.60f),
+        Color(0.58f, 0.30f, 0.74f, 0.40f),
+        Color(0.27f, 0.18f, 0.60f, 0.50f),
+        Color(0.66f, 0.26f, 0.62f, 0.50f),
+        Color(0.12f, 0.16f, 0.70f, 0.60f),
     ),
 )
 
@@ -215,6 +209,7 @@ fun AboutGradientBackground(
 /** 线性底色 + 4 个互相不整除的正弦漂移光斑，形成近似非周期的缓慢流动。 */
 private fun DrawScope.drawAboutGradientField(animationTime: Float, colors: List<Color>) {
     val translucent = colors.any { it.alpha < 0.8f }
+    val radius = size.maxDimension * 0.62f
     val motion = animationTime * BACKGROUND_SPEED
     val w = size.width
     val h = size.height
@@ -229,11 +224,6 @@ private fun DrawScope.drawAboutGradientField(animationTime: Float, colors: List<
         ),
     )
 
-    // 光斑半径按**短边**算（原来用 maxDimension·0.62 ≈ 1.4 倍屏宽，
-    // 光斑铺满整屏，移动时每个像素都差不多，看起来就像静止的渐变）。
-    // 现在收到短边量级并叠加呼吸，移动能被一眼看出来。
-    val baseRadius = size.minDimension
-
     val centers = listOf(
         Offset(w * (0.18f + 0.10f * sin(motion)), h * (0.20f + 0.08f * cos(motion * 0.8f))),
         Offset(w * (0.82f + 0.10f * cos(motion * 0.9f)), h * (0.78f + 0.10f * sin(motion * 0.7f))),
@@ -243,9 +233,6 @@ private fun DrawScope.drawAboutGradientField(animationTime: Float, colors: List<
     centers.forEachIndexed { index, center ->
         val color = colors[index]
         val centerAlpha = if (translucent) color.alpha * 0.96f else 0.88f
-        // 每个光斑自己的呼吸相位 / 频率，避免四个一起胀缩像在打拍子
-        val breath = 1f + 0.14f * sin(motion * (0.9f + index * 0.13f) + index * 1.7f)
-        val radius = baseRadius * (0.58f + 0.07f * index) * breath
         drawCircle(
             brush = Brush.radialGradient(
                 colors = listOf(color.copy(alpha = centerAlpha), color.copy(alpha = 0f)),
@@ -254,25 +241,6 @@ private fun DrawScope.drawAboutGradientField(animationTime: Float, colors: List<
             ),
             center = center,
             radius = radius,
-        )
-    }
-
-    // 一条缓慢横扫的斜向柔光带：深色底上白色微光最容易感知，
-    // 是"这页在动"最直接的来源（亮色底上会发灰，所以只在半透明调色板下画）。
-    if (translucent) {
-        val phase = sin(motion * 1.35f) * 0.5f + 0.5f
-        val bandCenter = w * (-0.30f + 1.60f * phase)
-        val halfBand = w * 0.55f
-        drawRect(
-            brush = Brush.linearGradient(
-                colors = listOf(
-                    Color.Transparent,
-                    Color.White.copy(alpha = 0.065f),
-                    Color.Transparent,
-                ),
-                start = Offset(bandCenter - halfBand, 0f),
-                end = Offset(bandCenter + halfBand, h),
-            ),
         )
     }
 }
