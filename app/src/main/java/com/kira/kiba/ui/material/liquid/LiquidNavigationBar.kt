@@ -442,12 +442,62 @@ fun LiquidNavigationBar(
                                 }
                                 // 页面同步切换（onSelect 幂等，抬手时 onClick 再调一次也无副作用）
                                 latestOnSelectState.value(hit)
-                                // Initial pass 等抬起、全程不 consume，TabContent 的 clickable 照常收 up
+                                // 按住期间继续左右拖动跟手（v1 兼容）：Initial pass 观察
+                                // move / up，全程不 consume，TabContent 的 clickable 照常收抬手。
+                                // 液滴飞到 hit 之后手指还能拖过任意 tab，松手吸附最近者。
+                                val dir = if (metrics.isLtr) 1f else -1f
+                                var lastX = down.position.x
+                                var dragging = false
+                                var dragBase = 0f
                                 while (true) {
                                     val event = awaitPointerEvent(PointerEventPass.Initial)
-                                    if (event.changes.none { it.pressed }) break
+                                    val change =
+                                        event.changes.firstOrNull { it.id == down.id } ?: break
+                                    val dx = change.position.x - lastX
+                                    lastX = change.position.x
+                                    if (!dragging) {
+                                        // 纯点按（含快速点按）抬手：绝不能进拖动分支——
+                                        // 此刻起飞动画可能还在半程，round 会吸附到中途 tab
+                                        if (!change.pressed) break
+                                        if (abs(change.position.x - down.position.x) <=
+                                            viewConfiguration.touchSlop
+                                        ) {
+                                            continue
+                                        }
+                                        dragging = true
+                                        // 首帧从胶囊真实视觉位置起跳：起飞动画可能已飞出半程，
+                                        // 用按下点或 targetValue 起跳都会让液滴当场回跳
+                                        dragBase = dragAnimation.value
+                                        continue
+                                    }
+                                    if (!change.pressed) break
+                                    dragBase = (dragBase + dx / w * dir)
+                                        .fastCoerceIn(0f, (items.size - 1).toFloat())
+                                    dragAnimation.updateValue(dragBase)
+                                    // 整条底栏让位（与胶囊拖动手势同口径）
+                                    metrics.offsetSnapJob?.cancel()
+                                    metrics.offsetSnapJob = scope.launch {
+                                        offsetAnimation.snapTo(offsetAnimation.value + dx)
+                                    }
                                 }
                                 metrics.holdingOtherTab = false
+                                metrics.offsetSnapJob?.cancel()
+                                metrics.offsetSnapJob = null
+                                scope.launch {
+                                    offsetAnimation.animateTo(0f, spring(1f, 300f, 0.5f))
+                                }
+                                if (dragging) {
+                                    // 纯点按绝不重发吸附：此刻起飞动画可能还在飞，
+                                    // round 半程点会把目标改成中途 tab 并掐断在飞的动画
+                                    val target = dragAnimation.value.fastRoundToInt()
+                                        .fastCoerceIn(0, items.size - 1)
+                                    lastAnimatedState.intValue = target
+                                    // 只收敛位置，玻璃收尾仍交给按住链那次 release
+                                    dragAnimation.settleTo(target.toFloat())
+                                    if (target != latestSelectedIndexState.value) {
+                                        latestOnSelectState.value(target)
+                                    }
+                                }
                             }
                         }
                     }

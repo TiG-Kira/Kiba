@@ -154,6 +154,21 @@ class DampedDragAnimation(
     }
 
     /**
+     * 按住拖动后的吸附：只把位置收敛到整数 tab，**不重启 press / release**。
+     * 按住链的那一次 [animateToValue] 仍负责玻璃收尾；这里若再播一次 press，
+     * 会与它抢同一条 Animatable，松手瞬间玻璃明暗闪一下。
+     */
+    fun settleTo(target: Float) {
+        animationScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            valueAnimation.animateTo(
+                target.coerceIn(valueRange.start, valueRange.endInclusive),
+                spring(1f, 1000f, 0.001f),
+            )
+            velocityAnimation.animateTo(0f, spring(0.5f, 300f, 0.01f))
+        }
+    }
+
+    /**
      * 点按 / 程序化切换 / 松手吸附：整段动画由 [mutex] 串行，不被下一次切换打断收尾。
      *
      * [CoroutineStart.UNDISPATCHED]：调用点就在按下事件的 Initial pass，

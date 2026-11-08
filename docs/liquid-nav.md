@@ -24,7 +24,7 @@
 |---|---|
 | 静止 | 一条强折射玻璃底栏；选中项只有淡灰色提示胶囊（纯色、无特效）+ 图标变色。无浮起玻璃。 |
 | **按住当前 tab** | 手指正落在胶囊上 → Initial pass 立即 `press()`：玻璃浮现、横纵不同阻尼地鼓起、镜面光斑亮起；松手等位置收敛后凝回灰提示。**v1 这里完全没反应。** |
-| 点击其它 tab | **按下（Initial pass）即刻** `animateToValue` + `onSelect`：玻璃浮现与液滴飞行并行启动，页面同步切换；按住期间玻璃保持，松手才凝回灰提示。不等抬手、不等 `selectedIndex` 回流（见第 2 节「切换出口」）。 |
+| 点击其它 tab | **按下（Initial pass）即刻** `animateToValue` + `onSelect`：玻璃浮现与液滴飞行并行启动，页面同步切换；按住期间玻璃保持，松手才凝回灰提示。不等抬手、不等 `selectedIndex` 回流（见第 2 节「切换出口」）。**飞到位后手指仍可继续左右拖动**，液滴跟手越过任意 tab，松手吸附最近者（2.3.21 补回 v1 兼容）。 |
 | 拖动 | 胶囊 `updateValue` 跟手（带一点弹簧），整条底栏 EaseOut 让位最多 4dp；松手吸附最近 tab 并回弹。 |
 | 图标高亮 | 跟随胶囊**实际位置**（`round(damped.value)`），不跟随目标 tab。 |
 
@@ -49,6 +49,8 @@
   目标 tab）时继续维持玻璃直到抬手，60 帧兜底防 up 事件丢失导致永不散。
 - `updateValue` 用 `animateTo(..., spring(1f,1000f)) { updateVelocity() }` 跟手，
   不是生硬的 `snapTo`；`velocityTracker.addPosition(SystemClock.uptimeMillis(), Offset(value,0))`。
+- `settleTo(target)` 只收敛位置 + 清速度，**不重启 press / release**：按住拖动松手时
+  玻璃收尾仍归按下链那次 `release`，再播一次 press 会抢同一条 Animatable 导致明暗闪。
 - **v2 不再有 `dragMotion` 门控**：v1 为了避免"飞行被拉成色块"关掉了飞行拉伸，
   v2 按对方口径由平滑后的 `velocity` 统一驱动，拉伸更连贯。
 
@@ -81,9 +83,14 @@ v2 初版把点按做成「抬手 `onClick` → `onSelect` → 等父级 `select
 - **Row A 链尾** `pointerInput(dragAnimation, items.size)`：
   `awaitFirstDown(requireUnconsumed = false, pass = Initial)` 按 down.x 算出 hit tab，
   `hit != selectedIndex` 时同一帧内依次做 `lastAnimatedState = hit`（去重）→
-  `holdingOtherTab = true` → `animateToValue(hit) { holdingOtherTab }` → `onSelect(hit)`，
-  再用 Initial pass 等 up 把 holding 置 false。全程**不 consume**，
-  TabContent 的 clickable 照常收抬手事件。
+  `holdingOtherTab = true` → `animateToValue(hit) { holdingOtherTab }` → `onSelect(hit)`。
+  随后继续用 Initial pass 观察 move / up：按住期间把 `dx / tabWidth` 累加到局部
+  `dragBase` 并 `updateValue` 跟手，整条底栏 `offsetAnimation` 同步让位；
+  首帧 `dragBase` 取胶囊**真实视觉位置**（起飞动画可能已飞出半程，用按下点起跳会回跳），
+  且首帧只定基准不叠位移。松手 `settleTo(round(value))` 吸附 + `onSelect(target)` +
+  让位回弹。全程**不 consume**，TabContent 的 clickable 照常收抬手事件。
+- **纯点按（含快速点按）绝不进拖动分支**：up 事件 `change.pressed == false` 必须先 break；
+  否则起飞动画半程会被 `round` 吸附到中途 tab，快速连点直接切错页。
 - `TabContent.onClick` 只作键盘 / 无障碍兜底：`i != lastAnimatedState` 才驱动；
   普通点按已由观察器处理，不会播两次玻璃，`onSelect` 本身也幂等。
 - `LaunchedEffect` 的 `snapshotFlow { selectedIndex }` 退化为**外部入口**（其它代码改 tab），
@@ -185,6 +192,9 @@ z 序从下到上：
     `snapshotFlow` 还要等下一帧快照，叠加起来就是「按下 → 液滴起跑」的可见延迟。
     胶囊手势覆盖不到其它 tab，即时入口必须挂在 Row A 的 Initial pass，
     再用 `lastAnimatedState` 与回流去重（v2.3.19 真机实测慢半拍，v2.3.20 修）。
+12. **「按下即飞」后必须保留按住拖动**：只等 up 的观察器会让液滴到位后锁死
+    （v2.3.20 真机反馈）。首帧基准取真实视觉位置（否则回跳）、纯点按的 up 提前
+    break（否则飞行半程被吸附到中途 tab），两条缺一不可。
 
 ## 7. AVD 验证液态档的必做步骤
 
@@ -216,3 +226,14 @@ v2 实测记录（Pixel_10_Pro，2026-11-08）：
   吸附回「曲目」，胶囊手势未被新增观察器破坏；
 - logcat 无 `FATAL EXCEPTION` / `ANR in com.kira.kiba.debug`；
 - 验完 `adb emu kill` + 残留 emulator 进程清干净，临时闸门回滚后再次编译单测通过。
+
+2.3.21 修订实测（Pixel_10_Pro，2026-11-08）：用 `input motionevent DOWN/MOVE/UP`
+精确拼手势（比 `swipe` 更能表达「按住等飞到位再拖」）：
+- 在「曲目」DOWN 到「我」(863,2703) → 停 0.6s 等液滴到位 → 连续 MOVE 到
+  「设置」(1085) → UP：最终顶栏「设置」，页面随拖动换到 index 4；
+  截图亮度「我」229.6 → 218.6（-11）、「设置」仍为三个区域最高 225.6，
+  证明玻璃确实跟着手指移出原位；
+- 快速点按（DOWN 立刻 UP）→「曲目」、纯点按停 0.5s →「我」、
+  反向拖（从「听」按到「Kiba」）→「Kiba」，均正确；
+- logcat 无 `FATAL EXCEPTION` / `ANR in com.kira.kiba.debug`；
+- 验完 `adb emu kill` + 残留进程清干净、临时闸门回滚，编译单测通过。

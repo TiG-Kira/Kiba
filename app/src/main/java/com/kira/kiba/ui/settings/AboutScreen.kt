@@ -412,7 +412,7 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
             item(key = "oss_card") {
                 Card(modifier = (Modifier.fillMaxWidth())) {
                     ArrowPreference(
-                        title = "github.com/TiG-Kira/Kiba",
+                        title = "访问 Github 仓库",
                         summary = "问题反馈与功能建议欢迎提 issue",
                         onClick = { openUrl(context, "https://github.com/TiG-Kira/Kiba") },
                     )
