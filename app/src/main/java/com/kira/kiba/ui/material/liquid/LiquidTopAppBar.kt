@@ -14,9 +14,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredHeight
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.shape.CircleShape
@@ -200,8 +200,14 @@ fun LiquidTopBarSkin(
             // 会让玻璃从状态栏下方才开始，顶上露出一条内容，实证踩过）。
             // 再往上多铺 [LiquidTopBarGlassBleed] 并用同样的偏移把整块玻璃顶上去：
             // 底边位置不变，顶边的两个圆弧落到屏幕外，可见部分只剩一条直边。
+            //
+            // 高度必须用 requiredHeight 而不是 height：主屏传进来的 modifier 是
+            // `Modifier.matchParentSize()`，它给的是**固定**约束（min == max == 顶栏高度），
+            // 普通 height() 会被 clamp 回原高度 → 玻璃只上移没加长，底边缩到标题上方
+            // （实机截图：玻璃只包住状态栏，标题露在玻璃外面）。requiredHeight 忽略
+            // incoming 约束，才能真的画出比父级更高的玻璃块。
             .offset(y = -LiquidTopBarGlassBleed)
-            .height(collapsedHeight + statusBarTop + LiquidTopBarGlassBleed)
+            .requiredHeight(collapsedHeight + statusBarTop + LiquidTopBarGlassBleed)
             .graphicsLayer {
                 // 折叠到 1/3 时玻璃已经完全成形，避免半透明玻璃糊在标题后面
                 alpha = glassAlpha()
