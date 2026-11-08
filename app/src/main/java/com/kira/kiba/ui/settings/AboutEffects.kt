@@ -59,7 +59,7 @@ import top.yukonga.miuix.kmp.basic.Text
 private const val COLOR_INTERPOLATION_SECONDS = 12f
 
 /** 背景光斑漂移速度（时间为秒，乘该系数后驱动三角/正弦函数）。 */
-private const val BACKGROUND_SPEED = 0.12f
+private const val BACKGROUND_SPEED = 0.20f
 
 /** 亮色三套调色板（不透明）。 */
 private val LightPalettes: List<List<Color>> = listOf(
@@ -68,25 +68,31 @@ private val LightPalettes: List<List<Color>> = listOf(
     listOf(Color(0xFFFADBE6), Color(0xFF99BAFA), Color(0xFFEBEDFF), Color(0xFF8FB0FF)),
 )
 
-/** 暗色三套调色板（带 alpha，叠在深色底上形成柔光）。 */
+/**
+ * 暗色三套调色板（带 alpha，叠在深色底上形成柔光）。
+ *
+ * 2.4.1 调整：原来三套全是同一族的深蓝紫（而且 alpha 只有 0.4~0.5），
+ * 叠在深色底上几乎看不出色相变化，观感像一张静态深蓝壁纸。
+ * 现在拉开色相差（靛蓝 / 品红 / 青），并抬一点 alpha，让 12 秒一轮的交叉肉眼可辨。
+ */
 private val DarkPalettes: List<List<Color>> = listOf(
     listOf(
-        Color(0.20f, 0.06f, 0.88f, 0.40f),
-        Color(0.30f, 0.14f, 0.55f, 0.50f),
-        Color(0f, 0.64f, 0.96f, 0.50f),
-        Color(0.11f, 0.16f, 0.83f, 0.40f),
+        Color(0.16f, 0.10f, 0.92f, 0.58f),
+        Color(0.48f, 0.14f, 0.86f, 0.54f),
+        Color(0.00f, 0.72f, 1.00f, 0.56f),
+        Color(0.10f, 0.20f, 0.95f, 0.50f),
     ),
     listOf(
-        Color(0.07f, 0.15f, 0.79f, 0.50f),
-        Color(0.62f, 0.21f, 0.67f, 0.50f),
-        Color(0.06f, 0.25f, 0.84f, 0.50f),
-        Color(0f, 0.20f, 0.78f, 0.50f),
+        Color(0.05f, 0.30f, 0.95f, 0.60f),
+        Color(0.74f, 0.16f, 0.78f, 0.54f),
+        Color(0.10f, 0.55f, 1.00f, 0.56f),
+        Color(0.22f, 0.08f, 0.70f, 0.58f),
     ),
     listOf(
-        Color(0.58f, 0.30f, 0.74f, 0.40f),
-        Color(0.27f, 0.18f, 0.60f, 0.50f),
-        Color(0.66f, 0.26f, 0.62f, 0.50f),
-        Color(0.12f, 0.16f, 0.70f, 0.60f),
+        Color(0.62f, 0.18f, 0.82f, 0.54f),
+        Color(0.22f, 0.14f, 0.78f, 0.54f),
+        Color(0.00f, 0.85f, 0.90f, 0.50f),
+        Color(0.10f, 0.14f, 0.72f, 0.60f),
     ),
 )
 
@@ -146,13 +152,20 @@ private fun lerpColor(a: Color, b: Color, t: Float) = Color(
 )
 
 /**
- * 前景（Logo / 字标）用的"墨水色"：同一组调色板，但亮色主题下压深、暗色主题下提到不透明。
+ * 前景（Logo / 字标）用的"墨水色"：同一组调色板，但亮色主题下压深、暗色主题下提亮。
  *
- * 直接用背景调色板画前景会"同色叠同色"——亮色下 Logo 只剩一团浅粉（AVD 实测），
- * 所以亮色一律乘一个低亮度系数，保持色相不变、只拉开明度差。
+ * 直接用背景调色板画前景会"同色叠同色"——亮色下 Logo 只剩一团浅粉、
+ * 暗色下（背景本来就是深蓝紫）Logo 线条几乎彻底看不见（两次都是真机反馈）。
+ * 所以两个方向都要拉明度差：
+ * - 亮色：乘低亮度系数，保持色相、压深；
+ * - 暗色：朝白色混 [DARK_INK_WHITEN]（并给每通道留一个亮度下限），
+ *   得到明快的粉彩色，在深蓝背景上是清晰的"发光描线"。
  */
+private const val DARK_INK_WHITEN = 0.58f
+
 private fun aboutInkColor(color: Color, dark: Boolean): Color = if (dark) {
-    color.copy(alpha = 1f)
+    fun lift(c: Float) = (c + (1f - c) * DARK_INK_WHITEN).coerceIn(0f, 1f)
+    Color(lift(color.red), lift(color.green), lift(color.blue), 1f)
 } else {
     Color(color.red * 0.46f, color.green * 0.42f, color.blue * 0.64f, 1f)
 }
@@ -202,7 +215,6 @@ fun AboutGradientBackground(
 /** 线性底色 + 4 个互相不整除的正弦漂移光斑，形成近似非周期的缓慢流动。 */
 private fun DrawScope.drawAboutGradientField(animationTime: Float, colors: List<Color>) {
     val translucent = colors.any { it.alpha < 0.8f }
-    val radius = size.maxDimension * 0.62f
     val motion = animationTime * BACKGROUND_SPEED
     val w = size.width
     val h = size.height
@@ -217,6 +229,11 @@ private fun DrawScope.drawAboutGradientField(animationTime: Float, colors: List<
         ),
     )
 
+    // 光斑半径按**短边**算（原来用 maxDimension·0.62 ≈ 1.4 倍屏宽，
+    // 光斑铺满整屏，移动时每个像素都差不多，看起来就像静止的渐变）。
+    // 现在收到短边量级并叠加呼吸，移动能被一眼看出来。
+    val baseRadius = size.minDimension
+
     val centers = listOf(
         Offset(w * (0.18f + 0.10f * sin(motion)), h * (0.20f + 0.08f * cos(motion * 0.8f))),
         Offset(w * (0.82f + 0.10f * cos(motion * 0.9f)), h * (0.78f + 0.10f * sin(motion * 0.7f))),
@@ -226,6 +243,9 @@ private fun DrawScope.drawAboutGradientField(animationTime: Float, colors: List<
     centers.forEachIndexed { index, center ->
         val color = colors[index]
         val centerAlpha = if (translucent) color.alpha * 0.96f else 0.88f
+        // 每个光斑自己的呼吸相位 / 频率，避免四个一起胀缩像在打拍子
+        val breath = 1f + 0.14f * sin(motion * (0.9f + index * 0.13f) + index * 1.7f)
+        val radius = baseRadius * (0.58f + 0.07f * index) * breath
         drawCircle(
             brush = Brush.radialGradient(
                 colors = listOf(color.copy(alpha = centerAlpha), color.copy(alpha = 0f)),
@@ -234,6 +254,25 @@ private fun DrawScope.drawAboutGradientField(animationTime: Float, colors: List<
             ),
             center = center,
             radius = radius,
+        )
+    }
+
+    // 一条缓慢横扫的斜向柔光带：深色底上白色微光最容易感知，
+    // 是"这页在动"最直接的来源（亮色底上会发灰，所以只在半透明调色板下画）。
+    if (translucent) {
+        val phase = sin(motion * 1.35f) * 0.5f + 0.5f
+        val bandCenter = w * (-0.30f + 1.60f * phase)
+        val halfBand = w * 0.55f
+        drawRect(
+            brush = Brush.linearGradient(
+                colors = listOf(
+                    Color.Transparent,
+                    Color.White.copy(alpha = 0.065f),
+                    Color.Transparent,
+                ),
+                start = Offset(bandCenter - halfBand, 0f),
+                end = Offset(bandCenter + halfBand, h),
+            ),
         )
     }
 }
@@ -259,7 +298,7 @@ fun AboutGradientLogo(
             val t = animationTime.value
             val colors = aboutGradientColors(t, dark).map(::strengthenAboutColor)
             val pulse = 1f + 0.06f * sin(t * 1.15f)
-            val glow = colors[3].copy(alpha = if (dark) 0.40f else 0.26f)
+            val glow = colors[3].copy(alpha = if (dark) 0.48f else 0.26f)
             val r = size.minDimension * 0.5f * pulse
             drawCircle(
                 brush = Brush.radialGradient(
@@ -273,12 +312,13 @@ fun AboutGradientLogo(
             )
         }
         // ② Logo 本体：渐变 + 图标 alpha 蒙版（DstIn 只作用于图标矩形内）
-        val floatY = 2f * sin(animationTime.value * 0.9f)
+        //    浮动的 sin 必须写在 graphicsLayer 的 lambda 里：那是绘制阶段读取，
+        //    只失效图层；写在组合阶段会让 Logo 每帧重组一次。
         Canvas(
             modifier = Modifier
                 .size(logoSize)
                 .graphicsLayer {
-                    translationY = floatY
+                    translationY = 2f * sin(animationTime.value * 0.9f)
                     compositingStrategy = CompositingStrategy.Offscreen
                 },
         ) {
