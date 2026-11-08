@@ -18,7 +18,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredHeight
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -189,7 +189,12 @@ fun LiquidTopBarSkin(
     val glassSurface: androidx.compose.ui.graphics.drawscope.DrawScope.() -> Unit =
         remember(glassColor) { { drawRect(glassColor) } }
 
-    val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    // 必须和 miuix 骨架用**同一个**顶部 inset：骨架用的是
+    // `WindowInsets.systemBars.only(Top)`（BlurTopAppBar 里 windowInsetsPadding 那一行），
+    // 而这里之前用 `statusBars`——在挖孔/高状态栏机型上 systemBars.top 会比 statusBars.top
+    // 大 10~20dp（实机 1220x2656：statusBars 42dp、systemBars 56dp），玻璃就短了一截，
+    // 底边正好切在顶栏按钮中间（用户实机截图：按钮只套了一半）。
+    val statusBarTop = WindowInsets.systemBars.asPaddingValues().calculateTopPadding()
 
     Box(
         modifier = modifier
