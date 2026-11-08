@@ -61,12 +61,37 @@ object KibaState {
 
     /** 用户手动触发：检查曲库更新（只检查；有更新则 [SongDataSync.updateAvailable] 提示）。 */
     fun checkSongUpdate(showProgress: Boolean = false) {
-        launchSynced(showProgress) { SongDataSync.checkForUpdate() }
+        launchSynced(showProgress, downloaded = false) { SongDataSync.checkForUpdate() }
     }
 
     /** 用户手动触发：立即更新曲库（下载 + 入库 + 写版本号）。 */
     fun refreshSongData(context: Context, showProgress: Boolean = false) {
-        launchSynced(showProgress) { SongDataSync.forceSync(context) }
+        launchSynced(showProgress, downloaded = true) { SongDataSync.forceSync(context) }
+    }
+
+    /**
+     * 用户手动触发：只刷新中二节奏曲库（下载 music_data → 入库 → 补落雪物量）。
+     *
+     * 曲目页顶栏的刷新按钮按**当前游戏**分流：中二档位下过去只会去检查舞萌版本，
+     * 中二曲库因此永远不会被手动更新，用户看到的就是「点了刷新没反应」。
+     */
+    fun refreshChuniSongData(context: Context, showProgress: Boolean = true) {
+        if (showProgress) {
+            SongRefreshSession.clearNotice(RefreshGame.CHUNI)
+            SongRefreshSession.begin(1)
+        }
+        scope.launch {
+            try {
+                runCatching { ChuniSongSync.forceSync(context) }
+            } finally {
+                if (showProgress) {
+                    SongRefreshSession.endTask(
+                        hasFailed = ChuniSongSync.state.value is ChuniSongSync.SyncState.Failed,
+                    )
+                    reportChuniNotice()
+                }
+            }
+        }
     }
 
     /**
@@ -75,9 +100,18 @@ object KibaState {
      * 会话结束一定在 `finally` 里做——即使同步内部抛异常（网络库、Room 等），
      * 计数也不会漏减，曲目页的进度卡不会再次「常驻」。
      * 失败判定看各同步对象最终写下的 SyncState（它们自身会吞掉异常并改写状态）。
+     *
+     * @param downloaded 本次是否走了「下载 + 入库」（区分「已更新」与「本来就是最新」）。
      */
-    private fun launchSynced(showProgress: Boolean, block: suspend () -> Unit) {
-        if (showProgress) SongRefreshSession.begin(1)
+    private fun launchSynced(
+        showProgress: Boolean,
+        downloaded: Boolean,
+        block: suspend () -> Unit,
+    ) {
+        if (showProgress) {
+            SongRefreshSession.clearNotice(RefreshGame.MAIMAI)
+            SongRefreshSession.begin(1)
+        }
         scope.launch {
             try {
                 runCatching { block() }
@@ -86,8 +120,53 @@ object KibaState {
                     SongRefreshSession.endTask(
                         hasFailed = SongDataSync.state.value is SongDataSync.SyncState.Failed,
                     )
+                    reportMaimaiNotice(downloaded)
                 }
             }
+        }
+    }
+
+    /**
+     * 舞萌侧收尾提示：`Done` 要分三种语义——真的下载入库了、有新版但还没下、
+     * 本来就没有新版本。只写「刷新成功」会让「点了没感觉」变成「点了骗我」。
+     */
+    private fun reportMaimaiNotice(downloaded: Boolean) {
+        when (val state = SongDataSync.state.value) {
+            is SongDataSync.SyncState.Done -> {
+                val pending = SongDataSync.updateAvailable.value
+                when {
+                    downloaded -> SongRefreshSession.notify(
+                        RefreshGame.MAIMAI, true, "舞萌曲库已更新", "数据版本 ${state.version}",
+                    )
+                    pending != null -> SongRefreshSession.notify(
+                        RefreshGame.MAIMAI, true, "发现新版本 $pending", "在更新提示中可立即下载",
+                    )
+                    else -> SongRefreshSession.notify(
+                        RefreshGame.MAIMAI, true, "舞萌曲库已是最新", "数据版本 ${state.version}",
+                    )
+                }
+            }
+            is SongDataSync.SyncState.Failed -> SongRefreshSession.notify(
+                RefreshGame.MAIMAI, false, "舞萌曲库刷新失败", state.message,
+            )
+            else -> Unit
+        }
+    }
+
+    /** 中二侧收尾提示：Done 带的是本次入库的曲目数。 */
+    private fun reportChuniNotice() {
+        when (val state = ChuniSongSync.state.value) {
+            is ChuniSongSync.SyncState.Done -> {
+                val version = ChuniSongSync.getLocalVersion()
+                SongRefreshSession.notify(
+                    RefreshGame.CHUNI, true, "中二节奏曲库已更新",
+                    if (version.isBlank()) "共 ${state.count} 首" else "共 ${state.count} 首 · 版本 $version",
+                )
+            }
+            is ChuniSongSync.SyncState.Failed -> SongRefreshSession.notify(
+                RefreshGame.CHUNI, false, "中二节奏曲库刷新失败", state.message,
+            )
+            else -> Unit
         }
     }
 
@@ -112,8 +191,13 @@ object KibaState {
         showProgress: Boolean = true,
     ) {
         // 两边各算一个任务：会话按「实际发起的任务数」计数，任意一边提前结束都不会误收卡
-        if (showProgress) SongRefreshSession.begin(2)
+        if (showProgress) {
+            SongRefreshSession.clearNotice(RefreshGame.MAIMAI)
+            SongRefreshSession.clearNotice(RefreshGame.CHUNI)
+            SongRefreshSession.begin(2)
+        }
         scope.launch {
+            var downloaded = false
             try {
                 runCatching {
                     // 本地从未成功导入过曲库（版本号为空 / "0"）时也必须走下载，兜住漏传参数的调用方
@@ -121,6 +205,7 @@ object KibaState {
                     val noLocalData = localVersion.isBlank() || localVersion == "0"
                     if (forceMaimaiDownload || noLocalData || SongDataSync.updateAvailable.value != null) {
                         SongDataSync.forceSync(context)
+                        downloaded = true
                     } else {
                         SongDataSync.checkForUpdate()
                     }
@@ -130,6 +215,7 @@ object KibaState {
                     SongRefreshSession.endTask(
                         hasFailed = SongDataSync.state.value is SongDataSync.SyncState.Failed,
                     )
+                    reportMaimaiNotice(downloaded)
                 }
             }
         }
@@ -141,6 +227,7 @@ object KibaState {
                     SongRefreshSession.endTask(
                         hasFailed = ChuniSongSync.state.value is ChuniSongSync.SyncState.Failed,
                     )
+                    reportChuniNotice()
                 }
             }
         }

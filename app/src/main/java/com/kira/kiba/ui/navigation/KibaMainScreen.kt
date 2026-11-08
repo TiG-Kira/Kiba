@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -41,6 +42,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.kira.kiba.core.data.ChuniRecordSync
+import com.kira.kiba.core.data.ChuniSongSync
 import com.kira.kiba.core.data.SongDataSync
 import com.kira.kiba.core.agent.KibaAgent
 import com.kira.kiba.core.playback.SongPlaybackController
@@ -314,11 +316,25 @@ private fun tabIcon(tab: KibaTab) = when (tab) {
 /** Termux Ultra 浮动玻璃底栏的固定栏高（GlassNavigationBarDefaults.Height）。 */
 private val GLASS_NAV_HEIGHT = 54.dp
 
+/**
+ * 主页 Tab 横向切换的缓动：快起慢收的三次贝塞尔（非线性）。
+ * 比 material 标准 easing 更"利落"——推屏一开始就走，尾段慢慢咬合。
+ */
+private val TabSwitchEasing = CubicBezierEasing(0.22f, 0.85f, 0.16f, 1f)
+
 @Composable
 fun KibaMainScreen() {
     val context = LocalContext.current
     val tabs = KibaTab.values()
     var selectedTab by remember { mutableStateOf(KibaTab.Songs) }
+    // 当前游戏（舞萌 / 中二节奏）：唯一的可观察副本，SpUtil 仍是持久化落点。
+    // 开关渲染在顶栏大标题行（2.4.0），曲目页通过参数读写，不再自带一份局部状态。
+    var gameType by remember { mutableStateOf(SpUtil.getGameType()) }
+    fun selectGameType(type: GameType) {
+        if (type == gameType) return
+        gameType = type
+        SpUtil.setGameType(type)
+    }
 
     // 二级页面栈：非空时覆盖当前 Tab（顶栏带返回、底栏隐藏），支持多层逐级返回
     var subStack by remember { mutableStateOf<List<KibaSubPage>>(emptyList()) }
@@ -490,6 +506,9 @@ fun KibaMainScreen() {
     val songUpdateAvailable by SongDataSync.updateAvailable.collectAsState()
     val songSyncing = songSyncState is SongDataSync.SyncState.Checking ||
         songSyncState is SongDataSync.SyncState.Downloading
+    // 中二侧同步状态：曲目页刷新按当前游戏分流后，中二档位也要有「同步中禁点」的守卫
+    val chuniSyncState by ChuniSongSync.state.collectAsState()
+    val chuniSyncing = chuniSyncState is ChuniSongSync.SyncState.Syncing
 
     val density = LocalDensity.current
     // 隐藏手势提示线后 navigationBars inset 可能为 0，保底 12dp 贴屏幕底边
@@ -565,19 +584,36 @@ fun KibaMainScreen() {
                       KibaTopBar(
                           title = topTab?.title.orEmpty(),
                           scrollBehavior = scrollBehavior,
+                          // 曲目页：游戏切换开关塞进大标题行，与大标题同频折叠
+                          titleTrailing = if (topTab == KibaTab.Songs) {
+                              {
+                                  KibaGameSwitch(
+                                      current = gameType,
+                                      onSelect = { selectGameType(it) },
+                                  )
+                              }
+                          } else {
+                              null
+                          },
                           actions = {
                               when (topTab) {
                                   KibaTab.Songs -> {
-                                      // 曲库检查更新 / 立即更新（原曲目页「曲库数据」卡迁入顶栏）
+                                      // 曲库刷新：按**当前游戏**分流。中二档位下过去只会去检查
+                                      // 舞萌版本（中二曲库永远不更新）——这就是「点了刷新没感觉」。
                                       KibaRefreshAction {
-                                          if (songSyncing) return@KibaRefreshAction
-                                          // 仅曲目页刷新点亮置顶进度卡（设置页刷新不触发）。
-                                          // 注意：这里只会启动舞萌一侧的同步，进度卡的收起由
-                                          // SongRefreshSession 的任务计数决定，与中二侧是否参与无关。
-                                          if (songUpdateAvailable != null) {
-                                              KibaState.refreshSongData(context, showProgress = true)
+                                          if (gameType == GameType.CHUNITHM) {
+                                              if (chuniSyncing) return@KibaRefreshAction
+                                              KibaState.refreshChuniSongData(context, showProgress = true)
                                           } else {
-                                              KibaState.checkSongUpdate(showProgress = true)
+                                              if (songSyncing) return@KibaRefreshAction
+                                              // 仅曲目页刷新点亮置顶进度卡（设置页刷新不触发）。
+                                              // 进度卡的收起由 SongRefreshSession 任务计数决定，
+                                              // 与另一侧是否参与无关。
+                                              if (songUpdateAvailable != null) {
+                                                  KibaState.refreshSongData(context, showProgress = true)
+                                              } else {
+                                                  KibaState.checkSongUpdate(showProgress = true)
+                                              }
                                           }
                                       }
                                       // 排序与归类（舞萌 / 中二节奏共用排序，归类仅舞萌）
@@ -591,7 +627,7 @@ fun KibaMainScreen() {
                                   KibaTab.Me -> KibaRefreshAction {
                                       // 顶栏刷新按当前游戏分流：中二走 ChuniRecordSync，
                                       // 舞萌走原 KibaState.refreshRecords
-                                      if (SpUtil.getGameType() == GameType.CHUNITHM) {
+                                      if (gameType == GameType.CHUNITHM) {
                                           frameScope.launch { runCatching { ChuniRecordSync.refresh() } }
                                       } else {
                                           KibaState.refreshRecords()
@@ -774,13 +810,31 @@ fun KibaMainScreen() {
                       .then(if (isLiquid) Modifier.liquidLayerBackdrop(liquidBackdrop) else Modifier)
               ) {
                   val sub = subStack.lastOrNull()
-                  // 页面切换动画：Tab 间淡入淡出 + 轻微横向位移；二级页面从右滑入、返回时滑出
+                  // 页面切换动画：
+                  // - 主页五个 Tab 之间：非线性横向推屏（按 index 判定方向，左侧页向左滑出 +
+                  //   淡出，右侧页从屏幕外飞入 + 淡入），与二级页的位移+淡切刻意区分；
+                  // - 二级页面：从右滑入、返回时滑出。
                   AnimatedContent(
                       targetState = subStack.lastOrNull() ?: selectedTab,
                       transitionSpec = {
+                          val initialTab = initialState as? KibaTab
+                          val targetTab = targetState as? KibaTab
                           val isSub = targetState is KibaSubPage
                           val forward = navForward
-                          if (isSub) {
+                          if (initialTab != null && targetTab != null) {
+                              // +1 = 目标在右侧（页面向左推），-1 = 目标在左侧（页面向右推）
+                              val direction = if (targetTab.ordinal > initialTab.ordinal) 1 else -1
+                              (slideInHorizontally(
+                                  animationSpec = tween(380, easing = TabSwitchEasing),
+                                  initialOffsetX = { full -> full * direction },
+                              ) + fadeIn(tween(220, delayMillis = 40)))
+                                  .togetherWith(
+                                      slideOutHorizontally(
+                                          animationSpec = tween(340, easing = TabSwitchEasing),
+                                          targetOffsetX = { full -> -full * direction },
+                                      ) + fadeOut(tween(200)),
+                                  )
+                          } else if (isSub) {
                               if (forward) {
                                   (slideInHorizontally(tween(260)) { it / 4 } + fadeIn(tween(200)))
                                       .togetherWith(fadeOut(tween(160)))
@@ -911,6 +965,7 @@ fun KibaMainScreen() {
                               KibaTab.Songs -> SongsScreen(
                                   scrollBehavior = scrollBehavior,
                                   searchTrigger = songsSearchTrigger,
+                                  gameType = gameType,
                                   showGroupPicker = songsShowGroupPicker,
                                   onDismissGroupPicker = { songsShowGroupPicker = false },
                                   onSongClick = { song ->

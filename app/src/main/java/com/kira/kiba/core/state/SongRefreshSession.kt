@@ -29,6 +29,9 @@ import kotlinx.coroutines.launch
  * UI 侧只需观察 [visible]，并按各游戏自己的 `SyncState` 决定渲染哪张卡——
  * `Done` / `Idle` 一律不渲染，空卡片与「等待同步…」占位随之消失。
  */
+/** 刷新归属的游戏侧（提示卡按侧去重 / 按侧清除）。 */
+enum class RefreshGame { MAIMAI, CHUNI }
+
 object SongRefreshSession {
 
     /** 失败时进度卡多保留的时长（毫秒）。 */
@@ -38,6 +41,45 @@ object SongRefreshSession {
 
     /** 当前是否有刷新会话在进行（曲目页据此展示置顶进度卡）。 */
     val visible: StateFlow<Boolean> = _visible.asStateFlow()
+
+    /**
+     * 刷新收尾提示卡片（成功 / 失败都可），曲目页以可关闭的卡片展示。
+     *
+     * 为什么需要它：进度卡在终态一律不渲染（`Done` 画出来是空卡），
+     * 于是「点了刷新 → 卡一闪 → 什么都没变」——尤其舞萌侧走 `checkForUpdate()`
+     * 时没有新版本，几十毫秒就结束，用户完全感知不到刷新发生过。
+     */
+    data class RefreshNotice(
+        val id: Long,
+        val game: RefreshGame,
+        val success: Boolean,
+        val title: String,
+        val detail: String,
+    )
+
+    /** 同侧只保留最新一条：连点刷新不该把列表堆成一串卡片。 */
+    private val _notices = MutableStateFlow<List<RefreshNotice>>(emptyList())
+    val notices: StateFlow<List<RefreshNotice>> = _notices.asStateFlow()
+
+    private var noticeSeq = 0L
+
+    @Synchronized
+    fun notify(game: RefreshGame, success: Boolean, title: String, detail: String = "") {
+        val notice = RefreshNotice(++noticeSeq, game, success, title, detail)
+        _notices.value = _notices.value.filterNot { it.game == game } + notice
+    }
+
+    @Synchronized
+    fun dismissNotice(id: Long) {
+        _notices.value = _notices.value.filterNot { it.id == id }
+    }
+
+    /** 新一轮刷新开始时清掉该侧旧提示，避免「正在刷新」与「上次已更新」同屏打架。 */
+    @Synchronized
+    fun clearNotice(game: RefreshGame) {
+        val next = _notices.value.filterNot { it.game == game }
+        if (next.size != _notices.value.size) _notices.value = next
+    }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 

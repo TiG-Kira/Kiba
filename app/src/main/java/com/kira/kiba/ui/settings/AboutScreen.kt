@@ -36,12 +36,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -50,8 +48,6 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.toBitmap
 import coil.imageLoader
@@ -62,7 +58,6 @@ import com.kira.kiba.core.update.ApkDownloader
 import com.kira.kiba.core.update.UpdateChecker
 import com.kira.kiba.core.update.UpdateResult
 import com.kira.kiba.core.utils.SpUtil
-import com.kira.kiba.ui.common.AboutBgEffect
 import com.kira.kiba.ui.common.MarkdownContent
 import com.kira.kiba.ui.common.SectionTitle
 import com.kira.kiba.ui.common.pageContentPadding
@@ -113,11 +108,17 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
         releaseStatus = UpdateChecker.getReleaseStatus(currentVersion)
     }
 
-    // ── 高级渐变背景（移植 Termux Ultra：HyperCeiler 风格 RuntimeShader 动画，
-    //    minSdk 33 恒可用，不设 Brush fallback）──
+    // ── 动态变色背景（2.4.0：仿 HyperIsland 关于页，Compose 渐变场 + 逐帧时钟）──
+    // 原实现是 AndroidView + RuntimeShader + 120dp blur，既贵又只能当背景；
+    // 现在整页共用一个时间轴，背景 / Logo / 字标吃同一组调色板，视觉上是一体的。
     val darkTheme = isSystemInDarkTheme()
     // 头部前景：Logo 染色与文字同色（Termux Ultra 同款），渐变从白色像素处透出
     val headerFg = if (darkTheme) Color.White else Color(0xFF333333)
+    val aboutTime = rememberAboutAnimationTime()
+    val enterLogo = rememberHeroEnter(0)
+    val enterTitle = rememberHeroEnter(90)
+    val enterTagline = rememberHeroEnter(160)
+    val enterVersion = rememberHeroEnter(220)
 
     // 滚动跟踪：滚过头部时背景渐隐、头部内容淡出
     val listState = rememberLazyListState()
@@ -136,34 +137,13 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
             }
     }
 
-    var bgController by remember { mutableStateOf<AboutBgEffect.ShaderController?>(null) }
-    var bgDarkTheme by remember { mutableStateOf(darkTheme) }
-
     Box(modifier = Modifier.fillMaxSize()) {
-        // RuntimeShader 动画渐变层（滚过头部后渐隐；暗色下减半）
-        AndroidView(
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer {
-                    alpha = (1f - scrollFraction) * (if (darkTheme) 0.5f else 1f)
-                }
-                .blur(120.dp)
-                .zIndex(-1f),
-            factory = { ctx ->
-                android.view.View(ctx).apply {
-                    setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                    val ctl = AboutBgEffect.createFor(this, darkTheme)
-                    bgController = ctl
-                    bgDarkTheme = darkTheme
-                    ctl?.start()
-                }
-            },
-            update = { _ ->
-                if (bgDarkTheme != darkTheme) {
-                    bgController?.updateParams(AboutBgEffect.getParams(darkTheme))
-                    bgDarkTheme = darkTheme
-                }
-            },
+        // 动态变色背景：滚过头部后淡出；暗色下自带 alpha，不再额外压暗
+        AboutGradientBackground(
+            animationTime = aboutTime,
+            dark = darkTheme,
+            alpha = 1f - scrollFraction,
+            modifier = Modifier.fillMaxSize(),
         )
 
         Scaffold(
@@ -181,20 +161,17 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
             contentPadding = pageContentPadding(withNavBar = false),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // ── 头部：Logo（染色透出渐变）+ 名称 + 版本 + 状态标签 ──
+            // ── 头部：Logo（渐变灌入 + 呼吸辉光）+ 渐变字标 + 版本 + 状态标签 ──
             item(key = "header") {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .graphicsLayer { alpha = 1f - scrollFraction }
-                        .padding(top = 48.dp, bottom = 10.dp),
+                        .padding(top = 40.dp, bottom = 10.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    // App Logo：用 launcher 前景图（ic_launcher_foreground），
-                    // 按主题整体重着色：亮色→黑、暗色→白（保留原 alpha 形状）
-                    val appIcon = remember(darkTheme) {
-                        val tintColor =
-                            if (darkTheme) android.graphics.Color.WHITE else android.graphics.Color.BLACK
+                    // App Logo：launcher 前景图保留 alpha、整体染白，交给渐变做蒙版
+                    val logoImage = remember(darkTheme) {
                         runCatching {
                             ContextCompat.getDrawable(context, R.drawable.ic_launcher_foreground)
                                 ?.toBitmap()
@@ -203,44 +180,44 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
                             val pixels = IntArray(copy.width * copy.height)
                             copy.getPixels(pixels, 0, copy.width, 0, 0, copy.width, copy.height)
                             for (i in pixels.indices) {
-                                val a = (pixels[i] shr 24) and 0xFF
-                                if (a > 128) {
-                                    // 非透明像素 → 统一染成目标色，alpha 保持原值（软边）
-                                    pixels[i] = (a shl 24) or (tintColor and 0x00FFFFFF)
-                                }
+                                // 只留 alpha（形状），颜色交给渐变层
+                                pixels[i] = (pixels[i] and 0xFF000000.toInt()) or 0x00FFFFFF
                             }
                             copy.setPixels(pixels, 0, copy.width, 0, 0, copy.width, copy.height)
-                            BitmapPainter(copy.asImageBitmap())
+                            copy.asImageBitmap()
                         }
                     }
-                    if (appIcon != null) {
-                        Image(
-                            painter = appIcon,
-                            contentDescription = "Logo",
-                            modifier = Modifier.size(160.dp),
+                    if (logoImage != null) {
+                        AboutGradientLogo(
+                            logo = logoImage,
+                            animationTime = aboutTime,
+                            dark = darkTheme,
+                            logoSize = 156.dp,
+                            modifier = Modifier.heroEnter(enterLogo),
                         )
                     }
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text(
+                    Spacer(modifier = Modifier.height(10.dp))
+                    GradientWordmark(
                         text = "Kiba",
-                        style = TextStyle(
-                            fontSize = 34.sp,
-                            fontWeight = FontWeight.Black,
-                            color = headerFg,
-                        ),
+                        animationTime = aboutTime,
+                        dark = darkTheme,
+                        fontSize = 34,
+                        modifier = Modifier.heroEnter(enterTitle),
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
                     Text(
                         text = "舞萌 DX / 中二节奏 · 曲库与查分工具",
                         style = TextStyle(
                             fontSize = 13.sp,
                             color = headerFg.copy(alpha = 0.7f),
                         ),
+                        modifier = Modifier.heroEnter(enterTagline),
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.heroEnter(enterVersion),
                     ) {
                         Text(
                             text = "v$currentVersion",

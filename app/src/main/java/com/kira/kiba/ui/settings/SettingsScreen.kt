@@ -30,6 +30,7 @@ import com.kira.kiba.BuildConfig
 import com.kira.kiba.core.account.DivingFishAccount
 import com.kira.kiba.core.account.LxnsAccount
 import com.kira.kiba.core.data.ChuniRecordSync
+import com.kira.kiba.core.data.ChuniSongSync
 import com.kira.kiba.core.data.SongDataSync
 import com.kira.kiba.core.model.GameType
 import com.kira.kiba.core.model.ScoreSource
@@ -95,6 +96,8 @@ fun SettingsScreen(
     val dynamicColor by KibaState.dynamicColor.collectAsState()
     val syncState by SongDataSync.state.collectAsState()
     val updateAvailable by SongDataSync.updateAvailable.collectAsState()
+    // 中二侧同步状态与版本号：设置页的「曲库更新」现在是**两边一起更**，摘要要能同时反映两边的状态
+    val chuniSyncState by ChuniSongSync.state.collectAsState()
     var llmOn by remember { mutableStateOf(SpUtil.isLlmEnabled()) }
     var coverSource by remember { mutableStateOf(SpUtil.getCoverSource()) }
     var showCoverSource by remember { mutableStateOf(false) }
@@ -342,24 +345,46 @@ fun SettingsScreen(
                     startAction = { PrefIcon(MiuixGlassIcons.Regular.Photos) },
                     onClick = { showCoverSource = true },
                 )
+                // 版本号在同步结束（SyncState 变化）后重新读取：SpUtil 里的版本不是 snapshot state，
+                // 只在 remember 里读一次的话，更新完摘要会停在旧版本号直到离开页面。
+                val maimaiVersion = remember(syncState) {
+                    SpUtil.getDataVersion().takeIf { it.isNotBlank() && it != "0" }
+                }
+                val chuniVersion = remember(chuniSyncState) {
+                    ChuniSongSync.getLocalVersion().takeIf { it.isNotBlank() }
+                }
+                val maimaiBusy = syncState is SongDataSync.SyncState.Checking ||
+                    syncState is SongDataSync.SyncState.Downloading
+                val chuniBusy = chuniSyncState is ChuniSongSync.SyncState.Syncing
                 ArrowPreference(
                     title = "曲库更新",
-                    summary = when (val s = syncState) {
-                        SongDataSync.SyncState.Idle -> "点击检查曲库更新（update.json）"
-                        SongDataSync.SyncState.Checking -> "正在检查更新…"
-                        is SongDataSync.SyncState.Downloading ->
-                            "下载中 ${s.received / 1024} / ${s.total / 1024} KB"
-                        is SongDataSync.SyncState.Done ->
-                            if (updateAvailable != null) "发现新版本 $updateAvailable，点击更新"
-                            else "已是最新版本 ${s.version}"
-                        is SongDataSync.SyncState.Failed -> "更新失败：${s.message}（点击重试）"
+                    summary = buildString {
+                        append("舞萌 ").append(maimaiVersion ?: "未同步")
+                        append(" · 中二 ").append(chuniVersion ?: "未同步")
+                        append("\n")
+                        append(
+                            when {
+                                maimaiBusy -> when (val s = syncState) {
+                                    is SongDataSync.SyncState.Downloading ->
+                                        "正在下载舞萌曲库 ${s.received / 1024} / ${s.total / 1024} KB"
+                                    else -> "正在检查舞萌曲库更新…"
+                                }
+                                chuniBusy -> "正在同步中二节奏曲库…"
+                                syncState is SongDataSync.SyncState.Failed ->
+                                    "舞萌更新失败：${(syncState as SongDataSync.SyncState.Failed).message}（点击重试）"
+                                chuniSyncState is ChuniSongSync.SyncState.Failed ->
+                                    "中二更新失败：${(chuniSyncState as ChuniSongSync.SyncState.Failed).message}（点击重试）"
+                                updateAvailable != null -> "发现舞萌新版本 $updateAvailable，点击同时更新两个游戏"
+                                else -> "点击同时更新舞萌与中二节奏的曲库"
+                            }
+                        )
                     },
                     startAction = { PrefIcon(MiuixGlassIcons.Regular.Refresh) },
                     onClick = {
-                        if (SongDataSync.updateAvailable.value != null) {
-                            KibaState.refreshSongData(context)
-                        } else {
-                            KibaState.checkSongUpdate()
+                        if (!maimaiBusy && !chuniBusy) {
+                            // 两边一起更：舞萌沿用「有新版本才下载」，中二曲库小、直接全量刷新。
+                            // 设置页不点亮曲目页的进度卡（showProgress = false），进度看本行摘要。
+                            KibaState.refreshAllSongData(context, showProgress = false)
                         }
                     },
                 )

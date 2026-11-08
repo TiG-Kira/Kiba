@@ -132,9 +132,10 @@ object ChuniSongsListCache : ListSnapshotCache<List<ChuniSongWithCharts>>(emptyL
  *
  * 搜索栏默认隐藏：点顶栏搜索按钮展开，再点收起（搜索逻辑不变）。
  *
- * 游戏类型开关（[GameType]）：顶部分段开关在「舞萌 / 中二节奏」间切换，切换后列表立即
- * 切换对应的数据源（舞萌 song_data / 中二节奏 chuni_song）。开关是页面内状态，并持久化到
- * [SpUtil]（全应用「当前游戏」的唯一真相来源，我页面 / 收藏 / 详情 / Best 都据此切换）。
+ * 游戏类型（[GameType]）：2.4.0 起切换开关移到**顶栏大标题行**（与大标题同频折叠），
+ * 由 [KibaMainScreen] 持有状态并作为参数传入；切到中二节奏后列表立即换源
+ * （舞萌 song_data / 中二节奏 chuni_song），持久化仍落 [SpUtil]。
+ * 我页面 / 收藏 / 详情 / Best 也都按 SpUtil 里的当前游戏切换。
  *
  * @param searchTrigger 顶栏搜索按钮每次点击 +1，页面据此切换搜索栏展开 / 收起。
  */
@@ -142,6 +143,9 @@ object ChuniSongsListCache : ListSnapshotCache<List<ChuniSongWithCharts>>(emptyL
 fun SongsScreen(
     scrollBehavior: ScrollBehavior,
     searchTrigger: Int = 0,
+    // 当前游戏由顶栏大标题行的切换开关驱动（2.4.0 从列表首项迁到顶栏），
+    // 页面只读这份状态，不再自己持有一份 rememberSaveable 副本。
+    gameType: GameType = SpUtil.getGameType(),
     // 归类方式选择弹层：由顶栏归类按钮控制（曲目页不再放独立归类卡）
     showGroupPicker: Boolean = false,
     onDismissGroupPicker: () -> Unit = {},
@@ -161,10 +165,14 @@ fun SongsScreen(
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
-    // 当前游戏类型（分段开关）：rememberSaveable 保证切 Tab / 进程恢复不丢；
-    // 同时写入 SpUtil 作为全应用唯一真相来源。
-    var gameTypeKey by rememberSaveable { mutableStateOf(SpUtil.getGameType().key) }
-    val gameType = GameType.fromKey(gameTypeKey)
+    // 换游戏后列表整体换源：回到顶部，避免停在上一个曲库的中段位置
+    var lastGameType by remember { mutableStateOf(gameType) }
+    LaunchedEffect(gameType) {
+        if (lastGameType != gameType) {
+            lastGameType = gameType
+            listState.scrollToItem(0)
+        }
+    }
 
     LaunchedEffect(searchTrigger) {
         if (searchTrigger > 0 && searchTrigger != lastTrigger) {
@@ -258,6 +266,9 @@ fun SongsScreen(
     val chuniSyncing = chuniSyncState is ChuniSongSync.SyncState.Syncing
     // 刷新进度卡：是否处于刷新会话中（见 [SongRefreshSession]）
     val refreshCardVisible by SongRefreshSession.visible.collectAsState()
+    // 刷新收尾提示（成功 / 失败），可手动关闭：进度卡在终态不渲染，
+    // 没有这张卡时「舞萌已是最新」这类秒完成的刷新用户完全感知不到。
+    val refreshNotices by SongRefreshSession.notices.collectAsState()
 
     // 冷启动兜底：bootstrap 未跑（异常进程恢复等）时补一次检查
     // （后台检查不点亮进度卡，避免一进页面就闪一张「正在检查曲库更新」）
@@ -342,17 +353,6 @@ fun SongsScreen(
             contentPadding = pageContentPadding(bottomExtra = songsBottomExtra),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // ── 游戏类型分段开关（顶左，落在 pageContentPadding 的 16dp 区内）──
-            item(key = "game_toggle") {
-                GameTypeToggle(
-                    current = gameType,
-                    onSelect = {
-                        gameTypeKey = it.key
-                        SpUtil.setGameType(it)
-                    },
-                )
-            }
-
             // 刷新进度卡（置顶）：按各自状态独立渲染。
             // 曲目页刷新会**同时刷新舞萌与中二两边**，两张卡各展示一边的进度；
             // 只刷新一边（顶栏「无更新时」仅检查舞萌）时就只有一张卡。
@@ -365,6 +365,15 @@ fun SongsScreen(
                 item(key = "sync_card_chuni") {
                     ChuniSongsSyncProgressCard(state = chuniSyncState)
                 }
+            }
+
+            // 刷新收尾提示（舞萌 / 中二各一张，右上角可关闭）。
+            // 会话结束后进度卡立刻收走，靠这里把「已是最新 / 已更新 N 首」留给用户看。
+            items(items = refreshNotices, key = { "refresh_notice_${it.id}" }) { notice ->
+                RefreshNoticeCard(
+                    notice = notice,
+                    onDismiss = { SongRefreshSession.dismissNotice(notice.id) },
+                )
             }
 
             // 搜索栏（默认隐藏，顶栏搜索按钮切换）
@@ -594,53 +603,6 @@ private fun SongListOptionRow(
             style = MiuixTheme.textStyles.body1,
             color = MiuixTheme.colorScheme.onSurface,
         )
-    }
-}
-
-/**
- * 游戏类型分段开关：左侧「舞萌」、右侧「中二节奏」，选中项高亮。
- * 整体落在页面左右 padding 内（作为 LazyColumn 的首个 item，contentPadding 已保证 16dp 边距）。
- */
-@Composable
-private fun GameTypeToggle(
-    current: GameType,
-    onSelect: (GameType) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val options = listOf(GameType.MAIMAI to "舞萌", GameType.CHUNITHM to "中二节奏")
-    val selectedIndex = options.indexOfFirst { it.first == current }.coerceAtLeast(0)
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .background(MiuixTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-            .padding(4.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        options.forEachIndexed { index, (type, label) ->
-            val selected = index == selectedIndex
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(
-                        if (selected) MiuixTheme.colorScheme.primary else Color.Transparent
-                    )
-                    .clickable { onSelect(type) }
-                    .padding(vertical = 9.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = label,
-                    style = MiuixTheme.textStyles.body1,
-                    color = if (selected) {
-                        MiuixTheme.colorScheme.onPrimary
-                    } else {
-                        MiuixTheme.colorScheme.onSurfaceVariantSummary
-                    },
-                )
-            }
-        }
     }
 }
 
@@ -951,6 +913,60 @@ fun SongCard(
                 fontSize = MiuixTheme.textStyles.body2.fontSize,
                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
             )
+        }
+    }
+}
+
+/**
+ * 刷新收尾提示卡（舞萌 / 中二各一张，右上角 × 可关闭）。
+ *
+ * 进度卡在终态一律不渲染，而「舞萌无新版本」时刷新只是一次版本比较，几十毫秒就结束——
+ * 用户点了刷新却什么都看不到，观感就是「按钮没反应」。这张卡把结果留在列表顶部，
+ * 直到用户主动关闭；失败也走同一张卡（标题走主题色 + 具体原因在副标题）。
+ */
+@Composable
+private fun RefreshNoticeCard(
+    notice: SongRefreshSession.RefreshNotice,
+    onDismiss: () -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.padding(start = 16.dp, end = 8.dp, top = 14.dp, bottom = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = notice.title,
+                    style = MiuixTheme.textStyles.body1,
+                    color = if (notice.success) {
+                        MiuixTheme.colorScheme.onSurface
+                    } else {
+                        MiuixTheme.colorScheme.primary
+                    },
+                )
+                if (notice.detail.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = notice.detail,
+                        style = MiuixTheme.textStyles.footnote1,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    )
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onDismiss),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = MiuixGlassIcons.Regular.Close,
+                    contentDescription = "关闭提示",
+                    tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
         }
     }
 }

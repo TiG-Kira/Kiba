@@ -1,7 +1,25 @@
 package com.kira.kiba.ui.navigation
 
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
+import com.kira.kiba.core.model.GameType
+import top.yukonga.miuix.kmp.basic.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.CompositionLocalProvider
@@ -57,6 +75,14 @@ fun KibaTopBar(
     modifier: Modifier = Modifier,
     largeTitle: String = title,
     navigationIcon: @Composable () -> Unit = {},
+    /**
+     * 展开态大标题行尾插槽（曲目页的「舞萌 / 中二」开关）。
+     *
+     * 与大标题**同一行**、垂直居中；折叠时随大标题的同一个 graphicsLayer 一起淡出 / 上移，
+     * 展开时一起回来 —— 与文字折叠动画严格同频，不需要调用方再维护一套进度。
+     * 传 null（默认）时大标题行与原生 miuix 完全一致。
+     */
+    titleTrailing: (@Composable () -> Unit)? = null,
     actions: @Composable RowScope.() -> Unit = {},
 ) {
     if (useLiquidBar()) {
@@ -90,6 +116,7 @@ fun KibaTopBar(
                     backdrop = null,
                     scrollBehavior = scrollBehavior,
                     navigationIcon = navigationIcon,
+                    largeTitleTrailing = titleTrailing,
                     actions = actions,
                     bandBrush = Brush.verticalGradient(
                         listOf(Color.Transparent, Color.Transparent),
@@ -105,6 +132,7 @@ fun KibaTopBar(
             backdrop = LocalGlassTopAppBarBackdrop.current,
             scrollBehavior = scrollBehavior,
             navigationIcon = navigationIcon,
+            largeTitleTrailing = titleTrailing,
             actions = actions,
         )
     }
@@ -195,5 +223,85 @@ fun KibaFunctionAction(onClick: () -> Unit) {
             contentDescription = "功能",
             tint = MiuixTheme.colorScheme.onSurface,
         )
+    }
+}
+
+/**
+ * 顶栏「舞萌 / 中二」游戏切换开关（2.4.0）。
+ *
+ * 设计约束（用户定稿）：
+ * - 塞进顶栏大标题**同一行**，与大标题文字视觉平行（垂直居中对齐），不是标题下方的独立条；
+ * - 收窄：总宽 88dp、高 28dp，两段等宽，只留「舞萌」「中二」四字；
+ * - 折叠态隐藏由 miuix 大标题自己的 alpha 负责——本组件不监听滚动，挂在大标题行里即可同频。
+ *
+ * 选中位移用 spring（无回弹过冲），点按命中区是整段，重复点当前项不下发。
+ */
+@Composable
+fun KibaGameSwitch(
+    current: GameType,
+    onSelect: (GameType) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val options = listOf(
+        GameType.MAIMAI to "舞萌",
+        GameType.CHUNITHM to "中二",
+    )
+    val selectedIndex = options.indexOfFirst { it.first == current }.coerceAtLeast(0)
+    val segmentWidth = 44.dp
+    val barHeight = 28.dp
+    val inset = 2.dp
+    val thumbOffset by animateDpAsState(
+        targetValue = if (selectedIndex == 0) 0.dp else segmentWidth,
+        animationSpec = spring(dampingRatio = 0.82f, stiffness = 460f),
+        label = "kibaGameSwitchThumb",
+    )
+    Box(
+        modifier = modifier
+            // 宽度必须显式给：matchParentSize 的 Row 不参与尺寸计算，
+            // 只靠滑块（44dp）撑宽会变成「只有半截」的胶囊（AVD 实测踩过）。
+            .width(segmentWidth * 2)
+            .height(barHeight)
+            .clip(RoundedCornerShape(barHeight / 2))
+            .background(MiuixTheme.colorScheme.onSurface.copy(alpha = 0.07f)),
+    ) {
+        // 选中滑块：主色调低饱和底，避免在浅色顶栏上过于跳
+        Box(
+            modifier = Modifier
+                .offset(x = thumbOffset + inset, y = inset)
+                .width(segmentWidth)
+                .height(barHeight - inset * 2)
+                .clip(RoundedCornerShape((barHeight - inset * 2) / 2))
+                .background(MiuixTheme.colorScheme.primary.copy(alpha = 0.18f)),
+        )
+        Row(modifier = Modifier.matchParentSize()) {
+            options.forEachIndexed { index, (type, label) ->
+                val isSelected = index == selectedIndex
+                Box(
+                    modifier = Modifier
+                        .width(segmentWidth)
+                        .fillMaxHeight()
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                        ) {
+                            if (type != current) onSelect(type)
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = label,
+                        fontSize = 11.sp,
+                        fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal,
+                        color = if (isSelected) {
+                            MiuixTheme.colorScheme.primary
+                        } else {
+                            MiuixTheme.colorScheme.onSurfaceVariantSummary
+                        },
+                        maxLines = 1,
+                        softWrap = false,
+                    )
+                }
+            }
+        }
     }
 }

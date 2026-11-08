@@ -288,6 +288,8 @@ fun GlassTopAppBar(
     largeTitleBottomAligned: Boolean = false,
     /** 展开态大标题字重。 */
     largeTitleFontWeight: androidx.compose.ui.text.font.FontWeight = androidx.compose.ui.text.font.FontWeight.Normal,
+    /** 展开态大标题行尾插槽（与大标题同一行、垂直居中对齐），随大标题同频折叠。 */
+    largeTitleTrailing: (@Composable () -> Unit)? = null,
 ) {
     val isContentScrolled by remember(scrollBehavior) {
         derivedStateOf { scrollBehavior?.state?.let { it.contentOffset < 0f } ?: true }
@@ -327,6 +329,7 @@ fun GlassTopAppBar(
         onCollapsedHeightPx = onCollapsedHeightPx,
         largeTitleBottomAligned = largeTitleBottomAligned,
         largeTitleFontWeight = largeTitleFontWeight,
+        largeTitleTrailing = largeTitleTrailing,
     )
 }
 
@@ -396,6 +399,8 @@ fun GlassTopAppBar(
     largeTitleBottomAligned: Boolean = false,
     /** 展开态大标题字重。 */
     largeTitleFontWeight: androidx.compose.ui.text.font.FontWeight = androidx.compose.ui.text.font.FontWeight.Normal,
+    /** 展开态大标题行尾插槽（与大标题同一行、垂直居中对齐），随大标题同频折叠。 */
+    largeTitleTrailing: (@Composable () -> Unit)? = null,
 ) {
     // Buttons carry their own horizontal margin (see [GlassTopAppBarDefaults.ButtonPadding]), so
     // the trailing row needs no spacing of its own; the wrapper only pins them to the end.
@@ -560,6 +565,7 @@ fun GlassTopAppBar(
                 onCollapsedHeightPx = onCollapsedHeightPx,
                 largeTitleBottomAligned = largeTitleBottomAligned,
                 largeTitleFontWeight = largeTitleFontWeight,
+                largeTitleTrailing = largeTitleTrailing,
             )
         }
     }

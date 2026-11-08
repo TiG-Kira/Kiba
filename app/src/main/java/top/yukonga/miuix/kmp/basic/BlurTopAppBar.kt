@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
@@ -131,6 +133,14 @@ fun BlurTopAppBar(
     largeTitleBottomAligned: Boolean = false,
     /** 展开态大标题字重。 */
     largeTitleFontWeight: FontWeight = FontWeight.Normal,
+    /**
+     * 展开态大标题行尾的附加内容（如「舞萌 / 中二」分段开关）。
+     *
+     * 放在**大标题同一行**、与大标题文字垂直居中对齐：随 largeTitle 的同一个
+     * graphicsLayer 淡出 / 上移，滚动折叠时与大标题同频消失，展开时一起回来，
+     * 不需要调用方另外维护一套折叠进度。
+     */
+    largeTitleTrailing: (@Composable () -> Unit)? = null,
 ) {
     // Wrap the given actions in a Row.
     val actionsRow =
@@ -170,6 +180,7 @@ fun BlurTopAppBar(
         onCollapsedHeightPx = onCollapsedHeightPx,
         largeTitleBottomAligned = largeTitleBottomAligned,
         largeTitleFontWeight = largeTitleFontWeight,
+        largeTitleTrailing = largeTitleTrailing,
     )
 }
 @Composable
@@ -209,6 +220,8 @@ private fun TopAppBarLayout(
     largeTitleBottomAligned: Boolean = false,
     /** 展开态大标题字重。 */
     largeTitleFontWeight: FontWeight = FontWeight.Normal,
+    /** 展开态大标题行尾插槽（与大标题同一行、垂直居中对齐），见公共重载同名参数。 */
+    largeTitleTrailing: (@Composable () -> Unit)? = null,
 ) {
     // Producer lambdas — reads stay in layout/draw phases so scroll never recomposes this subtree.
     val scrolledOffset = remember(scrollBehavior) {
@@ -371,12 +384,28 @@ private fun TopAppBarLayout(
                         )
                         .onSizeChanged { updateHeightOffsetLimit(it.height) },
                 ) {
-                    Text(
-                        text = largeTitle,
-                        color = animatedLargeTitleColor,
-                        fontSize = MiuixTheme.textStyles.title1.fontSize,
-                        fontWeight = largeTitleFontWeight,
-                    )
+                    // 大标题行：标题文字 +（可选）行尾插槽。插槽与大标题同一行、垂直居中，
+                    // 共用外层 graphicsLayer 的折叠淡出 / 位移，天然与大标题同频。
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = largeTitle,
+                            color = animatedLargeTitleColor,
+                            fontSize = MiuixTheme.textStyles.title1.fontSize,
+                            fontWeight = largeTitleFontWeight,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            softWrap = false,
+                            modifier = if (largeTitleTrailing != null) {
+                                Modifier.weight(1f)
+                            } else {
+                                Modifier
+                            },
+                        )
+                        if (largeTitleTrailing != null) {
+                            Spacer(modifier = Modifier.width(TrailingGap))
+                            largeTitleTrailing()
+                        }
+                    }
                     if (subtitle.isNotEmpty()) {
                         Text(
                             text = subtitle,
@@ -582,6 +611,9 @@ private const val TITLE_WIDTH_FRACTION = 0.9
 
 // 贴底标题块（largeTitleBottomAligned）与顶栏底边之间的空白。
 private val BottomAlignedTitleGap: Dp = 16.dp
+
+// 大标题文字与行尾插槽（分段开关等）之间的间距。
+private val TrailingGap: Dp = 12.dp
 
 // 收缩态副标题的可见下限：安全区窄于此宽度直接不显示（只留一个省略号没有意义）。
 private val SmallSubtitleMinWidth: Dp = 96.dp
