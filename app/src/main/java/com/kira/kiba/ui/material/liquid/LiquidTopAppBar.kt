@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.requiredHeight
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.shape.CircleShape
@@ -35,7 +34,9 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.Backdrop
@@ -189,30 +190,43 @@ fun LiquidTopBarSkin(
     val glassSurface: androidx.compose.ui.graphics.drawscope.DrawScope.() -> Unit =
         remember(glassColor) { { drawRect(glassColor) } }
 
-    // 必须和 miuix 骨架用**同一个**顶部 inset：骨架用的是
-    // `WindowInsets.systemBars.only(Top)`（BlurTopAppBar 里 windowInsetsPadding 那一行），
-    // 而这里之前用 `statusBars`——在挖孔/高状态栏机型上 systemBars.top 会比 statusBars.top
-    // 大 10~20dp（实机 1220x2656：statusBars 42dp、systemBars 56dp），玻璃就短了一截，
-    // 底边正好切在顶栏按钮中间（用户实机截图：按钮只套了一半）。
+    // 顶部 inset 只作为「拿不到父高度时」的兜底值（详见下面的 layout 块）。
+    // 和 miuix 骨架保持一致用 `systemBars.only(Top)`：骨架（BlurTopAppBar）就是加的这个，
+    // 挖孔/高状态栏机型上它比 `statusBars` 大 10~20dp，用错了兜底值会偏。
     val statusBarTop = WindowInsets.systemBars.asPaddingValues().calculateTopPadding()
 
     Box(
         modifier = modifier
             .fillMaxWidth()
             // 皮肤只盖「状态栏 + 折叠态高度」：骨架有大标题区（展开态高很多），
-            // matchParentSize 会让半透明玻璃在中途态罩住大标题（视觉 bug），固定高度杜绝。
-            // 高度必须**含**状态栏且从屏幕顶边起画——玻璃要包住通知栏（statusBarsPadding
-            // 会让玻璃从状态栏下方才开始，顶上露出一条内容，实证踩过）。
-            // 再往上多铺 [LiquidTopBarGlassBleed] 并用同样的偏移把整块玻璃顶上去：
-            // 底边位置不变，顶边的两个圆弧落到屏幕外，可见部分只剩一条直边。
+            // 高度必须**含**状态栏且从屏幕顶边起画——玻璃要包住通知栏。
             //
-            // 高度必须用 requiredHeight 而不是 height：主屏传进来的 modifier 是
-            // `Modifier.matchParentSize()`，它给的是**固定**约束（min == max == 顶栏高度），
-            // 普通 height() 会被 clamp 回原高度 → 玻璃只上移没加长，底边缩到标题上方
-            // （实机截图：玻璃只包住状态栏，标题露在玻璃外面）。requiredHeight 忽略
-            // incoming 约束，才能真的画出比父级更高的玻璃块。
+            // 高度不再自己算，直接follow父容器的实际布局高度：
+            // 主屏传进来的 modifier 是 `Modifier.matchParentSize()`，父容器就是 miuix 骨架，
+            // 它的高度 = 顶部 inset + 折叠态内容高（展开态则是大标题区）。玻璃跟着父高走，
+            // 底边永远和骨架底边严丝合缝，不需要手算 statusBars / systemBars / padding 拼出
+            // 「52dp + 4dp」这些数字（手算版本连续两版都在不同机型上差 10~20dp：
+            // 2.4.3 只包住状态栏、2.4.4/2.4.5 底边切在按钮中间）。
+            //
+            // 再往上多铺 [LiquidTopBarGlassBleed] 并用同样的偏移把整块玻璃顶上去：
+            // 底边位置不变，顶边的两个圆角落到屏幕外，可见部分只剩一条直边。
             .offset(y = -LiquidTopBarGlassBleed)
-            .requiredHeight(collapsedHeight + statusBarTop + LiquidTopBarGlassBleed)
+            .layout { measurable, constraints ->
+                val bleedPx = LiquidTopBarGlassBleed.roundToPx()
+                val width = constraints.maxWidth
+                // 有界 → 直接用父约束高度（matchParentSize 给的是 min == max == 父高）；
+                // 无界（例如被塞进可滚动容器）才退回手算值。
+                val baseHeight = if (constraints.hasBoundedHeight) {
+                    constraints.maxHeight
+                } else {
+                    (collapsedHeight + statusBarTop).roundToPx()
+                }
+                val totalHeight = baseHeight + bleedPx
+                val placeable = measurable.measure(Constraints.fixed(width, totalHeight))
+                // 报告比父级高 bleed 的尺寸，再靠上面的 offset 把整块拉回原位：
+                // 底边 = -bleed + (父高 + bleed) = 父高，即骨架底边。
+                layout(placeable.width, totalHeight) { placeable.place(0, 0) }
+            }
             .graphicsLayer {
                 // 折叠到 1/3 时玻璃已经完全成形，避免半透明玻璃糊在标题后面
                 alpha = glassAlpha()
