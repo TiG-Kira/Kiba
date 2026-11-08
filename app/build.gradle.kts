@@ -64,8 +64,8 @@ android {
         // miuix 0.9.4 各模块（blur/ui/icons/preference）要求 minSdk >= 33
         minSdk = 33
         targetSdk = 37
-        versionCode = 90
-        versionName = "2.3.16"
+        versionCode = 91
+        versionName = "2.3.17"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
