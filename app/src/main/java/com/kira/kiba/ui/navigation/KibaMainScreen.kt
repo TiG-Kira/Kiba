@@ -51,6 +51,7 @@ import com.kira.kiba.core.state.KibaState
 import com.kira.kiba.core.model.GameType
 import com.kira.kiba.core.utils.SpUtil
 import com.kira.kiba.core.utils.WeChatJump
+import com.kira.kiba.ui.agent.AgentMemoryScreen
 import com.kira.kiba.ui.agent.AgentScreen
 import com.kira.kiba.ui.agent.LlmConfigScreen
 import com.kira.kiba.ui.listen.DownloadsScreen
@@ -244,6 +245,11 @@ sealed interface KibaSubPage {
     /** Agent 模型配置（LLM）。 */
     data object LlmConfig : KibaSubPage {
         override val title: String = "模型配置"
+    }
+
+    /** Agent 长期记忆（跨会话记住的偏好与要求，可手动编辑）。 */
+    data object AgentMemory : KibaSubPage {
+        override val title: String = "长期记忆"
     }
 
     /** 查分器登录（水鱼；账号密码 + OAuth 设备码。独立子页避免弹层与软键盘冲突）。 */
@@ -942,6 +948,7 @@ fun KibaMainScreen() {
                                   },
                               )
                               is KibaSubPage.LlmConfig -> LlmConfigScreen(scrollBehavior = scrollBehavior)
+                              is KibaSubPage.AgentMemory -> AgentMemoryScreen(scrollBehavior = scrollBehavior)
                               is KibaSubPage.Login -> LoginScreen(
                                   scrollBehavior = scrollBehavior,
                                   onLoginSuccess = { popPage() },
@@ -1043,6 +1050,7 @@ fun KibaMainScreen() {
                               KibaTab.Settings -> SettingsScreen(
                                   scrollBehavior = scrollBehavior,
                                   onOpenLlmConfig = { pushPage(KibaSubPage.LlmConfig) },
+                                  onOpenAgentMemory = { pushPage(KibaSubPage.AgentMemory) },
                                   onOpenAbout = { pushPage(KibaSubPage.About) },
                               )
                           }

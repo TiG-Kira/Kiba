@@ -285,6 +285,7 @@ class KibaAgent(private val context: Context) {
             "simai_syntax" -> simaiSyntax(
                 args["topic"] ?: args["query"] ?: args["q"] ?: fallbackText
             )
+            "memory" -> memoryAction(args, fallbackText)
             "random_filtered" -> randomFiltered(
                 args["condition"] ?: args["filter"] ?: fallbackText
             )
@@ -321,7 +322,14 @@ class KibaAgent(private val context: Context) {
     ): AgentReply {
         val messages = mutableListOf(
             KibaLlm.Message.system(
-                SpUtil.getLlmSystemPrompt() + "\n\n" + localContext() + "\n\n" + skillHint()
+                buildList {
+                    add(SpUtil.getLlmSystemPrompt())
+                    add(localContext())
+                    // 长期记忆拼在本地上下文之后、技能说明之前：
+                    // 它是「关于这个人的稳定事实」，要在模型读技能清单前就进入视野。
+                    AgentMemory.promptBlock().takeIf { it.isNotBlank() }?.let { add(it) }
+                    add(skillHint())
+                }.joinToString("\n\n")
             )
         )
         messages += AgentSession.llmHistory(maxTurns = 8)
@@ -629,6 +637,9 @@ class KibaAgent(private val context: Context) {
                 "不必等用户说「生成表情包」；挑贴合语境的模板，文字写中文短句，" +
                 "之后照常给出自然语言答复（图文并茂，别只甩一张图就结束）。" +
                 "需要用户照片的模板无法自动调用，请改选纯文字模板；不确定有哪些模板就把 template 传 list。\n" +
+                "【长期记忆】用户说「记住…」「以后都…」「别忘了…」时，调用 memory(save) 真的写进长期记忆" +
+                "（用户可在「设置 → Agent → 长期记忆」查看 / 修改 / 删除），不要只回一句「好的我记住了」；" +
+                "用户要你忘掉某件事时用 memory(forget)。\n" +
                 MemeCatalog.usageHint(context)
         )
     }
@@ -2239,9 +2250,100 @@ class KibaAgent(private val context: Context) {
         return title.substring(0, shown) + "＊".repeat(title.length - shown)
     }
 
+    // ---------- 长期记忆（LLM 专用 memory 工具） ----------
+
+    /**
+     * `memory` 工具：让模型自己维护跨会话记忆。
+     *
+     * 参数全部宽松解析（模型经常把「action」写成中文、或者干脆只给 content）：
+     * - 没给 action 但有 content → 当作 save
+     * - 没给 action 也没有 content → 当作 list
+     * - forget 允许用 id，也允许用关键词（模型更容易拿到用户原话，拿不到 8 位 id）
+     *
+     * 返回给模型的文本要**明确说出结果**（记了什么 / 删了几条 / 现在有哪些），
+     * 否则它会在下一轮再调一次，把同一句话记两遍。
+     */
+    private fun memoryAction(args: Map<String, String>, fallbackInput: String): AgentReply {
+        val content = (args["content"] ?: args["text"] ?: args["memory"] ?: args["value"]).orEmpty()
+        val action = (args["action"] ?: args["op"] ?: args["operation"]).orEmpty()
+            .trim()
+            .lowercase()
+            .ifBlank { if (content.isBlank()) "list" else "save" }
+
+        if (!AgentMemory.isEnabled()) {
+            return AgentReply(
+                "长期记忆已在「设置 → Agent → 长期记忆」里关闭，未写入。",
+                skills = emptyList(),
+            )
+        }
+
+        fun result(text: String) = AgentReply(text, skills = emptyList())
+
+        return when (action) {
+            "save", "add", "remember", "记住", "保存" -> {
+                val text = content.ifBlank {
+                    // 模型常把要记的话直接写进 args 之外的自由文本（或只给 keyword 字段）
+                    args["keyword"] ?: args["query"] ?: fallbackInput
+                }
+                val item = AgentMemory.add(text, AgentMemory.Source.AGENT)
+                if (item == null) {
+                    result("没记下来：内容为空，或者这句话已经记过了（现有 ${AgentMemory.items.value.size} 条）。")
+                } else {
+                    result(
+                        "已记住第 ${AgentMemory.items.value.size} 条：${item.text}\n" +
+                            "（用户可以在「设置 → Agent → 长期记忆」里修改或删除。）"
+                    )
+                }
+            }
+
+            "list", "read", "show", "查看", "列出" -> result(AgentMemory.describeForTool())
+
+            "update", "edit", "修改" -> {
+                val id = args["id"] ?: args["memory_id"] ?: args["target"] ?: ""
+                val ok = if (id.isNotBlank()) {
+                    AgentMemory.update(id, content)
+                } else {
+                    // 没有 id：按关键词找唯一一条再改（模型给不出 id 时的退路）
+                    val key = args["keyword"] ?: args["query"] ?: ""
+                    val hits = AgentMemory.items.value.filter { it.text.contains(key, ignoreCase = true) }
+                    if (hits.size == 1) AgentMemory.update(hits.first().id, content) else false
+                }
+                if (ok) result("已更新：${AgentMemory.normalize(content)}") else {
+                    result("没改成：找不到对应条目（先用 action=list 拿到清单和 id），或新内容是空的。")
+                }
+            }
+
+            "forget", "delete", "remove", "忘掉", "删除" -> {
+                val id = args["id"] ?: args["memory_id"] ?: args["target"] ?: ""
+                val keyword = args["keyword"] ?: args["query"] ?: content
+                val removed = when {
+                    id.isNotBlank() && AgentMemory.remove(id) -> 1
+                    keyword.isNotBlank() -> AgentMemory.forgetKeyword(keyword)
+                    else -> 0
+                }
+                if (removed > 0) {
+                    result("已忘掉 $removed 条，还剩 ${AgentMemory.items.value.size} 条。")
+                } else {
+                    result("没找到要忘掉的内容（先用 action=list 看看有哪些）。")
+                }
+            }
+
+            "clear", "清空" -> {
+                val n = AgentMemory.items.value.size
+                AgentMemory.clear()
+                result("已清空长期记忆（原 $n 条）。")
+            }
+
+            else -> result(
+                "未知的 memory 操作：$action（可用 save / list / update / forget / clear）。"
+            )
+        }
+    }
+
     // ---------- 工具函数 ----------
 
     /** 歌曲实体 → Agent 歌曲卡数据。 */
+
     private fun SongDataEntity.toAgentSong(top: ChartEntity?): AgentSong = AgentSong(
         id = id,
         title = title,
@@ -2631,6 +2733,34 @@ class KibaAgent(private val context: Context) {
          * 查到的结果回灌后由模型总结给用户——不允许 agent 对 maimai 的事完全不知道。
          */
         private val LLM_ONLY_TOOLS = listOf(
+            AgentSkill(
+                "memory", "长期记忆",
+                "跨会话记住关于用户的**稳定信息**：称呼、主玩游戏与主玩难度、常去的机厅城市、" +
+                    "口味偏好（流派 / 曲师 / 谱面风格）、明确要求（「以后都用中文」「别推荐 XX」）、" +
+                    "以及他自己说「记住…」的任何事。用户说「记住 / 别忘了 / 以后都…」时**必须调用 save**，" +
+                    "不要只在嘴上答应；问「你还记得…吗」或需要个性化时先 list 查一遍（每轮对话开头" +
+                    "也会自动注入现有记忆，重复注入的内容不必再查）。" +
+                    "不要记一次性的临时信息（这次查的是哪首歌、临时数字），也不要记密码 / API Key 等敏感内容。",
+                params = listOf(
+                    KibaLlm.ToolParam(
+                        "action", "string",
+                        "save 记住 / list 列出现有记忆 / update 修改 / forget 忘掉 / clear 清空",
+                        required = true,
+                    ),
+                    KibaLlm.ToolParam(
+                        "content", "string",
+                        "save / update 必填：一句话写清要记的事实（例：用户叫 Kira，主玩舞萌 DX，中二是副游）",
+                    ),
+                    KibaLlm.ToolParam(
+                        "id", "string",
+                        "update / forget 时指哪一条（用 list 返回的 8 位 id）",
+                    ),
+                    KibaLlm.ToolParam(
+                        "keyword", "string",
+                        "forget 时按关键词匹配删除（拿不到 id 就用它）",
+                    ),
+                ),
+            ),
             AgentSkill(
                 "moegirl_kb", "萌娘百科知识库",
                 "查舞萌 / 舞萌DX / 中二节奏的**机制与设定**：定数、Rating 公式与分代、判定档位与帧数、" +

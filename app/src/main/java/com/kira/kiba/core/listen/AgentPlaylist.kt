@@ -4,6 +4,7 @@ import android.util.Log
 import com.google.gson.Gson
 import com.google.gson.JsonParser
 import com.google.gson.annotations.SerializedName
+import com.kira.kiba.core.agent.AgentMemory
 import com.kira.kiba.core.agent.KibaLlm
 import com.kira.kiba.core.db.entity.RecordEntity
 import com.kira.kiba.core.db.entity.SongWithChartsEntity
@@ -158,6 +159,11 @@ object AgentPlaylist {
             append("3. 每首给不超过 20 字的中文推荐理由；\n")
             append("4. 严格输出 JSON：{\"summary\":\"歌单一句话\",\"reasons\":[\"理由1\",\"理由2\",...],\"picks\":[1,2,...]}，")
             append("picks 是候选序号（从 1 开始），reasons 与 picks 一一对应；不要输出 JSON 以外内容。")
+            // 长期记忆里用户自己声明的口味 / 雷点，比统计出来的流派分布更权威
+            AgentMemory.promptBlock().takeIf { it.isNotBlank() }?.let {
+                append("\n若上面的长期记忆提到这个人的口味偏好或明确排斥，选曲时优先贴合它。\n")
+                append(it)
+            }
         }
         val user = buildString {
             append("玩家画像：")

@@ -312,6 +312,44 @@ object SpUtil {
         userInfoPrefs.edit { remove(KEY_AGENT_MESSAGES) }
     }
 
+    // ================= AGENT 长期记忆 =================
+
+    private const val KEY_AGENT_MEMORY = "agent_memory"
+    private const val KEY_AGENT_MEMORY_ENABLED = "agent_memory_enabled"
+
+    /** 长期记忆条目（JSON 数组：`List<com.kira.kiba.core.agent.AgentMemory.Item>`）。 */
+    fun getAgentMemoryJson(): String =
+        userInfoPrefs.getString(KEY_AGENT_MEMORY, "") ?: ""
+
+    fun setAgentMemoryJson(json: String) {
+        userInfoPrefs.edit { putString(KEY_AGENT_MEMORY, json) }
+    }
+
+    /**
+     * 是否把长期记忆注入对话。默认开启：关掉只是「不注入」，条目照旧保留在本地，
+     * 重新打开就能继续用（不是销毁开关）。
+     */
+    fun isAgentMemoryEnabled(): Boolean =
+        userInfoPrefs.getBoolean(KEY_AGENT_MEMORY_ENABLED, true)
+
+    fun setAgentMemoryEnabled(enabled: Boolean) {
+        userInfoPrefs.edit { putBoolean(KEY_AGENT_MEMORY_ENABLED, enabled) }
+    }
+
+    /**
+     * 长期记忆条目数（只做 JSON 计数）。
+     * 设置页摘要用：不去碰 [com.kira.kiba.core.agent.AgentMemory] 的 StateFlow，
+     * 避免为了显示一个数字把记忆状态提前加载。
+     */
+    fun getAgentMemoryCount(): Int {
+        val json = getAgentMemoryJson()
+        if (json.isBlank()) return 0
+        return runCatching {
+            val type = object : TypeToken<List<Map<String, Any?>>>() {}.type
+            Gson().fromJson<List<Map<String, Any?>>>(json, type)?.size ?: 0
+        }.getOrDefault(0)
+    }
+
     // ================= VERSION INFO =================
 
     fun getDataVersion(): String = versionPrefs.getString(KEY_VERSION, "0") ?: "0"

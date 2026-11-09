@@ -89,6 +89,7 @@ private fun tierLabel(score: Int): String = when {
 fun SettingsScreen(
     scrollBehavior: ScrollBehavior,
     onOpenLlmConfig: () -> Unit,
+    onOpenAgentMemory: () -> Unit,
     onOpenAbout: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -269,6 +270,22 @@ fun SettingsScreen(
                         },
                         startAction = { PrefIcon(MiuixGlassIcons.Regular.AiScan) },
                         onClick = onOpenLlmConfig,
+                    )
+                    // 摘要不能只 remember 一次：进编辑页改完回来，条数要跟着刷新。
+                    // key 用条目数没有响应性，干脆每次重组都读 SpUtil（很便宜）。
+                    ArrowPreference(
+                        title = "长期记忆",
+                        summary = run {
+                            val n = SpUtil.getAgentMemoryCount()
+                            when {
+                                !SpUtil.isAgentMemoryEnabled() ->
+                                    if (n > 0) "已关闭 · 保留 $n 条（点击编辑）" else "已关闭（点击开启或编辑）"
+                                n > 0 -> "已记住 $n 条 · 说「记住…」时 Agent 会自动保存（点击编辑）"
+                                else -> "跨会话记住你的偏好与要求 · 点击添加"
+                            }
+                        },
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Notes) },
+                        onClick = onOpenAgentMemory,
                     )
                     // 「听」页 Agent 专属歌单的自动刷新间隔（进听页时检查过期）
                     val intervalOptions = listOf(6, 12, 24, 48, 72)
