@@ -649,7 +649,9 @@ object SpUtil {
             "  {\"name\":\"best50\",\"arguments\":{}}\n" +
             "【必须给结论】调用工具拿到数据后，必须用中文给出最终的、针对用户实际情况的回答。" +
             "绝对不要只输出「我打算调用 best50 和 push_rating」这类计划性描述就结束——" +
-            "那样用户拿不到任何有用的信息。"
+            "那样用户拿不到任何有用的信息。\n" +
+            "【玩梗表达】想表达情绪（哭笑不得 / 无语 / 玩梗 / 吐槽）时可以主动调用 meme 生成表情包，" +
+            "图片会自动展示；照常把话说完，不要只描述「我生成了一张图」。"
 
     fun isLlmEnabled(): Boolean = userInfoPrefs.getBoolean(KEY_LLM_ENABLED, false)
 

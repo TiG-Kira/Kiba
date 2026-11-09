@@ -66,6 +66,7 @@ import androidx.compose.ui.unit.dp
 import com.kira.kiba.core.agent.AgentSession
 import com.kira.kiba.core.agent.KibaAgent
 import com.kira.kiba.core.agent.LlmParse
+import com.kira.kiba.core.meme.MemeTemplate
 import com.kira.kiba.core.utils.SpUtil
 import com.kira.kiba.ui.common.ChartTypeChip
 import com.kira.kiba.ui.common.CoverFrame
@@ -81,6 +82,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.Button
+import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.DropdownEntry
@@ -129,6 +131,8 @@ fun AgentScreen(
     var thinking by remember { mutableStateOf(false) }
     // 带参技能：从「功能」菜单点选后先弹输入层（离线可用，不依赖 LLM）
     var paramSkill by remember { mutableStateOf<KibaAgent.AgentSkill?>(null) }
+    // 表情包生成器走专用模板选择弹层（要选模板 / 填多句文字 / 选图片）
+    var showMemePicker by remember { mutableStateOf(false) }
     // 「功能」弹层开关由顶栏所在的外层持有（见 showFunctionPopup 参数）
 
     // 会话持久化：首次进入恢复历史
@@ -137,6 +141,8 @@ fun AgentScreen(
     // 猜歌对局进行中：底部输入框切换成答题卡（歌名/别名/ID），提交走本地判定
     val guessPending by KibaAgent.pendingGuess.collectAsState()
     val guessing = guessPending != null
+    // 动图合成进度（静态模板不经过这条路径，平时恒为 null）
+    val memeBusy by KibaAgent.memeProgress.collectAsState()
 
     // 顶栏遮挡量：只用在「消息列表 contentPadding 顶部」与「功能菜单锚点」两处，
     // 绝不写成容器固定 padding —— 那会变成一条滚不走的不透明死带。
@@ -162,7 +168,7 @@ fun AgentScreen(
                     text = "点顶栏右侧的「功能」图标按钮即可直接使用（不消耗 LLM）：\n" +
                         "· 舞萌功能 —— Best 50 / 推分 / 随机选曲 / 查歌 / 运势 / 分数线 / 猜歌\n" +
                         "· 中二节奏功能 —— 中二查歌 / 定数 / 随机 / Rating / 推分\n" +
-                        "· 娱乐功能 —— 随机数 / 骰子 / 今日性癖 / 今天吃什么 / 低情商高情商 / gocho 梗图\n" +
+                        "· 娱乐功能 —— 随机数 / 骰子 / 今日性癖 / 今天吃什么 / 表情包生成器（含低情商高情商、gocho 等模板）\n" +
                         "· 清除对话 —— 清空聊天记录\n" +
                         "带参数的技能点开后会先弹出输入框填条件。\n" +
                         "配置 LLM 后还可以直接提问，我会自动调用对应技能；\n" +
@@ -333,12 +339,42 @@ fun AgentScreen(
         }
     }
 
+    /** 表情包生成器专用入口：可带用户在相册里选的图片，其余与 [runSkill] 同路径。 */
+    fun runMeme(key: String, texts: List<String>, images: List<Uri>) {
+        if (thinking) return
+        thinking = true
+        scope.launch {
+            val reply = runCatching { agent.runMeme(key, texts, images) }.getOrElse {
+                KibaAgent.AgentReply("出错了：${it.message ?: "未知错误"}")
+            }
+            thinking = false
+            AgentSession.add(
+                AgentSession.Turn(
+                    fromUser = false,
+                    text = reply.text,
+                    songs = reply.songs,
+                    skills = emptyList(),
+                    b50 = reply.b50,
+                    imageUri = reply.imageUri,
+                )
+            )
+            val last = AgentSession.turns.value.lastIndex
+            if (last >= 0) listState.animateScrollToItem(last)
+            maybeCollapseTopBarAfterFrame()
+        }
+    }
+
     /**
      * 从「功能」菜单点选技能：无参直跑、带参先弹输入层。
      * 与旧技能卡的点击路径完全同一条，保证迁移不改行为。
      */
     fun openSkill(skill: KibaAgent.AgentSkill) {
         onDismissFunctionPopup()
+        // 表情包生成器有专用弹层：模板浏览 / 多句文字 / 选图，不是单行参数输入
+        if (skill.id == "meme") {
+            showMemePicker = true
+            return
+        }
         if (skill.params.isEmpty()) runSkill(skill) else paramSkill = skill
     }
 
@@ -367,7 +403,7 @@ fun AgentScreen(
     val functionEntries: List<DropdownEntry> = buildList {
         val funIds = setOf(
             "random_number", "roll_dice", "today_kink",
-            "eat_what", "low_high_eq", "gocho",
+            "eat_what", "meme",
         )
         val chuniSkills = KibaAgent.SKILLS.filter { it.id.startsWith("chuni_") }
         val funSkills = KibaAgent.SKILLS.filter { it.id in funIds }
@@ -676,6 +712,42 @@ fun AgentScreen(
             onConfirm = { value ->
                 paramSkill = null
                 runSkill(skill, value)
+            },
+        )
+    }
+
+    // 动图合成中：不可取消的等待层，避免用户以为点空了
+    memeBusy?.let { busy ->
+        KibaGlassDialog(
+            show = true,
+            title = "正在合成「${busy.title}」",
+            summary = busy.detail,
+            onDismissRequest = null,
+            content = {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    CircularProgressIndicator()
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        text = "动图要逐帧合成再编码，通常几秒内完成，请稍候。",
+                        style = MiuixTheme.textStyles.body2,
+                        color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            },
+        )
+    }
+
+    // 表情包生成器：手动挑模板 / 填文字 / 选图片
+    if (showMemePicker) {
+        MemePickerDialog(
+            onDismiss = { showMemePicker = false },
+            onConfirm = { template: MemeTemplate, texts: List<String>, images: List<Uri> ->
+                showMemePicker = false
+                runMeme(template.key, texts, images)
             },
         )
     }
@@ -1113,6 +1185,10 @@ private fun Best50AgentCard(info: KibaAgent.Best50Info) {
 // 所以「复制」只能放 URI 进剪贴板 —— 部分应用支持粘贴图片，部分只认文字，
 // 这一点在提示里直说，别让用户以为坏了。
 
+/** 气泡里动图的显示上限；按原始比例缩放，小图不会被拉满宽糊成色块。 */
+private val MEME_GIF_MAX_WIDTH = 240.dp
+private val MEME_GIF_MAX_HEIGHT = 320.dp
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun AgentImage(uri: String) {
@@ -1132,18 +1208,40 @@ private fun AgentImage(uri: String) {
         }.getOrNull()
     }
 
-    coil.compose.AsyncImage(
-        model = uri,
-        contentDescription = "生成的图片",
-        contentScale = ContentScale.FillWidth,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .combinedClickable(
-                onClick = { preview = true },
-                onLongClick = { actions = true },
-            ),
-    )
+    val clickable = Modifier
+        .clip(RoundedCornerShape(12.dp))
+        .combinedClickable(
+            onClick = { preview = true },
+            onLongClick = { actions = true },
+        )
+    val imageModifier = Modifier.fillMaxWidth().then(clickable)
+    if (isGifUri(uri)) {
+        // 动图按原始比例定尺寸，并夹在气泡的显示上限内：
+        // 上游不少梗图只有 70×95 / 112×112，直接 fillMaxWidth 会被放大 4~6 倍糊成色块。
+        val intrinsic = rememberImageSize(uri)
+        val density = LocalDensity.current
+        val gifModifier = if (intrinsic == null) {
+            imageModifier
+        } else {
+            val w = with(density) { intrinsic.width.toDp() }
+            val h = with(density) { intrinsic.height.toDp() }
+            val k = minOf(MEME_GIF_MAX_WIDTH / w, MEME_GIF_MAX_HEIGHT / h)
+            Modifier.size(w * k, h * k).then(clickable)
+        }
+        Box(
+            modifier = Modifier.fillMaxWidth(),
+            contentAlignment = Alignment.Center,
+        ) {
+            GifImage(uri = uri, modifier = gifModifier, contentScale = ContentScale.Fit)
+        }
+    } else {
+        coil.compose.AsyncImage(
+            model = uri,
+            contentDescription = "生成的图片",
+            contentScale = ContentScale.FillWidth,
+            modifier = imageModifier,
+        )
+    }
 
     if (preview) {
         Dialog(
@@ -1160,12 +1258,20 @@ private fun AgentImage(uri: String) {
                     ),
                 contentAlignment = Alignment.Center,
             ) {
-                coil.compose.AsyncImage(
-                    model = uri,
-                    contentDescription = null,
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier.fillMaxSize(),
-                )
+                if (isGifUri(uri)) {
+                    GifImage(
+                        uri = uri,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    coil.compose.AsyncImage(
+                        model = uri,
+                        contentDescription = null,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
                 Text(
                     text = "点击任意处关闭 · 长按图片可保存 / 复制 / 分享",
                     style = MiuixTheme.textStyles.footnote2,

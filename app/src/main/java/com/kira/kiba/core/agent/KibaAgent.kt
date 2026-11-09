@@ -8,7 +8,6 @@ import com.kira.kiba.core.account.DivingFishAccount
 import com.kira.kiba.core.utils.CacheCleaner
 import com.kira.kiba.core.utils.CacheDirs
 import com.kira.kiba.core.utils.Constants
-import com.kira.kiba.core.best50.MemeImageBuilder
 import com.kira.kiba.core.data.ChuniRating
 import com.kira.kiba.core.data.ChuniStats
 import com.kira.kiba.core.db.AppDataBase
@@ -17,6 +16,10 @@ import com.kira.kiba.core.db.entity.ChuniChartEntity
 import com.kira.kiba.core.db.entity.ChuniSongEntity
 import com.kira.kiba.core.db.entity.RecordEntity
 import com.kira.kiba.core.db.entity.SongDataEntity
+import com.kira.kiba.core.meme.MemeAnimRenderer
+import com.kira.kiba.core.meme.MemeCatalog
+import com.kira.kiba.core.meme.MemeRenderer
+import com.kira.kiba.core.meme.MemeTemplate
 import com.kira.kiba.core.model.ChuniDiffType
 import com.kira.kiba.core.model.DifficultyType
 import com.kira.kiba.core.stats.ChuniPushRecommender
@@ -30,6 +33,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONArray
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 import kotlin.math.floor
@@ -198,19 +202,10 @@ class KibaAgent(private val context: Context) {
         }
         "today_kink" -> todayKink()
         "eat_what" -> eatWhat()
-        "low_high_eq" -> {
-            // 文本写法：低情商X高情商Y
-            val m = Regex("低情商(.+)高情商(.+)").find(arg)
-            if (m != null) {
-                lowHighEq(m.groupValues[1].trim(), m.groupValues[2].trim())
-            } else {
-                val parts = arg.split("|", "，", ",", " ").filter { it.isNotBlank() }
-                if (parts.size >= 2) lowHighEq(parts[0], parts[1]) else lowHighEq("打舞萌", "打麻将")
-            }
-        }
-        "gocho" -> {
-            val parts = arg.split("|", "，", ",", " ").filter { it.isNotBlank() }
-            if (parts.size >= 2) gocho(parts[0], parts[1]) else gocho("", "")
+        "meme" -> {
+            // 功能菜单走专用模板选择弹层；这里兼容「key|文字1|文字2」的直输写法
+            val parts = arg.split("|").map { it.trim() }
+            runMeme(parts.firstOrNull().orEmpty(), parts.drop(1).filter { it.isNotEmpty() })
         }
         else -> AgentReply("未知技能：$id", skills = SKILLS)
     }
@@ -267,14 +262,15 @@ class KibaAgent(private val context: Context) {
                 val sides = args["sides"]?.toDoubleOrNull()?.toInt() ?: 6
                 rollDice(count, sides)
             }
-            "low_high_eq" -> lowHighEq(
-                args["low"] ?: args["left"] ?: args["a"] ?: "",
-                args["high"] ?: args["right"] ?: args["b"] ?: "",
-            )
-            "gocho" -> gocho(
-                args["red"] ?: args["a"] ?: args["left"] ?: "",
-                args["silver"] ?: args["b"] ?: args["right"] ?: "",
-            )
+            "meme" -> {
+                val key = args["template"] ?: args["key"] ?: args["name"] ?: fallbackInput
+                val raw = args["texts"] ?: args["text"] ?: ""
+                val extras = args.entries
+                    .filter { it.key.matches(Regex("text\\d+")) }
+                    .sortedBy { it.key }
+                    .map { it.value }
+                runMeme(key, (parseMemeTexts(raw) + extras).distinct())
+            }
             "today_kink" -> todayKink()
             "eat_what" -> eatWhat()
             "web_search" -> webSearch(
@@ -627,7 +623,13 @@ class KibaAgent(private val context: Context) {
                 "谱面 → 看不懂记号就调 simai_syntax → 基于真实谱面文本回答。" +
                 "没拿到谱面文本时不许凭印象描述配置，也不许编造确定的物量数字。\n" +
                 "【浏览器】web_search 已用后台浏览器读渲染后正文；若页面还要点按钮 / 展开 / 翻页 / " +
-                "读某个元素 / 执行 JS，改用 browser（先 open，再对同一页面 text / click / fill / eval）。"
+                "读某个元素 / 执行 JS，改用 browser（先 open，再对同一页面 text / click / fill / eval）。\n" +
+                "【表情包 / 主动表达】meme 生成的表情包会直接贴在对话里，不需要在正文里描述图片。" +
+                "当你想玩梗、吐槽、表达哭笑不得 / 无语 / 震惊 / 得意等情绪时，**可以主动调用 meme**，" +
+                "不必等用户说「生成表情包」；挑贴合语境的模板，文字写中文短句，" +
+                "之后照常给出自然语言答复（图文并茂，别只甩一张图就结束）。" +
+                "需要用户照片的模板无法自动调用，请改选纯文字模板；不确定有哪些模板就把 template 传 list。\n" +
+                MemeCatalog.usageHint(context)
         )
     }
 
@@ -1271,26 +1273,96 @@ class KibaAgent(private val context: Context) {
     }
 
     /**
-     * 低情商 / 高情商梗图（源自 KibaBot「低情商X高情商Y」）：
-     * 生成图片并存入相册，同时在对话里展示。
+     * 表情包生成器：功能菜单（可带用户选的图片）与 LLM tool 共用。
+     *
+     * 模板来自 MemeCrafters/meme-generator，见 [MemeCatalog]。
+     * `template` 传 `list` / `?` 时返回可生成模板清单，方便模型和自行探索。
+     * 旧的「低情商高情商」「gocho」已经并进这里（high_EQ / 5000choyen），
+     * 上游版本的渐变描边与排版比早期手搓实现更贴近原图。
      */
-    private fun lowHighEq(left: String, right: String): AgentReply {
-        if (left.length > 15 || right.length > 15) {
-            return AgentReply("为了图片质量，每边请不要多于 15 个字符嗷。")
+    suspend fun runMeme(
+        templateKey: String,
+        texts: List<String> = emptyList(),
+        imageUris: List<Uri> = emptyList(),
+    ): AgentReply = withContext(Dispatchers.IO) {
+        val key = templateKey.trim()
+        if (key.isBlank() || key.equals("list", ignoreCase = true) || key == "?" || key == "帮助") {
+            return@withContext AgentReply(MemeCatalog.listText(MemeCatalog.renderable(context)))
         }
-        val bmp = MemeImageBuilder.buildLowHighEq(context, left, right)
-            ?: return AgentReply("梗图模板缺失，生成失败。")
-        return saveMeme(bmp, "高低情商")
+        val template = MemeCatalog.find(context, key)
+            ?: MemeCatalog.search(context, key, onlyRenderable = false).firstOrNull()
+            ?: return@withContext AgentReply(
+                "没找到「$key」这个模板。把 template 传 list 可以查看全部可生成模板。"
+            )
+        if (!template.renderable) {
+            return@withContext AgentReply(
+                "「${template.name}」${template.unavailableReason}；" +
+                    "换个可生成的模板吧（template 传 list 看清单）。"
+            )
+        }
+        if (template.requiredImages > imageUris.size) {
+            return@withContext AgentReply(
+                "「${template.name}」需要 ${template.requiredImages} 张图片，请到" +
+                    "「功能 → 娱乐功能 → 表情包生成器」里手动选图生成；" +
+                    "想直接出图可以换纯文字模板，如 high_EQ / 5000choyen / good_news。"
+            )
+        }
+        val filled = texts.ifEmpty { template.defaultTexts }
+        val script = template.anim
+        if (script != null) {
+            // 动图要逐帧合成 + GIF 编码，几百毫秒到几秒，交给进度弹窗交代清楚
+            _memeProgress.value = MemeProgress(template.name, "共 ${script.frames.size} 帧，正在合成…")
+            val bitmaps = ArrayList<android.graphics.Bitmap>()
+            try {
+                imageUris.take(template.requiredImages).forEach { uri ->
+                    runCatching {
+                        context.contentResolver.openInputStream(uri)?.use {
+                            android.graphics.BitmapFactory.decodeStream(it)
+                        }
+                    }.getOrNull()?.let { bitmaps.add(it) }
+                }
+                val result = MemeAnimRenderer.render(context, template, filled, bitmaps)
+                    ?: return@withContext AgentReply(
+                        "「${template.name}」动图合成失败：帧资源或图片读取出错。"
+                    )
+                return@withContext saveMemeGif(result.gif, template.name)
+            } finally {
+                _memeProgress.value = null
+                bitmaps.forEach { if (!it.isRecycled) it.recycle() }
+            }
+        }
+        val bmp = MemeRenderer.render(context, template, filled, imageUris)
+            ?: return@withContext AgentReply("「${template.name}」生成失败：模板资源或图片读取出错。")
+        saveMeme(bmp, template.name)
     }
 
-    /** gocho 梗图（源自 KibaBot「gocho A B」）。 */
-    private fun gocho(red: String, silver: String): AgentReply {
-        if (red.isBlank() || silver.isBlank()) {
-            return AgentReply("gocho 需要两个参数，例：gocho 打舞萌 打麻将")
+    /** 模型给的文字可能是 JSON 数组、竖线分隔或单句。 */
+    private fun parseMemeTexts(raw: String): List<String> {
+        val t = raw.trim()
+        if (t.isEmpty()) return emptyList()
+        if (t.startsWith("[")) {
+            val arr = runCatching { JSONArray(t) }.getOrNull()
+            if (arr != null) {
+                return (0 until arr.length()).mapNotNull { i ->
+                    arr.optString(i, "").trim().takeIf { it.isNotEmpty() }
+                }
+            }
         }
-        val bmp = MemeImageBuilder.buildGocho(context, red, silver)
-            ?: return AgentReply("gocho 生成失败。")
-        return saveMeme(bmp, "gocho")
+        return t.split("|", "\n").map { it.trim() }.filter { it.isNotEmpty() }.ifEmpty { listOf(t) }
+    }
+
+    /** 动图暂存为 .gif（对话里用 AnimatedImageDrawable 播放）并回传 content URI。 */
+    private fun saveMemeGif(bytes: ByteArray, tag: String): AgentReply {
+        CacheCleaner.markGenerationActive()
+        val dir = CacheDirs.generated(context)
+        val name = "kiba_${tag}_${System.currentTimeMillis()}.gif"
+        val file = java.io.File(dir, name)
+        file.writeBytes(bytes)
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        return AgentReply(
+            "已生成「$tag」动图（${bytes.size / 1024} KB，点开可看；长期不用会被自动清理）。",
+            imageUri = uri.toString(),
+        )
     }
 
     /** 梗图暂存到缓存（cacheDir/generated）并回传 content URI 供对话内展示。 */
@@ -2329,6 +2401,17 @@ class KibaAgent(private val context: Context) {
         /** 当前进行中的猜歌对局（UI 据此把输入框切成答题卡，无需 LLM）。 */
         val pendingGuess: StateFlow<GuessSession?> = _pendingGuess.asStateFlow()
 
+        /**
+         * 表情包动图合成进度（null = 空闲）。
+         *
+         * 动图要解码多帧 + 逐层合成 + GIF 编码，耗时从几百毫秒到几秒。UI 监听它
+         * 弹一个不可取消的等待层；静态模板不走这条路径，所以平时永远是 null。
+         */
+        data class MemeProgress(val title: String, val detail: String)
+
+        private val _memeProgress = MutableStateFlow<MemeProgress?>(null)
+        val memeProgress: StateFlow<MemeProgress?> = _memeProgress.asStateFlow()
+
         /** 猜歌放弃关键词：命中即公布答案、结束对局（答题栏也有放弃按钮）。 */
         private val GIVE_UP_WORDS = setOf("放弃", "不猜了", "投降", "公布答案", "不知道")
 
@@ -2521,22 +2604,24 @@ class KibaAgent(private val context: Context) {
                 "随机决定今天吃什么（有一定概率随到舞萌恶趣味选项：吃绝赞 / 吃星星 / 吃黄金迪拉熊）",
             ),
             AgentSkill(
-                "low_high_eq", "低情商高情商",
-                "生成一张「低情商 / 高情商」对比梗图并存入相册",
+                "meme", "表情包生成器",
+                // 卡片文案只讲「是什么」；「什么时候该主动调用」是给模型看的规则，
+                // 写在 skillHint() 的【表情包 / 主动表达】段里，不必占用用户视线。
+                "用 meme-generator 的模板生成表情包（静图 / 动图），直接贴在对话里",
                 params = listOf(
-                    KibaLlm.ToolParam("low", "string", "低情商那半句（≤15 字），例：打舞萌", required = true),
-                    KibaLlm.ToolParam("high", "string", "高情商那半句（≤15 字），例：进行音游韵律训练", required = true),
+                    KibaLlm.ToolParam(
+                        "template", "string",
+                        "模板 key 或中文名/别名，例：high_EQ（低情商高情商）、5000choyen（gocho）、" +
+                            "good_news（喜报）、luxun_say（鲁迅说过）；传 list 可拿到全部可生成模板清单",
+                        required = true,
+                    ),
+                    KibaLlm.ToolParam(
+                        "texts", "string",
+                        "要填进模板的文字，多句用 | 分隔或给 JSON 数组；例：打舞萌|打麻将。" +
+                            "省略时用模板自带示例文字",
+                    ),
                 ),
-                paramHint = "输入两句，用空格分开，例如：打舞萌 进行音游韵律训练",
-            ),
-            AgentSkill(
-                "gocho", "gocho 梗图",
-                "生成 gocho 风格的红 / 银双行梗图并存入相册",
-                params = listOf(
-                    KibaLlm.ToolParam("red", "string", "红字那行，例：打舞萌", required = true),
-                    KibaLlm.ToolParam("silver", "string", "银字那行，例：打麻将", required = true),
-                ),
-                paramHint = "输入两行，用空格分开，例如：打舞萌 打麻将",
+                paramHint = "模板与文字，用 | 分隔，例如：high_EQ|打舞萌|进行音游韵律训练",
             ),
         )
 
