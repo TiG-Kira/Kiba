@@ -1,17 +1,18 @@
 package com.kira.kiba.ui.me
 
 import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.Typeface
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -20,28 +21,26 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.CompositingStrategy
-import androidx.compose.ui.graphics.FilterQuality
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.SubcomposeAsyncImage
@@ -49,39 +48,45 @@ import com.kira.kiba.core.best50.Best50ImageBuilder
 import com.kira.kiba.core.db.entity.RecordEntity
 import com.kira.kiba.ui.common.coverCandidateUrls
 import java.util.concurrent.ConcurrentHashMap
-import kotlin.math.roundToInt
 
 /**
- * Best 50 单曲贴图（Compose 版，UI 专用拉长布局，一行一首）。
+ * Best 50 单曲卡片（宽卡版 / Kiba Dark Glass）。
  *
- * 与 [Best50ImageBuilder]（B50 图片生成器，导出图片用）同源素材但**独立副本**：
- * res/drawable 里 `kiba_mb_ui` / `kiba_ui_pfc_ms_info02_*_ui` 是导出素材的
- * 1:1 复制品，仅 UI 页使用；对它们做**九宫格水平拉伸**（中缝 132..149 设计 px
- * 为纯空白竖带，相邻列全相似，拉伸无接缝），左段（彩条 + ID / 歌名 / 达成率 +
- * 底部定数 / DX% / ra）与右段（评级 / 模式图标 / 连击同步凹槽 / 序号）1:1 原样，
- * 凹槽、凹槽阴影、圆角一律不变形；四角用 kiba_alpha 蒙版抹边（与导出 applyAlphaMask
- * 同口径），不露底板下背景。
+ * 旧实现把 246×132 的导出图贴图（`kiba_mb_ui` + 难度框）做九宫格水平拉伸，
+ * 左段 132dp、右段 98dp、中间一大片空白只塞两个小 tag —— 元素全是小卡时代的
+ * 原生素材，拉宽后比例失调、信息密度极低。
  *
- * 布局：一行一首占满整行宽，高度固定 133 设计 px（u = 1dp/设计px，文字按密度
- * 实时渲染放大不糊）；拉伸多出的空白在上方显示分类（DX/SD）与版本两个 tag。
+ * 新版是**为整行宽卡重新设计**的三段式布局，不依赖九宫格：
+ * - 难度色竖条（20dp）：官方完整难度名整词旋转 90° 竖排，颜色与导出图素材一一对应；
+ * - 主信息区（weight 弹性）：序号徽章 / 曲号 / 流派·版本 pill / 歌名 / 达成率
+ *   / 定数 / DX 分；屏幕越宽歌名可显示的列数越多；
+ * - 右侧信息区（150dp 固定）：SD·DX 徽章、DX 星标、评级贴图、FC/FS 状态、
+ *   ra 与榜单序号，全部右对齐成一块稳定的「成绩面板」。
  *
- * 坐标口径（与上游 PIL 绘制一致，y 为 ascender 顶；`R` = 右段元素的水平偏移量）：
- * 模式图标 (170+R, 6/16)、星标 (170+R, 4)、曲号 (48, 6) 13px、歌名 (32, 27) 16px、
- * 达成率 (30, 42) 26px、评级 (156+R, 40)、连击 (171.2+R, 81)、同步 (200.2+R, 81)、
- * DX 分 (82, 76) 11px、定数 (36, 102) 18px、DX% (90, 105) 13px、ra (135, 99) 21px、
- * 序号 (177/181+R, 105) 13px。
+ * 上下两段固定高度（TOP_H + BAND_H = TILE_H）：早期版本用整卡 SpaceBetween
+ * 排四行，达成率行的顶部会越过 74dp 的信息带上沿、压到封面区（真机截图反证）。
+ * 现在「达成率 / LV / DX 分 / ra」全部锁在下半成绩带内，与字体度量无关。
+ *
+ * 视觉语言与导出图同源（深色玻璃 + 冷白文字 + 青色 ra 强调），但排版按宽卡重排；
+ * 游戏内正式徽章（SSS+ 评级 / FC / FS）沿用 MaimaiData 高清素材，其余老贴图
+ * （SD·DX 图标、星标、灰色占位圆）改为 Compose 原生绘制。
  */
-/** UI 卡固定缩放：1 设计 px = 1 dp。 */
-private val TILE_U: Dp = 1.dp
+private val TILE_H = 132.dp
+private val TOP_H = 66.dp
+private val BAND_H = 66.dp
+private val STRIP_W = 20.dp
+private val SIDE_W = 150.dp
 
-/** 底板素材设计尺寸（247×133，含 1px 边）。 */
-private const val TILE_SRC_W = 247f
-private const val TILE_SRC_H = 133f
-
-/** 九宫格中缝（设计 px）：实测全高唯一干净竖缝 x129..152（水印止于 x127，圆洞起于 x152），
- *  上部 y0..72 为透明区、下部白区纯白；水印/绿标签/圆洞全部留在左右段不变形。 */
-private const val SLICE_START = 132f
-private const val SLICE_END = 149f
+private val BG = Color(0xFF0B1020)
+private val BAND = Color(0xFF0A0F1C)
+private val INK = Color(0xFFF0F6FF)
+private val INK_SOFT = Color(0xFFF5FCFF)
+private val DIM = Color(0xFFBECCE0)
+private val FAINT = Color(0xFF8092B0)
+private val CYAN = Color(0xFF4DE2E6)
+private val MAGENTA = Color(0xFFFF5FA2)
+private val VIOLET = Color(0xFFA98BFF)
+private val AMBER = Color(0xFFFFBE78)
 
 @Composable
 fun Best50Tile(
@@ -94,307 +99,386 @@ fun Best50Tile(
     modifier: Modifier = Modifier,
 ) {
     val fonts = rememberTileFonts()
-    // 外层只做尺寸测量；抹角放在内层（kiba_alpha 蒙版，见 AlphaMaskLayer）
-    BoxWithConstraints(
-        modifier = modifier
-            .fillMaxWidth()
-            .height((TILE_SRC_H * TILE_U.value).dp),
-    ) {
-        // 设计稿坐标系：u = 1dp；右段元素水平偏移 = 卡片实际宽 - 素材设计宽
-        val u = TILE_U
-        val extraDp = (maxWidth - (TILE_SRC_W * u.value).dp).coerceAtLeast(0.dp)
+    val diffColor = tileDifficultyColor(record.levelIndex)
+    val diffName = tileDifficultyName(record.levelIndex)
+    val dxStar = dxStarLevel(record.dxScore, fullScore)
+    val ra = Best50ImageBuilder.computeRa(record.ds, record.achievements, true)
+    val percent = if (fullScore > 0) record.dxScore * 100 / fullScore else 0
+
+    BoxWithConstraints(modifier = modifier.fillMaxWidth().height(TILE_H)) {
+        // 主信息区随屏幕变宽 → 歌名可显示更多字符（半角约 8dp / 列）
+        val titleCols = ((maxWidth.value - STRIP_W.value - 20f - SIDE_W.value) / 8f)
+            .toInt().coerceIn(10, 44)
 
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                // 离屏合成：先把全部内容画进独立图层，再用 kiba_alpha 蒙版抹角
-                // （与位图管线 applyAlphaMask 同口径，圆角形状与素材完全一致，不露底）
-                .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-                .background(Color(0xFF101010)),
+                .clip(RoundedCornerShape(14.dp))
+                .background(BG),
         ) {
-            TileContent(record, fullScore, rankNum, listSize, version, genre, fonts, u, extraDp)
-            AlphaMaskLayer(Modifier.fillMaxSize())
+            // ── 背景：封面 + 压暗 + 底部信息带 ──
+            val candidates = remember(record.songId) { coverCandidateUrls(record.songId, "") }
+            TileCoverImage(candidates, Modifier.fillMaxSize())
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.44f)))
+            // 下半成绩带：加高到 66dp，所有成绩文字都在带内
+            Box(
+                Modifier.align(Alignment.BottomStart)
+                    .fillMaxWidth()
+                    .height(BAND_H)
+                    .background(BAND.copy(alpha = 0.96f)),
+            )
+            Box(Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.16f)))
+            // 信息带上沿分隔线（顶边 y = TOP_H = 66dp）
+            Box(
+                Modifier.fillMaxWidth().height(1.dp)
+                    .align(Alignment.TopStart)
+                    .offset(y = TOP_H)
+                    .background(Color.White.copy(alpha = 0.10f)),
+            )
+            Box(
+                Modifier.fillMaxWidth().height(2.dp).align(Alignment.BottomStart)
+                    .background(diffColor.copy(alpha = 0.55f)),
+            )
+
+            Row(Modifier.fillMaxSize()) {
+                // ── 难度徽章条：与导出图单格同一套设计（见 DifficultyStrip）──
+                DifficultyStrip(
+                    color = diffColor,
+                    en = diffName,
+                    zh = tileDifficultyZh(record.levelIndex),
+                    fonts = fonts,
+                    modifier = Modifier.width(STRIP_W).fillMaxHeight(),
+                )
+
+                // ── 主信息区：上半封面信息 / 下半成绩带，各自固定高度 ──
+                Column(Modifier.weight(1f)) {
+                    Column(
+                        Modifier.height(TOP_H)
+                            .padding(start = 12.dp, end = 8.dp, top = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(5.dp),
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RankBadge(rankNum, fonts)
+                            Spacer(Modifier.width(8.dp))
+                            BasicText(
+                                "ID ${trackIdOf(record)}",
+                                style = TextStyle(fontSize = 11.sp, fontFamily = fonts.exoM, color = DIM),
+                            )
+                            if (genre.isNotBlank()) {
+                                Spacer(Modifier.width(8.dp))
+                                TilePill(genre, CYAN)
+                            }
+                            if (version.isNotBlank()) {
+                                Spacer(Modifier.width(6.dp))
+                                TilePill(version, VIOLET)
+                            }
+                        }
+                        BasicText(
+                            trimTitle(record.title, titleCols),
+                            style = TextStyle(fontSize = 18.sp, fontFamily = fonts.simHei, color = INK),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+
+                    Column(
+                        Modifier.height(BAND_H)
+                            .padding(start = 12.dp, end = 8.dp, top = 6.dp, bottom = 8.dp),
+                        verticalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Row(verticalAlignment = Alignment.Bottom) {
+                            BasicText(
+                                "%.4f%%".format(record.achievements),
+                                style = TextStyle(fontSize = 27.sp, fontFamily = fonts.andrea, color = INK_SOFT),
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            BasicText(
+                                "LV ${record.ds}",
+                                style = TextStyle(fontSize = 13.sp, fontFamily = fonts.exo, color = DIM),
+                                modifier = Modifier.padding(bottom = 4.dp),
+                            )
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            BasicText(
+                                "DX ${record.dxScore} / $fullScore",
+                                style = TextStyle(fontSize = 11.sp, fontFamily = fonts.hos, color = DIM),
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            BasicText(
+                                "$percent%",
+                                style = TextStyle(fontSize = 11.sp, fontFamily = fonts.exo, color = FAINT),
+                            )
+                        }
+                    }
+                }
+
+                // ── 右侧成绩面板：同样锁成上下两段 ──
+                Column(Modifier.width(SIDE_W).fillMaxHeight()) {
+                    Column(
+                        Modifier.height(TOP_H).fillMaxWidth()
+                            .padding(end = 10.dp, top = 8.dp),
+                        horizontalAlignment = Alignment.End,
+                        verticalArrangement = Arrangement.spacedBy(3.dp),
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            if (dxStar > 0) StarBadge(dxStar)
+                            ModeBadge(record.type, fonts)
+                        }
+                        // 评级：保留 MaimaiData 高清徽章。
+                        // 尺寸与导出图对齐（80×35.6 → 80×35）：旧 86×38 在
+                        // 「top 8 + 徽章行 ~18 + 间距 3」之后会顶到 TOP_H=66 的信息带
+                        // 上沿横线（导出图侧同一个毛病，用户截图点名）。
+                        val rankIdx = RATE_KEYS.indexOf(record.rate.lowercase())
+                        if (rankIdx >= 0) {
+                            ScaledAsset(
+                                "kiba_rank_${RANK_PIC[rankIdx].lowercase()}",
+                                Modifier.size(80.dp, 35.dp),
+                            )
+                        } else {
+                            Spacer(Modifier.height(35.dp))
+                        }
+                    }
+
+                    Column(
+                        Modifier.height(BAND_H).fillMaxWidth()
+                            .padding(end = 10.dp, bottom = 8.dp),
+                        horizontalAlignment = Alignment.End,
+                        verticalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            val comboIdx = FC_KEYS.indexOf(record.fc.lowercase()).coerceAtLeast(0)
+                            val syncIdx = FS_KEYS.indexOf(record.fs.lowercase()).coerceAtLeast(0)
+                            StatusIcon(
+                                if (comboIdx > 0) "kiba_combo_${COMBO_PIC[comboIdx].lowercase()}" else null,
+                            )
+                            StatusIcon(
+                                if (syncIdx > 0) "kiba_combo_${SYNC_PIC[syncIdx].lowercase()}" else null,
+                            )
+                        }
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            BasicText(
+                                "ra $ra",
+                                style = TextStyle(fontSize = 17.sp, fontFamily = fonts.exoM, color = CYAN),
+                            )
+                            BasicText(
+                                "#$rankNum/$listSize",
+                                style = TextStyle(fontSize = 11.sp, fontFamily = fonts.andrea, color = DIM),
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }
 
+// ---------- 卡片内元素（全部为宽卡重新设计，替代旧贴图） ----------
+
+/** 榜单序号徽章：圆角小方块 + 青色数字，比旧版挤在右下角的 "#n/50" 更好扫读。 */
+/**
+ * 侧边难度徽章条 —— 与导出图单格素材 `kiba_ui_pfc_ms_info02_*` 同一套设计。
+ *
+ * 素材里那套装饰是 20×133 的位图，而宽卡条宽 20dp、卡片高 132dp，几乎 1:1，
+ * 所以这里用 Canvas 按同一组比例重绘，而不是把位图横向拉长（会糊边）：
+ * - 纵向光衰减渐变（上限 1.04，别过曝，否则浅紫档的白菱形/白描边会被吃掉）；
+ * - 左侧 2dp 玻璃高光带 + 右侧 1dp 内阴影，把徽章从封面上"立"起来；
+ * - 顶部深墨菱形 + 白心（呼应 B50 表头），底部双刻度收尾；
+ * - 冷白 1dp 外描边。
+ *
+ * 文字为「英文 HOS_Bold 12sp + 中文小一档 simHei 10sp」拼成一行后整体旋转 90°，
+ * 逐字竖排会把单词拆散（Re:Master 曾被读成 Re:Masier）。旋转不改布局尺寸，
+ * 所以 wrapContentSize(unbounded) + 父级居中对齐即可保证视觉居中。
+ */
 @Composable
-private fun TileContent(
-    record: RecordEntity,
-    fullScore: Int,
-    rankNum: Int,
-    listSize: Int,
-    version: String,
-    genre: String,
+private fun DifficultyStrip(
+    color: Color,
+    en: String,
+    zh: String,
     fonts: TileFonts,
-    u: Dp,
-    extraDp: Dp,
+    modifier: Modifier = Modifier,
 ) {
-    // 右段元素（评级 / 模式图标 / 连击同步 / 序号）随九宫格拉伸整体右移的设计 px 数
-    val r = extraDp.value
-    // tag 水平位置与尺寸（随屏幕拉伸量 r 智能适配，相对观感一致）：
-    // tag 右缘恒距 rank 贴图 (156+r) 左侧 10；需要宽 66 可完整显示最长版本 tag；
-    // 空间不足时整体左移（左界 161：达成率字形右缘 ~155 + 6 缓冲），并按可用宽
-    // 等比缩放 tag（字号/内边距同步缩，内容不截断）；< 24 时隐藏 —— 永不压 rank、不撞达成率
-    val tagRight = 156f + r - 10f
-    val tagX = maxOf(161f, tagRight - 66f)
-    val tagMaxW = tagRight - tagX
-    val tagScale = if (tagMaxW < 24f) 0f else minOf(1f, tagMaxW / 66f)
-    // 歌名可延伸到 tag 左缘 - 6（半角 8px/列），随 tag 位置自动伸缩
-    val titleMaxCols = ((tagX - 38f) / 8f).toInt().coerceIn(12, 24)
-
-        // ── 背景封面：压暗层（不做模糊，降低滚动开销）──
-        val candidates = remember(record.songId) { coverCandidateUrls(record.songId, "") }
-        TileCoverImage(
-            candidates = candidates,
-            modifier = Modifier.fillMaxSize(),
-        )
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.28f)),
-        )
-        // 底板（UI 专用副本，九宫格拉伸：中缝拉长，圆角与凹槽不变形、四角不露底）
-        NineSliceAsset("kiba_mb_ui", Modifier.fillMaxSize())
-
-        // ── 难度角标整框（含左彩条与底部 DX 分数条底；同样九宫格拉伸）──
-        NineSliceAsset(diffFrameAsset(record.levelIndex) + "_ui", Modifier.fillMaxSize())
-
-        // ── 拉伸空白区（达成率右侧）的流派 / 版本 tag：上下两个，
-        //    底部与达成率字形底（baseline ≈ y63）对齐（缩放时补偿 y 保持贴底）；
-        //    位置/宽度/字号随屏幕拉伸量智能适配（见上方 tagX/tagScale），过窄时隐藏 ──
-        if (tagScale > 0f) {
-            Column(
-                modifier = Modifier.offset(x = u * tagX, y = u * (63f - 28f * tagScale)),
-                verticalArrangement = Arrangement.spacedBy(u * 2f * tagScale),
-            ) {
-                if (genre.isNotBlank()) {
-                    TileTag(text = genre, u = u, scale = tagScale, modifier = Modifier.widthIn(max = u * tagMaxW))
-                }
-                if (version.isNotBlank()) {
-                    TileTag(text = version, u = u, scale = tagScale, modifier = Modifier.widthIn(max = u * tagMaxW))
-                }
-            }
-        }
-
-        // ── SD/DX 模式图标 + DX 星标（右段：x += extra）──
-        val dxStar = dxStarLevel(record.dxScore, fullScore)
-        val modeAsset = when (record.type) {
-            "SD" -> "kiba_ui_upe_infoicon_standardmode"
-            "DX" -> "kiba_ui_upe_infoicon_deluxemode"
-            else -> null
-        }
-        modeAsset?.let {
-            ScaledAsset(
-                it, 0.6f, u,
-                Modifier.offset(x = u * (170f + r), y = u * (if (dxStar == 0) 6f else 16f)),
-            )
-        }
-        if (dxStar > 0) {
-            ScaledAsset("kiba_dxstar_$dxStar", 0.65f, u, Modifier.offset(u * (170f + r), u * 4f))
-        }
-
-        // ── 文本（白字区，左段：位置不变）──
-        TileText(trackIdOf(record).toString(), 48f, 6f, 13f, fonts.exoM, Color.White, u)
-        TileText(
-            trimTitle(record.title, titleMaxCols), 32f, 27f, 16f, fonts.simHei, Color.White, u,
-            softWrap = false,
-        )
-        TileText("%.4f%%".format(record.achievements), 30f, 42f, 26f, fonts.andrea, Color.White, u)
-
-        // ── 评级 / 连击 / 同步图标（右段：x += extra）──
-        val rankIdx = RATE_KEYS.indexOf(record.rate.lowercase())
-        if (rankIdx >= 0) {
-            // MaimaiData 高清源（600×267）。ScaledAsset 的 intrinsicSize 返回的是像素，
-            // 旧素材 108px(mdpi)×0.8 = 86.4u；新素材 600px×0.144 = 86.4u，位置尺寸不变仅更清晰
-            ScaledAsset(
-                "kiba_rank_${RANK_PIC[rankIdx].lowercase()}",
-                0.144f, u, Modifier.offset(u * (156f + r), u * 40f),
-            )
-        }
-        val comboIdx = FC_KEYS.indexOf(record.fc.lowercase()).coerceAtLeast(0)
-        if (comboIdx > 0) {
-            // MaimaiData 高清源（144×144）：主圆内容 136px，旧 39px×0.6 = 23.4u
-            // → 0.172f 按内容直径换算（画布 24.8u），画布中心对准原内容中心
-            ScaledAsset(
-                "kiba_combo_${COMBO_PIC[comboIdx].lowercase()}",
-                0.172f, u, Modifier.offset(u * (171.2f + r), u * 81f),
-            )
-        } else {
-            // 无 FC 状态：灰色占位圆（与分享图逻辑一致）
-            ScaledAsset("kiba_ui_mss_mbase_icon_blank", 0.6f, u, Modifier.offset(u * (172f + r), u * 81f))
-        }
-        val syncIdx = FS_KEYS.indexOf(record.fs.lowercase()).coerceAtLeast(0)
-        if (syncIdx > 0) {
-            ScaledAsset(
-                "kiba_combo_${SYNC_PIC[syncIdx].lowercase()}",
-                0.172f, u, Modifier.offset(u * (200.2f + r), u * 81f),
-            )
-        } else {
-            ScaledAsset("kiba_ui_mss_mbase_icon_blank", 0.6f, u, Modifier.offset(u * (201f + r), u * 81f))
-        }
-
-        // ── 文本（黑字区，画在难度框的 DX 分数条上；左段位置不变）──
-        TileText("${record.dxScore} / $fullScore", 82f, 76f, 11f, fonts.hos, Color.Black, u)
-        TileText("${record.ds}", 36f, 102f, 18f, fonts.exo, Color.Black, u)
-        val percent = if (fullScore > 0) record.dxScore * 100 / fullScore else 0
-        TileText("$percent%", 90f, 105f, 13f, fonts.exo, Color.Black, u)
-        TileText(
-            "${Best50ImageBuilder.computeRa(record.ds, record.achievements, true)}",
-            135f, 99f, 21f, fonts.exoM, Color.Black, u,
-        )
-        TileText(
-            "#$rankNum/$listSize",
-            if (rankNum >= 9) 177f + r else 181f + r, 105f, 13f, fonts.andrea, Color.Black, u,
-        )
-}
-
-/** 拉伸空白区的 tag pill：半透明黑底白字，[scale] 等比缩放（小屏整体缩小、内容不截断）。 */
-@Composable
-private fun TileTag(text: String, u: Dp, scale: Float = 1f, modifier: Modifier = Modifier) {
+    val ink = Color(0xFF0C101A)
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape((6f * u.value * scale).dp))
-            // 半透明黑底：亮/暗封面上白字都可读（白底在亮封面上对比不足）
-            .background(Color.Black.copy(alpha = 0.38f))
-            .padding(horizontal = u * 4f * scale, vertical = u * 1.5f * scale),
+            .clip(RoundedCornerShape(9.dp))
+            .background(
+                Brush.verticalGradient(
+                    listOf(tint(color, 1.04f), tint(color, 0.64f)),
+                ),
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(Modifier.fillMaxSize()) {
+            // 素材坐标系 20×133，换算成实际像素
+            val u = size.width / 20f
+            val v = size.height / 133f
+
+            // 左侧玻璃高光带：随高度衰减
+            drawRect(
+                brush = Brush.verticalGradient(
+                    listOf(Color.White.copy(alpha = 0.31f), Color.Transparent),
+                ),
+                topLeft = Offset(1f * u, 0f),
+                size = Size(2f * u, size.height),
+            )
+            // 右侧内阴影：**直接不要**。旧版是 1dp 实色竖线，20dp 宽的竖条上就是一根
+            // 从头通到底的"多余的竖线"（用户连问两次）；改成渐变也照样被读成竖线，
+            // 轮廓交给外面那圈白描边就够。
+            // 顶部菱形徽记：深墨底 + 白心
+            drawPath(
+                Path().apply {
+                    moveTo(10f * u, 3f * v)
+                    lineTo(16f * u, 9f * v)
+                    lineTo(10f * u, 15f * v)
+                    lineTo(4f * u, 9f * v)
+                    close()
+                },
+                Color(0xFF080C16).copy(alpha = 0.84f),
+            )
+            drawPath(
+                Path().apply {
+                    moveTo(10f * u, 6f * v)
+                    lineTo(13f * u, 9f * v)
+                    lineTo(10f * u, 12f * v)
+                    lineTo(7f * u, 9f * v)
+                    close()
+                },
+                Color.White.copy(alpha = 0.92f),
+            )
+            // 底部双刻度
+            drawRect(ink.copy(alpha = 0.63f), Offset(6f * u, 123f * v), Size(9f * u, 2f * v))
+            drawRect(ink.copy(alpha = 0.43f), Offset(8f * u, 128f * v), Size(5f * u, 1.2f * v))
+        }
+        // 冷白外描边
+        Box(
+            Modifier.fillMaxSize()
+                .border(1.dp, Color.White.copy(alpha = 0.65f), RoundedCornerShape(9.dp)),
+        )
+        // 英文 + 中文拼成一行后整体旋转，中文自然跟在英文末尾
+        Row(
+            modifier = Modifier
+                .wrapContentSize(unbounded = true, align = Alignment.Center)
+                .rotate(90f),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            BasicText(
+                en,
+                style = TextStyle(fontSize = 12.sp, fontFamily = fonts.hosBold, color = ink),
+                maxLines = 1,
+            )
+            Spacer(Modifier.width(3.dp))
+            BasicText(
+                zh,
+                style = TextStyle(fontSize = 10.sp, fontFamily = fonts.simHei, color = ink),
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+/** 按比例调整亮度：素材里 `color * factor`，各通道钳在 0..1。 */
+private fun tint(color: Color, factor: Float): Color = Color(
+    red = (color.red * factor).coerceIn(0f, 1f),
+    green = (color.green * factor).coerceIn(0f, 1f),
+    blue = (color.blue * factor).coerceIn(0f, 1f),
+    alpha = color.alpha,
+)
+
+@Composable
+private fun RankBadge(rankNum: Int, fonts: TileFonts) {
+    Box(
+        Modifier.size(22.dp)
+            .clip(RoundedCornerShape(7.dp))
+            .background(Color.White.copy(alpha = 0.10f)),
+        contentAlignment = Alignment.Center,
     ) {
         BasicText(
-            text = text,
-            style = TextStyle(
-                fontSize = (9f * u.value * scale).sp,
-                lineHeight = (10f * u.value * scale).sp,
-                fontFamily = FontFamily.SansSerif,
-                color = Color.White,
-            ),
+            "$rankNum",
+            style = TextStyle(fontSize = 11.sp, fontFamily = fonts.exoM, color = CYAN),
+        )
+    }
+}
+
+/** 流派 / 版本 pill：彩色细边 + 半透明底，随主信息区宽度自然排布。 */
+@Composable
+private fun TilePill(text: String, accent: Color) {
+    Box(
+        Modifier.widthIn(max = 96.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(accent.copy(alpha = 0.12f))
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+    ) {
+        BasicText(
+            text,
+            style = TextStyle(fontSize = 10.sp, color = accent),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
     }
 }
 
-/**
- * kiba_alpha 蒙版抹角（UI 版）：上游 putalpha(invert(alpha.png))——素材 alpha 全
- * 不透明、靠**亮度反相当蒙版**（角白→透明、主体黑→不透明）。这里先把亮度反相
- * 成真 alpha 位图，再与底板同样九宫格拉伸（圆角 1:1 不变形）+ DstIn 抹角。
- */
+/** SD / DX 徽章：Compose 原生绘制，替代 `kiba_ui_upe_infoicon_*` 低清贴图。 */
 @Composable
-private fun AlphaMaskLayer(modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    val id = remember("kiba_alpha") { drawableId(context, "kiba_alpha") }
-    if (id == 0) return
-    val bmp = remember(id) {
-        val src = BitmapFactory.decodeResource(
-            context.resources, id,
-            BitmapFactory.Options().apply { inScaled = false },
-        )?.apply { setDensity(Bitmap.DENSITY_NONE) } ?: return@remember null
-        val w = src.width
-        val h = src.height
-        val inp = IntArray(w * h)
-        src.getPixels(inp, 0, w, 0, 0, w, h)
-        val outp = IntArray(w * h)
-        for (i in inp.indices) {
-            val c = inp[i]
-            val lum = (((c shr 16) and 0xFF) * 299 + ((c shr 8) and 0xFF) * 587 + (c and 0xFF) * 114) / 1000
-            outp[i] = ((255 - lum) shl 24) or 0x00FFFFFF
-        }
-        Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).apply {
-            setDensity(Bitmap.DENSITY_NONE)
-            setPixels(outp, 0, w, 0, 0, w, h)
-        }
-    } ?: return
-    NineSliceBmp(bmp.asImageBitmap(), bmp.height, modifier, BlendMode.DstIn)
+private fun ModeBadge(type: String, fonts: TileFonts) {
+    val (label, accent) = when (type) {
+        "DX" -> "DX" to MAGENTA
+        else -> "SD" to CYAN
+    }
+    Box(
+        Modifier.clip(RoundedCornerShape(5.dp))
+            .background(accent.copy(alpha = 0.16f))
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+    ) {
+        BasicText(
+            label,
+            style = TextStyle(fontSize = 10.sp, fontFamily = fonts.exoM, color = accent),
+        )
+    }
 }
 
 /**
- * 九宫格水平拉伸素材（UI 专用）：左段 1:1 → 中缝 [SLICE_START, SLICE_END) 拉伸
- * 补齐卡片多出的宽度 → 右段 1:1；垂直方向 1:1。凹槽、阴影、圆角全部不变形。
+ * DX 星标：用小菱形色块替代 `kiba_dxstar_*` 五张贴图。
+ * 刻意不用「★」字符 —— 部分 ROM 字体缺该字形会渲染成豆腐块。
  */
 @Composable
-private fun NineSliceAsset(name: String, modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    val id = remember(name) { drawableId(context, name) }
-    if (id == 0) return
-    val bmp = remember(name, id) {
-        BitmapFactory.decodeResource(
-            context.resources, id,
-            BitmapFactory.Options().apply { inScaled = false },
-        )?.apply { setDensity(Bitmap.DENSITY_NONE) }
-    } ?: return
-    NineSliceBmp(bmp.asImageBitmap(), bmp.height, modifier)
-}
-
-/** 九宫格三段绘制本体（[BlendMode.DstIn] 用于蒙版抹角）。 */
-@Composable
-private fun NineSliceBmp(
-    image: ImageBitmap,
-    srcH: Int,
-    modifier: Modifier = Modifier,
-    blendMode: BlendMode = BlendMode.SrcOver,
-) {
-    Canvas(modifier = modifier) {
-        // dst 每设计 px 对应的画布像素（垂直 1:1：卡片高 = 素材设计高）
-        val scale = size.height / TILE_SRC_H
-        // 源位图坐标是设计像素（0..247），只有 dst 才乘 scale；
-        // src 误乘 scale 会越界（150×density > 247），右段被源图尾部拉宽变形
-        val srcW = image.width.toFloat()
-        val extra = (size.width / scale - srcW).coerceAtLeast(0f) // 拉伸的设计 px
-        val a = SLICE_START
-        val b = SLICE_END
-        val srcWInt = srcW.roundToInt()
-        // 整数累积边界：相邻段严格共享同一个整数边界。
-        // 若各段分别对 dx/dw 做 roundToInt，round(left)+round(mid) 未必等于
-        // round(left+mid)，会留下 1px 未绘制的缝隙 —— 该列漏画 mb 遮罩层，
-        // 露出底下未压暗的封面，视觉上就是一条贯穿卡片的亮线。
-        val dstW = size.width.roundToInt()
-        val dstH = size.height.roundToInt()
-        val x1 = (a * scale).roundToInt()
-        val x2 = x1 + ((b - a + extra) * scale).roundToInt()
-        val srcB = b.roundToInt()
-        fun drawSeg(sx: Int, sw: Int, dx: Int, dw: Int) {
-            if (sw < 1 || dw < 1) return
-            drawImage(
-                image,
-                srcOffset = IntOffset(sx, 0),
-                srcSize = IntSize(sw, srcH),
-                dstOffset = IntOffset(dx, 0),
-                dstSize = IntSize(dw, dstH),
-                blendMode = blendMode,
-                filterQuality = FilterQuality.High,
+private fun StarBadge(count: Int) {
+    Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+        repeat(count) {
+            Box(
+                Modifier.size(6.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(AMBER),
             )
         }
-        drawSeg(0, a.roundToInt(), 0, x1)
-        drawSeg(a.roundToInt(), srcB - a.roundToInt(), x1, x2 - x1)
-        drawSeg(srcB, srcWInt - srcB, x2, dstW - x2)
+    }
+}
+
+/** FC / FS 状态圆：有状态用高清徽章，无状态画原生灰色空心圆（替代占位贴图）。
+ *  统一 23dp（= 导出图的 23.4px）：旧值 25dp 时「图标行 + ra 行」几乎顶满 66dp 成绩带，
+ *  SpaceBetween 只剩 3dp 间距，序号就贴上了图标。 */
+@Composable
+private fun StatusIcon(asset: String?) {
+    if (asset != null) {
+        ScaledAsset(asset, Modifier.size(23.dp))
+    } else {
+        Box(
+            Modifier.size(23.dp)
+                .clip(RoundedCornerShape(999.dp))
+                .background(Color.White.copy(alpha = 0.07f)),
+        )
     }
 }
 
 // ---------- 贴图内部组件 ----------
-
-/** 贴图内文本：设计像素坐标 → offset，字号随缩放（sp 数值 = 设计 px × dp/px）。 */
-@Composable
-private fun TileText(
-    text: String,
-    x: Float,
-    y: Float,
-    size: Float,
-    family: FontFamily,
-    color: Color,
-    u: Dp,
-    softWrap: Boolean = true,
-) {
-    Box(modifier = Modifier.offset(x = u * x, y = u * y)) {
-        BasicText(
-            text = text,
-            style = TextStyle(
-                fontSize = (size * u.value).sp,
-                fontFamily = family,
-                color = color,
-            ),
-            softWrap = softWrap,
-        )
-    }
-}
 
 /** 加载失败的封面落回 noimage 占位（候选链递归，与列表 CoverFrame 同源缓存）。 */
 @Composable
@@ -442,28 +526,17 @@ private fun AssetImage(
     )
 }
 
-/** 名义尺寸 × [factor] × [u]（卡片缩放）的素材图标；对应位图管线里的 scale()。 */
+/** 高清徽章按固定显示尺寸绘制（素材本身 600×267 / 144×144，只用来保证清晰度）。 */
 @Composable
-private fun ScaledAsset(
-    name: String,
-    factor: Float,
-    u: Dp,
-    modifier: Modifier = Modifier,
-) {
+private fun ScaledAsset(name: String, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val id = remember(name) { drawableId(context, name) }
     if (id == 0) return
-    val painter = painterResource(id)
-    val w = painter.intrinsicSize.width
-    val h = painter.intrinsicSize.height
-    if (!w.isFinite() || !h.isFinite()) {
-        Image(painter, null, modifier = modifier)
-        return
-    }
     Image(
-        painter = painter,
+        painter = painterResource(id),
         contentDescription = null,
-        modifier = modifier.size((w * factor * u.value).dp, (h * factor * u.value).dp),
+        contentScale = ContentScale.Fit,
+        modifier = modifier,
     )
 }
 
@@ -474,6 +547,7 @@ private data class TileFonts(
     val exo: FontFamily,
     val simHei: FontFamily,
     val hos: FontFamily,
+    val hosBold: FontFamily,
     val andrea: FontFamily,
 )
 
@@ -490,6 +564,10 @@ private fun tileFontsSingleton(context: Context): TileFonts {
         exo = asset("Exo.ttf"),
         simHei = asset("adobe_simhei.otf"),
         hos = asset("HOS.ttf"),
+        // 难度徽章条用粗体：与导出图素材 STRIP_EN 的选型一致，缺字体时退回 HOS
+        hosBold = runCatching {
+            FontFamily(Typeface.createFromAsset(context.assets, "fonts/HOS_Bold.ttf"))
+        }.getOrElse { asset("HOS.ttf") },
         andrea = asset("Andrea.otf"),
     ).also { tileFontsCache = it }
 }
@@ -502,14 +580,34 @@ private fun rememberTileFonts(): TileFonts {
 
 // ---------- 工具（与 Best50ImageBuilder 同口径） ----------
 
-/** 难度角标整框（对应上游 diffpic）。 */
-private fun diffFrameAsset(diff: Int): String = when (diff) {
-    0 -> "kiba_ui_pfc_ms_info02_bsc"
-    1 -> "kiba_ui_pfc_ms_info02_adv"
-    2 -> "kiba_ui_pfc_ms_info02_exp"
-    3 -> "kiba_ui_pfc_ms_info02_mst"
-    4 -> "kiba_ui_pfc_ms_info02_mst_re"
-    else -> "kiba_ui_pfc_ms_info02_mst"
+/** 难度色 / 缩写：与 build_assets.py 的 DIFF 表一一对应。 */
+private fun tileDifficultyColor(index: Int): Color = when (index) {
+    0 -> Color(0xFF43D17F)
+    1 -> Color(0xFFF5C542)
+    2 -> Color(0xFFFF5D6C)
+    3 -> Color(0xFFB07CFF)
+    4 -> Color(0xFFE6D6FF)
+    else -> Color(0xFFB12876)
+}
+
+/** 官方完整难度名（与 build_assets.py 的 DIFF 表一致）。 */
+private fun tileDifficultyName(index: Int): String = when (index) {
+    0 -> "Basic"
+    1 -> "Advanced"
+    2 -> "Expert"
+    3 -> "Master"
+    4 -> "Re:Master" // Re:MASTER = 白谱 / 宗师，不是宴谱
+    else -> "Utage"
+}
+
+/** 官方中文难度名（与 build_assets.py 的 DIFF 表一致）。Re:Master = 白谱 / 宗师。 */
+private fun tileDifficultyZh(index: Int): String = when (index) {
+    0 -> "基础"
+    1 -> "高级"
+    2 -> "专家"
+    3 -> "大师"
+    4 -> "宗师"
+    else -> "宴谱"
 }
 
 /** 曲号（DX 老曲 +10000，与位图管线一致）。 */
@@ -550,7 +648,7 @@ private fun charWidth(code: Int): Int {
 
 private fun columnWidth(s: String): Int = s.sumOf { charWidth(it.code) }
 
-/** 上游 _trimTitle：宽度 > [maxCols] 列时截断到 maxCols-1 列 + '...'（拉伸布局下随 tag 位置放宽）。 */
+/** 上游 _trimTitle：宽度 > [maxCols] 列时截断到 maxCols-1 列 + '...'（宽卡随可用宽度放宽）。 */
 private fun trimTitle(title: String, maxCols: Int = 12): String {
     if (columnWidth(title) <= maxCols) return title
     val sb = StringBuilder()

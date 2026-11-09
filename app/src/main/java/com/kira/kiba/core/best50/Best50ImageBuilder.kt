@@ -3,10 +3,16 @@ package com.kira.kiba.core.best50
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.BlurMaskFilter
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.LinearGradient
 import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
 import android.graphics.Rect
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.util.Log
 import com.kira.kiba.core.db.AppDataBase
@@ -59,9 +65,6 @@ object Best50ImageBuilder {
 
     /** 新曲区相对 ROWS 的纵向偏移（b50 = 1081）。 */
     private const val DX_OFFSET = 1081
-
-    /** 上游 _drawRating 的数字列。 */
-    private val RATING_COLUMNS = listOf(74, 92, 110, 129, 147)
 
     /** 上游 rankPic（索引 = rate 档位序号）。 */
     private val RANK_PIC = listOf(
@@ -128,7 +131,11 @@ object Best50ImageBuilder {
                 old.sumOf { computeRa(it.ds, it.achievements, true) } +
                     new.sumOf { computeRa(it.ds, it.achievements, true) }
             }
-            runCatching { drawHeader(context, canvas, nickname, ratingForHeader) }
+            val totalSd = old.take(35).sumOf { computeRa(it.ds, it.achievements, true) }
+            val totalDx = new.take(15).sumOf { computeRa(it.ds, it.achievements, true) }
+            runCatching {
+                drawHeader(context, canvas, nickname, ratingForHeader, totalSd, totalDx)
+            }
 
             // ── 旧曲（35）──
             val sdSize = 35
@@ -161,36 +168,21 @@ object Best50ImageBuilder {
                 if (i + 1 < ROWS.size) runCatching { drawEmptyTile(context, canvas, COLUMNS[j] + 4, ROWS[i + 1] + DX_OFFSET) }
             }
 
-            // ── 底部 Rating.png 的四个大数字 ──
+            // ── 底部 Rating.png 的四个大数字（深色玻璃条上统一白字）──
             val ratingImg = decode(context, "kiba_rating")
             if (ratingImg != null && old.isNotEmpty() && new.isNotEmpty()) {
                 val c = Canvas(ratingImg)
                 val andrea = font(context, "Andrea.otf")
                 val b50ra = { r: RecordEntity -> computeRa(r.ds, r.achievements, true) }
-                drawText(c, "${b50ra(old.first())}", 146f, 25f, 68f, Color.WHITE, andrea)
-                drawText(c, "${b50ra(old.last())}", 424f, 25f, 68f, Color.WHITE, andrea)
-                drawText(c, "${b50ra(new.first())}", 695f, 25f, 68f, Color.BLACK, andrea)
-                drawText(c, "${b50ra(new.last())}", 972f, 25f, 68f, Color.BLACK, andrea)
+                val ink = Color.rgb(240, 246, 255)
+                drawText(c, "${b50ra(old.first())}", 146f, 25f, 68f, ink, andrea)
+                drawText(c, "${b50ra(old.last())}", 424f, 25f, 68f, ink, andrea)
+                drawText(c, "${b50ra(new.first())}", 695f, 25f, 68f, ink, andrea)
+                drawText(c, "${b50ra(new.last())}", 972f, 25f, 68f, ink, andrea)
                 canvas.drawBitmap(ratingImg, 6f, 1660f, null)
             }
-
-            // ── 右上小对话框：旧曲 / 新曲合计 ──
-            val totalSd = old.take(sdSize).sumOf { computeRa(it.ds, it.achievements, true) }
-            val totalDx = new.take(dxSize).sumOf { computeRa(it.ds, it.achievements, true) }
-            val board = decode(context, "kiba_ui_cmn_minidialog_01")
-            if (board != null) {
-                val c = Canvas(board)
-                val med = font(context, "HOS_Med.ttf")
-                drawText(c, "$totalSd", 75f, 144f, 48f, Color.BLACK, med)
-                drawText(c, "$totalDx", 313f, 144f, 48f, Color.BLACK, med)
-                val scaled = scale(board, 0.45f)
-                canvas.drawBitmap(scaled, 1070f, 10f, null)
-            }
-
-            // ── 新旧曲分隔条 ──
-            decode(context, "kiba_ui_rsl_mbase_parts_01")?.let { parts ->
-                canvas.drawBitmap(scale(parts, 0.5f), 8f, 1187f, null)
-            }
+            // 右上小对话框 / 新旧曲分隔条已移除：底板 kiba_b50 自带统一的表头带、
+            // 分区标题与合计槽位，再叠原生素材只会互相打架。
 
             val out = java.io.ByteArrayOutputStream()
             base.compress(Bitmap.CompressFormat.PNG, 100, out)
@@ -204,72 +196,203 @@ object Best50ImageBuilder {
 
     // ---------- 表头（对应 DrawBest.draw）----------
 
-    private fun drawHeader(context: Context, canvas: Canvas, nickname: String, rating: Int) {
-        // 无 QQ 头像分支：左上角 maimai 标题 logo
+    /**
+     * 表头（参考稿 111.png 定稿）：极简深色条，不要 KIBA 大字标，也不再贴
+     * 名牌框 / Rating 框 / 段位牌 / 称号条那套 2019 年原生素材。
+     *
+     * 左：菱形 + PLAYER 标签 + 玩家名；右：DX RATING 标签 + 大数字 + OLD/NEW 两行；
+     * 左下「BEST 35 / 旧曲」由底板 kiba_b50 印，代码不重复写。
+     *
+     * 大数字按 maimai 官方 Rating 段位代表色上色（见 ratingColorArgb），
+     * 15000+ 虹段走 LinearGradient 彩虹，色值与 ui/common/DxRatingTag.kt 的
+     * DxRatingTier.badgeColor() 同源，深色表头底上取其可读亮版。
+     */
+    private fun drawHeader(
+        context: Context,
+        canvas: Canvas,
+        nickname: String,
+        rating: Int,
+        totalSd: Int,
+        totalDx: Int,
+    ) {
+        val med = font(context, "HOS_Med.ttf")
+        val andrea = font(context, "Andrea.otf")
+        val exo = font(context, "Exo.ttf")
+        val simHei = font(context, "adobe_simhei.otf")
+        val ink = Color.rgb(240, 246, 255)
+        val dim = Color.rgb(168, 184, 208)
+        val faint = Color.rgb(128, 146, 176)
+        val cyan = Color.rgb(77, 226, 230)
+        val magenta = Color.rgb(255, 95, 162)
+
+        // 左上：菱形 + PLAYER + 玩家名
+        val mark = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = cyan }
+        val diamond = Path().apply {
+            moveTo(39f, 19f); lineTo(46f, 26f); lineTo(39f, 33f); lineTo(32f, 26f); close()
+        }
+        canvas.drawPath(diamond, mark)
+        drawText(canvas, "PLAYER", 54f, 14f, 13f, faint, med)
+        drawText(canvas, toHalfWidth(nickname), 54f, 36f, 32f, ink, simHei)
+
+        // DXNET 标识：原版 B50 左上角那颗「maimai でらっくす / DX NET」，原素材里就有
+        // （kiba_ui_cmn_tabtitle_maimaititle_ver214.png，326×99，自带透明通道），
+        // 直接按高度等比缩到 54（≈0.545×），不做任何抠图 / 重绘。
+        // 位置：右缘 884（与 DX RATING 的 x=900 留 16px），**上下居中于「标签 + 大数字」
+        // 这块墨迹** —— 标签 ink ≈21..30、数字 ink ≈60..112（Andrea 68px 起于 y=36），
+        // 整块 21..112 中心 66.5，54 高的一半 27 → y ≈ 39.5，取 40。
+        // 贴标签顶（y=18）会明显偏高（用户当场指出）。
         decode(context, "kiba_ui_cmn_tabtitle_maimaititle_ver214")?.let { logo ->
-            canvas.drawBitmap(scale(logo, 0.65f), 10f, 35f, null)
+            val scaled = scale(logo, 54f / logo.height)
+            canvas.drawBitmap(scaled, 884f - scaled.width, 40f, null)
         }
 
-        // DX Rating 底板 + 逐位数字（右对齐 5 位）
-        val baseImg = decode(context, raAsset(rating))?.copy(Bitmap.Config.ARGB_8888, true)
-            ?.apply { setDensity(Bitmap.DENSITY_NONE) }
-        if (baseImg != null) {
-            val c = Canvas(baseImg)
-            var value = rating
-            var i = 4
-            while (value > 0 && i >= 0) {
-                val digit = value % 10
-                value /= 10
-                decode(context, "kiba_ui_num_drating_$digit")?.let { d ->
-                    c.drawBitmap(scale(d, 0.7f), (RATING_COLUMNS[i] - 2).toFloat(), 14f, null)
-                }
-                i--
-            }
-            canvas.drawBitmap(scale(baseImg, 0.8f), 240f, 12f, null)
-        }
+        // 右上：DX RATING + 官方段位色大数字
+        drawText(canvas, "DX RATING", 900f, 18f, 15f, faint, med)
+        drawRatingValue(canvas, "$rating", 896f, 36f, 68f, rating, andrea)
 
-        // 段位牌（无 additional_rating 时取 00）
-        decode(context, "kiba_ui_cmn_daniplate_00")?.let { plate ->
-            canvas.drawBitmap(scale(plate, 0.65f), 395f, 9f, null)
-        }
+        // 数字右侧两行合计（参考稿是上下两行，不是并排）
+        drawText(canvas, "OLD  $totalSd", 1105f, 38f, 17f, dim, exo)
+        drawText(canvas, "NEW  $totalDx", 1105f, 68f, 17f, magenta, exo)
+    }
 
-        // 名牌：昵称逐字加空格
-        val plateMask = decode(context, "kiba_ui_tst_platemask")
-        if (plateMask != null) {
-            val namePlate = Bitmap.createScaledBitmap(plateMask, 285, 40, true)
-                .copy(Bitmap.Config.ARGB_8888, true)
-                .apply { setDensity(Bitmap.DENSITY_NONE) }
-            val c = Canvas(namePlate)
-            val spaced = toHalfWidth(nickname).toList().joinToString(" ")
-            drawText(c, spaced, 12f, 3f, 28f, Color.BLACK, font(context, "HOS.ttf"))
-            decode(context, "kiba_ui_cmn_name_dx")?.let { dx ->
-                c.drawBitmap(scale(dx, 0.9f), 230f, 4f, null)
-            }
-            canvas.drawBitmap(namePlate, 240f, 52f, null)
-        }
+    /**
+     * 官方段位代表色（深色底可读亮版）。铜/银/金/铂四档只是**兜底色**，实际绘制走
+     * [ratingStops] 的金属渐变——白 #F5FAFF / 银 #CFD8DC / 铂 #E6F3F7 三色太接近，
+     * 平色画在深色表头上几乎分不出来（真机反证）。
+     */
+    private fun ratingColorArgb(rating: Int): Int = when {
+        rating < 1000 -> Color.rgb(245, 250, 255)  // 白
+        rating < 2000 -> Color.rgb(66, 165, 245)   // 蓝
+        rating < 4000 -> Color.rgb(102, 187, 106)  // 绿
+        rating < 7000 -> Color.rgb(253, 216, 53)   // 黄
+        rating < 10000 -> Color.rgb(239, 83, 80)   // 红
+        rating < 12000 -> Color.rgb(171, 71, 188)  // 紫
+        rating < 13000 -> Color.rgb(226, 145, 78)  // 铜（渐变中段）
+        rating < 14000 -> Color.rgb(110, 126, 146) // 银（渐变中段）
+        rating < 14500 -> Color.rgb(240, 188, 44)  // 金（渐变中段）
+        rating < 15000 -> Color.rgb(255, 243, 194) // 铂（渐变中段）
+        else -> Color.rgb(230, 243, 247)           // 虹段用 shader 覆盖
+    }
 
-        // 称号条
-        val shougou = decode(context, "kiba_ui_cmn_shougou_rainbow")?.copy(Bitmap.Config.ARGB_8888, true)
-            ?.apply { setDensity(Bitmap.DENSITY_NONE) }
-        if (shougou != null) {
-            val c = Canvas(shougou)
-            val hos = font(context, "HOS.ttf")
-            val info = "Best 50 底分模式"
-            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                textSize = 14f
-                typeface = hos
-            }
-            val w = paint.measureText(info)
-            drawText(
-                c, info, ((shougou.width - w) / 2f), 5f, 14f,
-                Color.rgb(104, 186, 255), hos,
+    private val RAINBOW_STOPS = intArrayOf(
+        Color.rgb(239, 83, 80), Color.rgb(255, 167, 38), Color.rgb(255, 213, 79),
+        Color.rgb(102, 187, 106), Color.rgb(66, 165, 245), Color.rgb(171, 71, 188),
+    )
+
+    /** 铜：暖橙铜镜面（色相与原平色同源，只加明暗镀层，别往金色靠）。 */
+    private val COPPER_STOPS = intArrayOf(
+        Color.rgb(255, 214, 170), Color.rgb(226, 145, 78),
+        Color.rgb(140, 74, 34), Color.rgb(255, 190, 130),
+    )
+
+    /** 银：冷灰镜面，双高光带（顶/底亮、中段压暗才有金属厚度；不压到灰就不像银）。 */
+    private val SILVER_STOPS = intArrayOf(
+        Color.rgb(255, 255, 255), Color.rgb(188, 204, 222),
+        Color.rgb(110, 126, 146), Color.rgb(242, 250, 255),
+    )
+
+    /** 金：饱和琥珀金（比铂深一档、比铜黄一档）。 */
+    private val GOLD_STOPS = intArrayOf(
+        Color.rgb(255, 238, 176), Color.rgb(240, 188, 44),
+        Color.rgb(156, 104, 12), Color.rgb(255, 212, 96),
+    )
+
+    /** 铂：maimai 官方「プラチナ」的亮金色——偏白的浅金，整体比金更亮更冷。 */
+    private val PLATINUM_STOPS = intArrayOf(
+        Color.rgb(255, 255, 250), Color.rgb(255, 243, 194),
+        Color.rgb(232, 190, 96), Color.rgb(255, 252, 232),
+    )
+
+    /**
+     * 段位金属渐变 stops；非金属段返回 null（用 [ratingColorArgb] 平色）。
+     * 铜/银/金/铂 = 竖向渐变，虹段 = 横向彩虹 + 金属带 + 辉光（见 [drawRatingValue]）。
+     */
+    private fun ratingStops(rating: Int): IntArray? = when {
+        rating >= 15000 -> RAINBOW_STOPS
+        rating >= 14500 -> PLATINUM_STOPS
+        rating >= 14000 -> GOLD_STOPS
+        rating >= 13000 -> SILVER_STOPS
+        rating >= 12000 -> COPPER_STOPS
+        else -> null
+    }
+
+    /**
+     * Rating 大数字：15000+ 虹段 = 横向彩虹 × 竖向金属带 + 轻微光晕；
+     * 铜/银/金/铂竖向金属渐变（顶部亮 → 中段暗 → 底部亮，等于给数字镀了一层）；
+     * 其余段位平色。
+     */
+    private fun drawRatingValue(
+        canvas: Canvas,
+        value: String,
+        x: Float,
+        y: Float,
+        size: Float,
+        rating: Int,
+        typeface: Typeface?,
+    ) {
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = size
+            this.typeface = typeface
+            color = ratingColorArgb(rating)
+        }
+        val stops = ratingStops(rating)
+        val baseline = y - paint.fontMetrics.ascent
+        // 字的墨迹盒：y 是 ascender 顶，字底 = y - ascent + descent
+        val inkBottom = y - paint.fontMetrics.ascent + paint.fontMetrics.descent
+        if (stops == null) {
+            canvas.drawText(value, x, baseline, paint)
+            return
+        }
+        if (rating < 15000) {
+            paint.shader = LinearGradient(
+                x, y, x, inkBottom, stops, null, Shader.TileMode.CLAMP,
             )
-            canvas.drawBitmap(scale(shougou, 1.05f), 240f, 95f, null)
+            canvas.drawText(value, x, baseline, paint)
+            return
         }
 
-        decode(context, "kiba_splash")?.let { splash ->
-            canvas.drawBitmap(scale(splash, 0.2f), 685f, 2f, null)
+        // ---- 虹段：彩虹本身只是底色，还要"镀层"和一点辉光 ----
+        val rainbow = LinearGradient(
+            x, y, x + paint.measureText(value).coerceAtLeast(1f), y,
+            RAINBOW_STOPS, null, Shader.TileMode.CLAMP,
+        )
+        paint.shader = rainbow
+        // 1) 光晕：同一彩虹色压到 alpha 70 再模糊 4px，烘在字下面（别做成霓虹灯）
+        val halo = Paint(paint).apply {
+            alpha = 70
+            maskFilter = BlurMaskFilter(4f, BlurMaskFilter.Blur.NORMAL)
         }
+        canvas.drawText(value, x, baseline, halo)
+        // 2) 彩虹本体
+        canvas.drawText(value, x, baseline, paint)
+        // 3) 金属带：中段压暗（MULTIPLY），上下边缘混白（SCREEN）——细笔画字号下
+        //    只能靠这两条竖画上的明暗读出"金属"，压太狠整串会发灰
+        val band = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = size
+            this.typeface = typeface
+            // 白 → 灰 → 白：MULTIPLY 只压中段，等于一条金属暗带
+            shader = LinearGradient(
+                0f, y, 0f, inkBottom,
+                intArrayOf(Color.WHITE, Color.rgb(179, 179, 179), Color.WHITE),
+                floatArrayOf(0f, 0.5f, 1f), Shader.TileMode.CLAMP,
+            )
+            xfermode = PorterDuffXfermode(PorterDuff.Mode.MULTIPLY)
+        }
+        canvas.drawText(value, x, baseline, band)
+        val spec = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = size
+            this.typeface = typeface
+            shader = LinearGradient(
+                0f, y, 0f, inkBottom,
+                intArrayOf(
+                    Color.argb(140, 255, 255, 255), Color.TRANSPARENT,
+                    Color.TRANSPARENT, Color.argb(140, 255, 255, 255),
+                ),
+                floatArrayOf(0f, 0.12f, 0.88f, 1f), Shader.TileMode.CLAMP,
+            )
+            xfermode = PorterDuffXfermode(PorterDuff.Mode.SCREEN)
+        }
+        canvas.drawText(value, x, baseline, spec)
     }
 
     // ---------- 单格（对应 _drawBestList 的单首绘制）----------
@@ -290,7 +413,8 @@ object Best50ImageBuilder {
         val cover = fetchCover(context, r.songId)
         val bg = if (cover != null) {
             val scaled = scaleToWidth(cover, ITEM_W)
-            darken(blur(cropCenter(scaled, ITEM_W, ITEM_H)), 0.72f)
+            // 深色玻璃卡片上封面要能透出来，压暗比上游 0.72 轻一档
+            darken(blur(cropCenter(scaled, ITEM_W, ITEM_H)), 0.64f)
         } else {
             val noimage = decode(context, "kiba_noimage")
             if (noimage != null) {
@@ -314,37 +438,48 @@ object Best50ImageBuilder {
             "DX" -> "kiba_ui_upe_infoicon_deluxemode"
             else -> null
         }
+        // x 从上游的 170 收到 163：新徽章是带描边的整块 pill，170+68=238
+        // 会伸进卡片右侧圆角区被 alpha 蒙版切掉一角。
         modeAsset?.let { asset ->
             decode(context, asset)?.let { icon ->
-                c.drawBitmap(scale(icon, 0.6f), 170f, if (dxper == 0) 6f else 16f, null)
+                c.drawBitmap(scale(icon, 0.6f), 163f, if (dxper == 0) 6f else 16f, null)
             }
         }
         // DX 星标
         if (dxper > 0) {
             decode(context, "kiba_dxstar_$dxper")?.let { star ->
-                c.drawBitmap(scale(star, 0.65f), 170f, 4f, null)
+                c.drawBitmap(scale(star, 0.65f), 163f, 4f, null)
             }
         }
 
         // 难度角标
         decode(context, diffAsset(r.levelIndex))?.let { c.drawBitmap(it, 0f, 0f, null) }
 
+        // 深色玻璃配色：主文字冷白、次文字灰蓝、ra 用青色强调
+        val ink = Color.rgb(240, 246, 255)
+        val dim = Color.rgb(190, 204, 224)
+        val cyan = Color.rgb(77, 226, 230)
+
         // 曲号（DX 老曲 +10000）
         val trackId = if (r.songId < 10000 && r.type == "DX") r.songId + 10000 else r.songId
-        drawText(c, "$trackId", 48f, 6f, 13f, Color.WHITE, font(context, "ExoM.ttf"))
+        drawText(c, "$trackId", 48f, 6f, 13f, dim, font(context, "ExoM.ttf"))
 
         // 歌名（超 12 列截断到 11 列 + ...）
-        drawText(c, trimTitle(r.title), 32f, 27f, 16f, Color.WHITE, font(context, "adobe_simhei.otf"))
+        drawText(c, trimTitle(r.title), 32f, 27f, 16f, ink, font(context, "adobe_simhei.otf"))
 
         // 达成率
-        drawText(c, "%.4f%%".format(r.achievements), 30f, 42f, 26f, Color.WHITE, font(context, "Andrea.otf"))
+        drawText(c, "%.4f%%".format(r.achievements), 30f, 42f, 26f,
+            Color.rgb(245, 252, 255), font(context, "Andrea.otf"))
 
-        // 评级（MaimaiData 高清源 kiba_rank_* 600×267；旧 kiba_ui_gam_rank 108×48×0.8 = 86×38，
-        // 按 86f/600f 等比换算 → 绘制尺寸与位置和原来完全一致，仅清晰度提升）
+        // 评级（MaimaiData 高清源 kiba_rank_* 600×267）
+        // 旧 86×38 @ y=40 → 底边落在 78，**压过信息带上沿那条 74 的横线**（用户截图点名
+        // "Rank 贴图底部和横线贴一起了"）。素材内容 bbox 是 y=12..258（≈1.7px 内边距），
+        // 所以收到 80×35.6 @ y=36：内容 37.6..70.4，距横线还有 3.6px，上方距 SD/DX 徽章
+        // （16..35.2）也留出 2px 以上。
         val rankIdx = RATE_KEYS.indexOf(r.rate.lowercase())
         if (rankIdx >= 0) {
             decode(context, "kiba_rank_${RANK_PIC[rankIdx].lowercase()}")?.let { img ->
-                c.drawBitmap(scale(img, 86f / 600f), 156f, 40f, null)
+                c.drawBitmap(scale(img, 80f / 600f), 159f, 36f, null)
             }
         }
 
@@ -357,7 +492,7 @@ object Best50ImageBuilder {
         }
         val comboScale = if (comboIdx == 0) 0.6f else 23.4f / 136f
         val comboX = if (comboIdx == 0) 172f else 171.2f
-        decode(context, comboAsset)?.let { c.drawBitmap(scale(it, comboScale), comboX, 81f, null) }
+        decode(context, comboAsset)?.let { c.drawBitmap(scale(it, comboScale), comboX, 77f, null) }
 
         val syncIdx = FS_KEYS.indexOf(r.fs.lowercase()).coerceAtLeast(0)
         val syncAsset = if (syncIdx == 0) "kiba_ui_mss_mbase_icon_blank" else {
@@ -365,20 +500,35 @@ object Best50ImageBuilder {
         }
         val syncScale = if (syncIdx == 0) 0.6f else 23.4f / 136f
         val syncX = if (syncIdx == 0) 201f else 200.2f
-        decode(context, syncAsset)?.let { c.drawBitmap(scale(it, syncScale), syncX, 81f, null) }
+        decode(context, syncAsset)?.let { c.drawBitmap(scale(it, syncScale), syncX, 77f, null) }
 
-        // DX 分 / 定数 / 百分比 / ra / 序号
-        drawText(c, "${r.dxScore} / $fullScore", 82f, 76f, 11f, Color.BLACK, font(context, "HOS.ttf"))
-        drawText(c, "${r.ds}", 36f, 102f, 18f, Color.BLACK, font(context, "Exo.ttf"))
+        // DX 分 / 定数 / 百分比 / ra / 序号（信息带是深色玻璃，旧版黑字已不可读）
+        drawText(c, "${r.dxScore} / $fullScore", 82f, 83f, 11f, dim, font(context, "HOS.ttf"))
+        // 三个数值的间距收窄到 16/12px：旧值 36/90/135 中间空得发慌，像三列没对齐。
+        // 而且必须**按基线**落字：13.6 / 101% / 286 是三档字号，用 ascender 顶对齐
+        // 会各差 2~3px，看着就是「三个数字不平行」。
+        val base = 114f
+        drawTextBase(c, "${r.ds}", 34f, base, 18f, ink, font(context, "Exo.ttf"))
         val percent = if (fullScore > 0) (r.dxScore * 100 / fullScore) else 0
-        drawText(c, "$percent%", 90f, 105f, 13f, Color.BLACK, font(context, "Exo.ttf"))
-        drawText(
-            c, "${computeRa(r.ds, r.achievements, true)}", 135f, 99f, 21f,
-            Color.BLACK, font(context, "ExoM.ttf"),
+        drawTextBase(c, "$percent%", 84f, base, 13f, dim, font(context, "Exo.ttf"))
+        drawTextBase(
+            c, "${computeRa(r.ds, r.achievements, true)}", 124f, base, 21f,
+            cyan, font(context, "ExoM.ttf"),
         )
-        drawText(
-            c, "#${num + 1}/$listSize", if (num >= 9) 177f else 181f, 105f, 13f,
-            Color.BLACK, font(context, "Andrea.otf"),
+        // 小字说明：光三个数字看不出哪个是定数、哪个是 DX 率、哪个是单曲 ra。
+        // 9px 贴在同一条基线下 12px 处，不占新行，也不压信息带底边。
+        val faint = Color.argb(150, 190, 204, 224)
+        val fontZh = font(context, "adobe_simhei.otf")
+        drawTextBase(c, "定数", 34f, 126f, 9f, faint, fontZh)
+        drawTextBase(c, "DX率", 84f, 126f, 9f, faint, fontZh)
+        drawTextBase(c, "单曲ra", 124f, 126f, 9f, faint, fontZh)
+        // 序号基线与「定数 / DX率 / 单曲ra」同一条（126）：右列于是和左列共用三条网格线
+        // —— 图标对压在「DX SCORE」那行（77..100.4），序号压在说明行（字形 116..127）。
+        // 旧值（图标 81 / 基线 118）把右列挤成中间一坨，上不着顶下不着底，就是用户说的
+        // 「视觉不平衡」；顺带也彻底解决「#33/35 和上面的元素贴太近」。
+        drawTextBase(
+            c, "#${num + 1}/$listSize", if (num >= 9) 177f else 181f, 126f, 13f,
+            dim, font(context, "Andrea.otf"),
         )
 
         // alpha 反向遮罩
@@ -386,14 +536,12 @@ object Best50ImageBuilder {
         canvas.drawBitmap(tile, x.toFloat(), y.toFloat(), null)
     }
 
-    /** 空位（上游用 cover/1000.png 铺底，这里退化为 noimage）。 */
-    private fun drawEmptyTile(context: Context, canvas: Canvas, x: Int, y: Int) {
-        val noimage = decode(context, "kiba_noimage") ?: return
-        val scaled = scaleToWidth(noimage, ITEM_W)
-        val tile = blur(cropCenter(scaled, ITEM_W, ITEM_H))
-        applyAlphaMask(context, tile)
-        canvas.drawBitmap(tile, x.toFloat(), y.toFloat(), null)
-    }
+    /**
+     * 空位：底板 kiba_b50 已为每个槽位画了统一的玻璃底衬与描边，
+     * 不再贴 noimage / 模糊块，留白比旧版干净，也不会出现半透明脏块。
+     */
+    @Suppress("UNUSED_PARAMETER")
+    private fun drawEmptyTile(context: Context, canvas: Canvas, x: Int, y: Int) = Unit
 
     // ---------- 素材与绘制工具 ----------
 
@@ -487,13 +635,13 @@ object Best50ImageBuilder {
         return out
     }
 
-    /** 两趟盒式模糊，近似 PIL GaussianBlur(2)。 */
+    /** 两趟轻量盒式模糊；深色玻璃卡片上封面要保留轮廓，半径比上游小一档。 */
     private fun blur(src: Bitmap): Bitmap {
         val w = src.width
         val h = src.height
         var pixels = IntArray(w * h)
         src.getPixels(pixels, 0, w, 0, 0, w, h)
-        repeat(2) { pixels = boxBlur(pixels, w, h, 2) }
+        repeat(2) { pixels = boxBlur(pixels, w, h, 1) }
         val out = newBitmap(w, h)
         out.setPixels(pixels, 0, w, 0, 0, w, h)
         return out
@@ -604,21 +752,27 @@ object Best50ImageBuilder {
         canvas.drawText(text, x, baseline, paint)
     }
 
-    /** 上游 _findRaPic（b50 分档）。 */
-    private fun raAsset(rating: Int): String {
-        val num = when {
-            rating < 1000 -> "01"
-            rating < 2000 -> "02"
-            rating < 4000 -> "03"
-            rating < 7000 -> "04"
-            rating < 10000 -> "05"
-            rating < 12000 -> "06"
-            rating < 13000 -> "07"
-            rating < 14500 -> "08"
-            rating < 15000 -> "09"
-            else -> "10"
+    /**
+     * 按**基线**落字：`y` 直接就是 baseline。
+     *
+     * 混排不同字号（13.6 = 18px / 101% = 13px / 286 = 21px）时，[drawText] 那种
+     * 「y = ascender 顶」的写法会让三个数字各差 2~3px，肉眼看就是「不平行」。
+     */
+    private fun drawTextBase(
+        canvas: Canvas,
+        text: String,
+        x: Float,
+        baseline: Float,
+        size: Float,
+        color: Int,
+        typeface: Typeface?,
+    ) {
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.textSize = size
+            this.color = color
+            this.typeface = typeface
         }
-        return "kiba_ui_cmn_dxrating_s_$num"
+        canvas.drawText(text, x, baseline, paint)
     }
 
     /** 上游 _Q2B：全角转半角。 */
