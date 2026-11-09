@@ -5,7 +5,6 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.BlurMaskFilter
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
@@ -45,6 +44,20 @@ import kotlin.math.roundToLong
  * 字体 `HOS / HOS_Med / Andrea / Exo / ExoM / adobe_simhei` 放在 assets/fonts。
  */
 object Best50ImageBuilder {
+
+    /**
+     * 纯算法版 `Color.rgb`：`0xFF000000 or (r shl 16) or (g shl 8) or b`，与
+     * `android.graphics.Color.rgb` 逐位一致。用它替换全部取色，是为了让本类能在
+     * JVM 单测里安全初始化——[computeRa] 被 Best50RaTest / MaimaiLxnsSyncTest 直接触达，
+     * 而伴生/顶层 `val` 若在类初始化阶段调 android.graphics.Color，单测直接炸
+     * 「Method rgb not mocked」。
+     */
+    private fun rgb(r: Int, g: Int, b: Int): Int =
+        0xFF000000.toInt() or (r shl 16) or (g shl 8) or b
+
+    /** 同上，带 alpha（对应 `Color.argb`）。 */
+    private fun rgbAlpha(a: Int, r: Int, g: Int, b: Int): Int =
+        (a shl 24) or (r shl 16) or (g shl 8) or b
 
     private const val TAG = "Best50Image"
 
@@ -174,7 +187,7 @@ object Best50ImageBuilder {
                 val c = Canvas(ratingImg)
                 val andrea = font(context, "Andrea.otf")
                 val b50ra = { r: RecordEntity -> computeRa(r.ds, r.achievements, true) }
-                val ink = Color.rgb(240, 246, 255)
+                val ink = rgb(240, 246, 255)
                 drawText(c, "${b50ra(old.first())}", 146f, 25f, 68f, ink, andrea)
                 drawText(c, "${b50ra(old.last())}", 424f, 25f, 68f, ink, andrea)
                 drawText(c, "${b50ra(new.first())}", 695f, 25f, 68f, ink, andrea)
@@ -219,11 +232,11 @@ object Best50ImageBuilder {
         val andrea = font(context, "Andrea.otf")
         val exo = font(context, "Exo.ttf")
         val simHei = font(context, "adobe_simhei.otf")
-        val ink = Color.rgb(240, 246, 255)
-        val dim = Color.rgb(168, 184, 208)
-        val faint = Color.rgb(128, 146, 176)
-        val cyan = Color.rgb(77, 226, 230)
-        val magenta = Color.rgb(255, 95, 162)
+        val ink = rgb(240, 246, 255)
+        val dim = rgb(168, 184, 208)
+        val faint = rgb(128, 146, 176)
+        val cyan = rgb(77, 226, 230)
+        val magenta = rgb(255, 95, 162)
 
         // 左上：菱形 + PLAYER + 玩家名
         val mark = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = cyan }
@@ -261,46 +274,46 @@ object Best50ImageBuilder {
      * 平色画在深色表头上几乎分不出来（真机反证）。
      */
     private fun ratingColorArgb(rating: Int): Int = when {
-        rating < 1000 -> Color.rgb(245, 250, 255)  // 白
-        rating < 2000 -> Color.rgb(66, 165, 245)   // 蓝
-        rating < 4000 -> Color.rgb(102, 187, 106)  // 绿
-        rating < 7000 -> Color.rgb(253, 216, 53)   // 黄
-        rating < 10000 -> Color.rgb(239, 83, 80)   // 红
-        rating < 12000 -> Color.rgb(171, 71, 188)  // 紫
-        rating < 13000 -> Color.rgb(226, 145, 78)  // 铜（渐变中段）
-        rating < 14000 -> Color.rgb(110, 126, 146) // 银（渐变中段）
-        rating < 14500 -> Color.rgb(240, 188, 44)  // 金（渐变中段）
-        rating < 15000 -> Color.rgb(255, 243, 194) // 铂（渐变中段）
-        else -> Color.rgb(230, 243, 247)           // 虹段用 shader 覆盖
+        rating < 1000 -> rgb(245, 250, 255)  // 白
+        rating < 2000 -> rgb(66, 165, 245)   // 蓝
+        rating < 4000 -> rgb(102, 187, 106)  // 绿
+        rating < 7000 -> rgb(253, 216, 53)   // 黄
+        rating < 10000 -> rgb(239, 83, 80)   // 红
+        rating < 12000 -> rgb(171, 71, 188)  // 紫
+        rating < 13000 -> rgb(226, 145, 78)  // 铜（渐变中段）
+        rating < 14000 -> rgb(110, 126, 146) // 银（渐变中段）
+        rating < 14500 -> rgb(240, 188, 44)  // 金（渐变中段）
+        rating < 15000 -> rgb(255, 243, 194) // 铂（渐变中段）
+        else -> rgb(230, 243, 247)           // 虹段用 shader 覆盖
     }
 
     private val RAINBOW_STOPS = intArrayOf(
-        Color.rgb(239, 83, 80), Color.rgb(255, 167, 38), Color.rgb(255, 213, 79),
-        Color.rgb(102, 187, 106), Color.rgb(66, 165, 245), Color.rgb(171, 71, 188),
+        rgb(239, 83, 80), rgb(255, 167, 38), rgb(255, 213, 79),
+        rgb(102, 187, 106), rgb(66, 165, 245), rgb(171, 71, 188),
     )
 
     /** 铜：暖橙铜镜面（色相与原平色同源，只加明暗镀层，别往金色靠）。 */
     private val COPPER_STOPS = intArrayOf(
-        Color.rgb(255, 214, 170), Color.rgb(226, 145, 78),
-        Color.rgb(140, 74, 34), Color.rgb(255, 190, 130),
+        rgb(255, 214, 170), rgb(226, 145, 78),
+        rgb(140, 74, 34), rgb(255, 190, 130),
     )
 
     /** 银：冷灰镜面，双高光带（顶/底亮、中段压暗才有金属厚度；不压到灰就不像银）。 */
     private val SILVER_STOPS = intArrayOf(
-        Color.rgb(255, 255, 255), Color.rgb(188, 204, 222),
-        Color.rgb(110, 126, 146), Color.rgb(242, 250, 255),
+        rgb(255, 255, 255), rgb(188, 204, 222),
+        rgb(110, 126, 146), rgb(242, 250, 255),
     )
 
     /** 金：饱和琥珀金（比铂深一档、比铜黄一档）。 */
     private val GOLD_STOPS = intArrayOf(
-        Color.rgb(255, 238, 176), Color.rgb(240, 188, 44),
-        Color.rgb(156, 104, 12), Color.rgb(255, 212, 96),
+        rgb(255, 238, 176), rgb(240, 188, 44),
+        rgb(156, 104, 12), rgb(255, 212, 96),
     )
 
     /** 铂：maimai 官方「プラチナ」的亮金色——偏白的浅金，整体比金更亮更冷。 */
     private val PLATINUM_STOPS = intArrayOf(
-        Color.rgb(255, 255, 250), Color.rgb(255, 243, 194),
-        Color.rgb(232, 190, 96), Color.rgb(255, 252, 232),
+        rgb(255, 255, 250), rgb(255, 243, 194),
+        rgb(232, 190, 96), rgb(255, 252, 232),
     )
 
     /**
@@ -373,7 +386,7 @@ object Best50ImageBuilder {
             // 白 → 灰 → 白：MULTIPLY 只压中段，等于一条金属暗带
             shader = LinearGradient(
                 0f, y, 0f, inkBottom,
-                intArrayOf(Color.WHITE, Color.rgb(179, 179, 179), Color.WHITE),
+                intArrayOf(rgb(255, 255, 255), rgb(179, 179, 179), rgb(255, 255, 255)),
                 floatArrayOf(0f, 0.5f, 1f), Shader.TileMode.CLAMP,
             )
             xfermode = PorterDuffXfermode(PorterDuff.Mode.MULTIPLY)
@@ -385,8 +398,8 @@ object Best50ImageBuilder {
             shader = LinearGradient(
                 0f, y, 0f, inkBottom,
                 intArrayOf(
-                    Color.argb(140, 255, 255, 255), Color.TRANSPARENT,
-                    Color.TRANSPARENT, Color.argb(140, 255, 255, 255),
+                    rgbAlpha(140, 255, 255, 255), 0,
+                    0, rgbAlpha(140, 255, 255, 255),
                 ),
                 floatArrayOf(0f, 0.12f, 0.88f, 1f), Shader.TileMode.CLAMP,
             )
@@ -438,17 +451,17 @@ object Best50ImageBuilder {
             "DX" -> "kiba_ui_upe_infoicon_deluxemode"
             else -> null
         }
-        // x 从上游的 170 收到 163：新徽章是带描边的整块 pill，170+68=238
-        // 会伸进卡片右侧圆角区被 alpha 蒙版切掉一角。
+        // 用原版游戏素材（白底 + 彩色 DX / 蓝底 SD），x 回到上游的 170：
+        // 0.6 倍后 113×32 → 68×19，右缘 238，与旧版分享图一致。
         modeAsset?.let { asset ->
             decode(context, asset)?.let { icon ->
-                c.drawBitmap(scale(icon, 0.6f), 163f, if (dxper == 0) 6f else 16f, null)
+                c.drawBitmap(scale(icon, 0.6f), 170f, if (dxper == 0) 6f else 16f, null)
             }
         }
         // DX 星标
         if (dxper > 0) {
             decode(context, "kiba_dxstar_$dxper")?.let { star ->
-                c.drawBitmap(scale(star, 0.65f), 163f, 4f, null)
+                c.drawBitmap(scale(star, 0.65f), 170f, 4f, null)
             }
         }
 
@@ -456,9 +469,9 @@ object Best50ImageBuilder {
         decode(context, diffAsset(r.levelIndex))?.let { c.drawBitmap(it, 0f, 0f, null) }
 
         // 深色玻璃配色：主文字冷白、次文字灰蓝、ra 用青色强调
-        val ink = Color.rgb(240, 246, 255)
-        val dim = Color.rgb(190, 204, 224)
-        val cyan = Color.rgb(77, 226, 230)
+        val ink = rgb(240, 246, 255)
+        val dim = rgb(190, 204, 224)
+        val cyan = rgb(77, 226, 230)
 
         // 曲号（DX 老曲 +10000）
         val trackId = if (r.songId < 10000 && r.type == "DX") r.songId + 10000 else r.songId
@@ -469,7 +482,7 @@ object Best50ImageBuilder {
 
         // 达成率
         drawText(c, "%.4f%%".format(r.achievements), 30f, 42f, 26f,
-            Color.rgb(245, 252, 255), font(context, "Andrea.otf"))
+            rgb(245, 252, 255), font(context, "Andrea.otf"))
 
         // 评级（MaimaiData 高清源 kiba_rank_* 600×267）
         // 旧 86×38 @ y=40 → 底边落在 78，**压过信息带上沿那条 74 的横线**（用户截图点名
@@ -517,7 +530,7 @@ object Best50ImageBuilder {
         )
         // 小字说明：光三个数字看不出哪个是定数、哪个是 DX 率、哪个是单曲 ra。
         // 9px 贴在同一条基线下 12px 处，不占新行，也不压信息带底边。
-        val faint = Color.argb(150, 190, 204, 224)
+        val faint = rgbAlpha(150, 190, 204, 224)
         val fontZh = font(context, "adobe_simhei.otf")
         drawTextBase(c, "定数", 34f, 126f, 9f, faint, fontZh)
         drawTextBase(c, "DX率", 84f, 126f, 9f, faint, fontZh)

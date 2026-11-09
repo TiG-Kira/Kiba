@@ -1,6 +1,8 @@
 package com.kira.kiba.ui.me
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Typeface
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -34,13 +36,20 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.SubcomposeAsyncImage
@@ -77,6 +86,18 @@ private val BAND_H = 66.dp
 private val STRIP_W = 20.dp
 private val SIDE_W = 150.dp
 
+/** 竖条里的难度徽章厚度：条宽 20dp，左右各留 2dp（与分享图 `strip_w - 4` 对齐）。 */
+private val PLATE_THICK = 16.dp
+
+/** 难度徽章素材：与 `build_assets.py` 的 `DIFF_PLATE` 一一对应（0..4 = BSC..Re:Master）。 */
+private val DIFF_PLATE = listOf(
+    "kiba_diff_basic",
+    "kiba_diff_advanced",
+    "kiba_diff_expert",
+    "kiba_diff_master",
+    "kiba_diff_remaster",
+)
+
 private val BG = Color(0xFF0B1020)
 private val BAND = Color(0xFF0A0F1C)
 private val INK = Color(0xFFF0F6FF)
@@ -100,15 +121,64 @@ fun Best50Tile(
 ) {
     val fonts = rememberTileFonts()
     val diffColor = tileDifficultyColor(record.levelIndex)
-    val diffName = tileDifficultyName(record.levelIndex)
     val dxStar = dxStarLevel(record.dxScore, fullScore)
     val ra = Best50ImageBuilder.computeRa(record.ds, record.achievements, true)
     val percent = if (fullScore > 0) record.dxScore * 100 / fullScore else 0
 
     BoxWithConstraints(modifier = modifier.fillMaxWidth().height(TILE_H)) {
+        // 右侧成绩面板按比例收窄：它内部最宽的元素是 80dp 的评级贴图与
+        // 「ra 333 / #1/15」行（实测 ~100dp），150dp 在宽屏是余量、在 360dp 屏
+        // 就是挤占 —— 旧版窄屏中间只剩 128dp，达成率只能缩到 16sp，
+        // 和宽屏完全两个观感。122~150dp 之间线性取值，宽屏保持原样。
+        val sideW = (maxWidth * 0.38f).coerceIn(122.dp, SIDE_W)
+
         // 主信息区随屏幕变宽 → 歌名可显示更多字符（半角约 8dp / 列）
-        val titleCols = ((maxWidth.value - STRIP_W.value - 20f - SIDE_W.value) / 8f)
+        val titleCols = ((maxWidth.value - STRIP_W.value - 20f - sideW.value) / 8f)
             .toInt().coerceIn(10, 44)
+
+        // 字号不再靠 em 系数拍脑袋，直接用 TextMeasurer 量真实字宽：
+        // 「99.1234%」和「100.5548%」差一个字符，写死系数必然一头留白一头溢出。
+        val measurer = rememberTextMeasurer()
+        val density = LocalDensity.current
+        fun textW(text: String, style: TextStyle): Float = with(density) {
+            measurer.measure(text, style, softWrap = false, maxLines = 1)
+                .size.width.toDp().value
+        }
+
+        val idText = "ID ${trackIdOf(record)}"
+        val pctText = "%.4f%%".format(record.achievements)
+        val lvText = "LV ${record.ds}"
+        val pctUnit = (textW(pctText, TextStyle(fontSize = 27.sp, fontFamily = fonts.andrea)) / 27f)
+            .coerceAtLeast(0.1f)
+        val lvUnit = (textW(lvText, TextStyle(fontSize = 13.sp, fontFamily = fonts.exo)) / 13f)
+            .coerceAtLeast(0.1f)
+
+        // 达成率 / 定数：按同一比例整体缩放，宽窄屏的视觉关系才一致。
+        // 旧版用「窄屏 11 / 宽屏 13」两档绝对值，窄屏相当于 0.69 倍、宽屏 0.53 倍，
+        // 同一张卡换台机器 LV 就"变大"了（用户截图点名）。
+        val bandW = (maxWidth - STRIP_W - 20.dp - sideW).value
+        val fitScale = (bandW - 13f) / (pctUnit * 27f + lvUnit * 13f)
+        val lvSize = (13f * fitScale).coerceIn(9.5f, 13f)
+        val pctSize = ((bandW - 13f - lvUnit * lvSize) / pctUnit).coerceIn(13f, 27f)
+
+        // 标签行：ID + 流派 + 版本。窄屏（<372dp）主区只剩 ~158dp，序号徽章
+        // 和右下角的「#n/15」信息重复，先让它出局；版本 tag 放不下就按用户口径
+        // 用「…」截断 —— 它挂 weight(1f, fill = false)，先按内容宽度要，最多拿到
+        // 行内剩余，BasicText 自己打省略号，绝不会把行撑出卡片。
+        val idStyle = TextStyle(fontSize = 11.sp, fontFamily = fonts.exoM)
+        fun pillW(text: String, size: Float, padH: Float): Float {
+            if (text.isBlank()) return 0f
+            return (textW(text, TextStyle(fontSize = size.sp)) + padH * 2f).coerceAtMost(96f)
+        }
+        val narrowRow = maxWidth < 372.dp
+        val contentW = (maxWidth - STRIP_W - sideW - 20.dp).value
+        val idW = textW(idText, idStyle)
+        // 版本 tag 之外的全部固定宽度：徽章(窄屏无) + ID + 流派及两处间距
+        val fixedW = (if (narrowRow) 0f else 30f) +
+            idW + (if (genre.isNotBlank()) 8f else 0f) + pillW(genre, 10f, 6f) +
+            (if (version.isNotBlank()) 6f else 0f)
+        // 标准档放不下就整体退一档（9sp / 4dp），再不够才交给省略号
+        val compactPill = contentW - fixedW < pillW(version, 10f, 6f)
 
         Box(
             modifier = Modifier
@@ -141,12 +211,10 @@ fun Best50Tile(
             )
 
             Row(Modifier.fillMaxSize()) {
-                // ── 难度徽章条：与导出图单格同一套设计（见 DifficultyStrip）──
+                // ── 难度徽章条：底 / 菱形 / 刻度保留，难度名换官方徽章贴图 ──
                 DifficultyStrip(
                     color = diffColor,
-                    en = diffName,
-                    zh = tileDifficultyZh(record.levelIndex),
-                    fonts = fonts,
+                    index = record.levelIndex,
                     modifier = Modifier.width(STRIP_W).fillMaxHeight(),
                 )
 
@@ -158,19 +226,28 @@ fun Best50Tile(
                         verticalArrangement = Arrangement.spacedBy(5.dp),
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            RankBadge(rankNum, fonts)
-                            Spacer(Modifier.width(8.dp))
+                            if (!narrowRow) {
+                                RankBadge(rankNum, fonts)
+                                Spacer(Modifier.width(8.dp))
+                            }
                             BasicText(
-                                "ID ${trackIdOf(record)}",
-                                style = TextStyle(fontSize = 11.sp, fontFamily = fonts.exoM, color = DIM),
+                                idText,
+                                style = idStyle.copy(color = DIM),
+                                maxLines = 1,
+                                softWrap = false,
                             )
                             if (genre.isNotBlank()) {
                                 Spacer(Modifier.width(8.dp))
-                                TilePill(genre, CYAN)
+                                TilePill(genre, CYAN, compact = compactPill)
                             }
                             if (version.isNotBlank()) {
                                 Spacer(Modifier.width(6.dp))
-                                TilePill(version, VIOLET)
+                                // weight(fill = false)：最多拿到行内剩余宽度，内容更窄时
+                                // 按内容宽度收；放不下就由 BasicText 打「…」。
+                                TilePill(
+                                    version, VIOLET, compact = compactPill,
+                                    modifier = Modifier.weight(1f, fill = false),
+                                )
                             }
                         }
                         BasicText(
@@ -186,16 +263,24 @@ fun Best50Tile(
                             .padding(start = 12.dp, end = 8.dp, top = 6.dp, bottom = 8.dp),
                         verticalArrangement = Arrangement.SpaceBetween,
                     ) {
-                        Row(verticalAlignment = Alignment.Bottom) {
+                        // 达成率与定数**按基线对齐**（alignByBaseline），字号再变也是
+                        // 同一条基线；旧版用 Alignment.Bottom + 4dp 底距，字号一缩
+                        // LV 就浮到半空 —— 窄屏被看成「对齐顶部」，宽屏却是齐底的。
+                        Row {
                             BasicText(
-                                "%.4f%%".format(record.achievements),
-                                style = TextStyle(fontSize = 27.sp, fontFamily = fonts.andrea, color = INK_SOFT),
+                                pctText,
+                                style = TextStyle(fontSize = pctSize.sp, fontFamily = fonts.andrea, color = INK_SOFT),
+                                maxLines = 1,
+                                softWrap = false,
+                                modifier = Modifier.alignByBaseline(),
                             )
                             Spacer(Modifier.width(10.dp))
                             BasicText(
-                                "LV ${record.ds}",
-                                style = TextStyle(fontSize = 13.sp, fontFamily = fonts.exo, color = DIM),
-                                modifier = Modifier.padding(bottom = 4.dp),
+                                lvText,
+                                style = TextStyle(fontSize = lvSize.sp, fontFamily = fonts.exo, color = DIM),
+                                maxLines = 1,
+                                softWrap = false,
+                                modifier = Modifier.alignByBaseline(),
                             )
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -213,7 +298,7 @@ fun Best50Tile(
                 }
 
                 // ── 右侧成绩面板：同样锁成上下两段 ──
-                Column(Modifier.width(SIDE_W).fillMaxHeight()) {
+                Column(Modifier.width(sideW).fillMaxHeight()) {
                     Column(
                         Modifier.height(TOP_H).fillMaxWidth()
                             .padding(end = 10.dp, top = 8.dp),
@@ -225,7 +310,16 @@ fun Best50Tile(
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
                             if (dxStar > 0) StarBadge(dxStar)
-                            ModeBadge(record.type, fonts)
+                            // SD / DX 用原版游戏素材（113×32），0.6 倍 = 68×19dp，与导出图同比例。
+                            // 之前改成 Compose 自绘的深色 pill，主页一眼就跟分享图对不上了。
+                            val modeIcon = when (record.type) {
+                                "SD" -> "kiba_ui_upe_infoicon_standardmode"
+                                "DX" -> "kiba_ui_upe_infoicon_deluxemode"
+                                else -> null
+                            }
+                            if (modeIcon != null) {
+                                ScaledAsset(modeIcon, Modifier.size(68.dp, 19.dp))
+                            }
                         }
                         // 评级：保留 MaimaiData 高清徽章。
                         // 尺寸与导出图对齐（80×35.6 → 80×35）：旧 86×38 在
@@ -243,14 +337,16 @@ fun Best50Tile(
                     }
 
                     Column(
+                        // top = 4dp：图标行原本紧贴成绩带上沿（SpaceBetween 的首行贴顶），
+                        // 真机上看着吊在分隔线下面；下移 4dp，与下方 ra 行的间距也更匀。
                         Modifier.height(BAND_H).fillMaxWidth()
-                            .padding(end = 10.dp, bottom = 8.dp),
+                            .padding(end = 10.dp, top = 4.dp, bottom = 7.dp),
                         horizontalAlignment = Alignment.End,
                         verticalArrangement = Arrangement.SpaceBetween,
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
                             val comboIdx = FC_KEYS.indexOf(record.fc.lowercase()).coerceAtLeast(0)
                             val syncIdx = FS_KEYS.indexOf(record.fs.lowercase()).coerceAtLeast(0)
@@ -294,16 +390,14 @@ fun Best50Tile(
  * - 顶部深墨菱形 + 白心（呼应 B50 表头），底部双刻度收尾；
  * - 冷白 1dp 外描边。
  *
- * 文字为「英文 HOS_Bold 12sp + 中文小一档 simHei 10sp」拼成一行后整体旋转 90°，
- * 逐字竖排会把单词拆散（Re:Master 曾被读成 Re:Masier）。旋转不改布局尺寸，
- * 所以 wrapContentSize(unbounded) + 父级居中对齐即可保证视觉居中。
+ * 难度名不再是字体拼字：直接贴官方难度徽章素材（`kiba_diff_basic` 等），
+ * 整块顺时针转 90° 后从上往下读。素材原生是横向徽章（高 23~24px、长 86~151px），
+ * 旋转后「厚度」正好对应 20dp 的竖条宽度。
  */
 @Composable
 private fun DifficultyStrip(
     color: Color,
-    en: String,
-    zh: String,
-    fonts: TileFonts,
+    index: Int,
     modifier: Modifier = Modifier,
 ) {
     val ink = Color(0xFF0C101A)
@@ -363,26 +457,75 @@ private fun DifficultyStrip(
             Modifier.fillMaxSize()
                 .border(1.dp, Color.White.copy(alpha = 0.65f), RoundedCornerShape(9.dp)),
         )
-        // 英文 + 中文拼成一行后整体旋转，中文自然跟在英文末尾
-        Row(
-            modifier = Modifier
-                .wrapContentSize(unbounded = true, align = Alignment.Center)
-                .rotate(90f),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            BasicText(
-                en,
-                style = TextStyle(fontSize = 12.sp, fontFamily = fonts.hosBold, color = ink),
-                maxLines = 1,
-            )
-            Spacer(Modifier.width(3.dp))
-            BasicText(
-                zh,
-                style = TextStyle(fontSize = 10.sp, fontFamily = fonts.simHei, color = ink),
-                maxLines = 1,
-            )
+        // 难度名：官方难度徽章贴图（`kiba_diff_*`）整块转到竖直方向。
+        // 徽章本身是横向的（绿底 BASIC / 黄底 ADVANCED / …），先按 alpha 墨迹
+        // 裁掉透明边距再等比缩放，否则素材自带的上下留白会让它看起来比竖条窄。
+        DiffPlate(index, PLATE_THICK)
+    }
+}
+
+/**
+ * 竖条上的难度名 —— 官方难度徽章素材，顺时针转 90° 后从上往下读。
+ *
+ * 素材是横向徽章（例如 151×32，四周带透明边距），直接贴会把边距也算进厚度，
+ * 视觉上比竖条窄一圈。所以先按 alpha 墨迹裁掉空白，再等比缩到厚度 [thickness]，
+ * 最后 `rotate(90f)`：旋转只改绘制、不改布局，`wrapContentSize(unbounded)` 允许
+ * 它横着占满 60~90dp 而不撑破 20dp 宽的竖条，父级 Center 保证视觉居中。
+ */
+@Composable
+private fun DiffPlate(index: Int, thickness: Dp) {
+    val name = DIFF_PLATE.getOrNull(index) ?: return
+    val context = LocalContext.current
+    val bmp = remember(name) { loadDiffPlate(context, name) } ?: return
+    val ratio = bmp.width.toFloat() / bmp.height
+    Image(
+        painter = BitmapPainter(bmp, filterQuality = FilterQuality.Medium),
+        contentDescription = null,
+        contentScale = ContentScale.FillBounds,
+        modifier = Modifier
+            .wrapContentSize(unbounded = true, align = Alignment.Center)
+            .width(thickness * ratio)
+            .height(thickness)
+            .rotate(90f),
+    )
+}
+
+/** 已按墨迹裁好的难度徽章（全进程共享，避免列表滚动时反复解码）。 */
+private val diffPlateCache = ConcurrentHashMap<String, Bitmap>()
+
+private fun loadDiffPlate(context: Context, name: String): ImageBitmap? {
+    diffPlateCache[name]?.let { return it.asImageBitmap() }
+    val id = drawableId(context, name)
+    if (id == 0) return null
+    val raw = BitmapFactory.decodeResource(context.resources, id) ?: return null
+    val bmp = trimTransparent(raw)
+    diffPlateCache[name] = bmp
+    return bmp.asImageBitmap()
+}
+
+/** 裁到 alpha 非零的包围盒；全透明时原样返回。 */
+private fun trimTransparent(src: Bitmap): Bitmap {
+    val w = src.width
+    val h = src.height
+    val px = IntArray(w * h)
+    src.getPixels(px, 0, w, 0, 0, w, h)
+    var minX = w
+    var minY = h
+    var maxX = -1
+    var maxY = -1
+    for (y in 0 until h) {
+        val row = y * w
+        for (x in 0 until w) {
+            if (px[row + x] ushr 24 != 0) {
+                if (x < minX) minX = x
+                if (x > maxX) maxX = x
+                if (y < minY) minY = y
+                if (y > maxY) maxY = y
+            }
         }
     }
+    if (maxX < minX || maxY < minY) return src
+    return Bitmap.createBitmap(src, minX, minY, maxX - minX + 1, maxY - minY + 1)
 }
 
 /** 按比例调整亮度：素材里 `color * factor`，各通道钳在 0..1。 */
@@ -408,39 +551,28 @@ private fun RankBadge(rankNum: Int, fonts: TileFonts) {
     }
 }
 
-/** 流派 / 版本 pill：彩色细边 + 半透明底，随主信息区宽度自然排布。 */
+/** 流派 / 版本 pill：彩色细边 + 半透明底。
+ *
+ *  宽度由父级实测字宽决定（见调用点），这里只负责画；[compact] 是窄屏退让档
+ *  （9sp + 4dp 内边距），不到万不得已不会用上 —— 真正的兜底是整块不画。 */
 @Composable
-private fun TilePill(text: String, accent: Color) {
+private fun TilePill(
+    text: String,
+    accent: Color,
+    compact: Boolean = false,
+    modifier: Modifier = Modifier,
+) {
     Box(
-        Modifier.widthIn(max = 96.dp)
+        modifier.widthIn(max = 96.dp)
             .clip(RoundedCornerShape(6.dp))
             .background(accent.copy(alpha = 0.12f))
-            .padding(horizontal = 6.dp, vertical = 2.dp),
+            .padding(horizontal = if (compact) 4.dp else 6.dp, vertical = 2.dp),
     ) {
         BasicText(
             text,
-            style = TextStyle(fontSize = 10.sp, color = accent),
+            style = TextStyle(fontSize = if (compact) 9.sp else 10.sp, color = accent),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-        )
-    }
-}
-
-/** SD / DX 徽章：Compose 原生绘制，替代 `kiba_ui_upe_infoicon_*` 低清贴图。 */
-@Composable
-private fun ModeBadge(type: String, fonts: TileFonts) {
-    val (label, accent) = when (type) {
-        "DX" -> "DX" to MAGENTA
-        else -> "SD" to CYAN
-    }
-    Box(
-        Modifier.clip(RoundedCornerShape(5.dp))
-            .background(accent.copy(alpha = 0.16f))
-            .padding(horizontal = 6.dp, vertical = 2.dp),
-    ) {
-        BasicText(
-            label,
-            style = TextStyle(fontSize = 10.sp, fontFamily = fonts.exoM, color = accent),
         )
     }
 }
@@ -463,12 +595,15 @@ private fun StarBadge(count: Int) {
 }
 
 /** FC / FS 状态圆：有状态用高清徽章，无状态画原生灰色空心圆（替代占位贴图）。
- *  统一 23dp（= 导出图的 23.4px）：旧值 25dp 时「图标行 + ra 行」几乎顶满 66dp 成绩带，
- *  SpaceBetween 只剩 3dp 间距，序号就贴上了图标。 */
+ *
+ *  两者**画框不同高**是刻意的：`kiba_combo_*` 是 144×144 的游戏素材，圆本体（含花边）
+ *  只占画布约 0.83，透明边距再吃掉一圈，所以塞进 23dp 画框时徽章看着比 23dp 的灰圆
+ *  小一整圈（用户真机点名）。徽章给 27dp、灰圆给 23dp，视觉直径才对得上。
+ */
 @Composable
 private fun StatusIcon(asset: String?) {
     if (asset != null) {
-        ScaledAsset(asset, Modifier.size(23.dp))
+        ScaledAsset(asset, Modifier.size(27.dp))
     } else {
         Box(
             Modifier.size(23.dp)
@@ -588,26 +723,6 @@ private fun tileDifficultyColor(index: Int): Color = when (index) {
     3 -> Color(0xFFB07CFF)
     4 -> Color(0xFFE6D6FF)
     else -> Color(0xFFB12876)
-}
-
-/** 官方完整难度名（与 build_assets.py 的 DIFF 表一致）。 */
-private fun tileDifficultyName(index: Int): String = when (index) {
-    0 -> "Basic"
-    1 -> "Advanced"
-    2 -> "Expert"
-    3 -> "Master"
-    4 -> "Re:Master" // Re:MASTER = 白谱 / 宗师，不是宴谱
-    else -> "Utage"
-}
-
-/** 官方中文难度名（与 build_assets.py 的 DIFF 表一致）。Re:Master = 白谱 / 宗师。 */
-private fun tileDifficultyZh(index: Int): String = when (index) {
-    0 -> "基础"
-    1 -> "高级"
-    2 -> "专家"
-    3 -> "大师"
-    4 -> "宗师"
-    else -> "宴谱"
 }
 
 /** 曲号（DX 老曲 +10000，与位图管线一致）。 */
