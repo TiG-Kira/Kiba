@@ -54,6 +54,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -188,6 +189,59 @@ fun AgentScreen(
         }
     }
 
+    // ── 自动贴底后的顶栏策略 ──────────────────────────────────────────────
+    // 发送消息 / 技能回复都会把列表自动滚到最新一条，按用户定稿分两档：
+    //   ① 底部本来就在屏幕内（内容不足一屏）→ 顶栏一个字都不写，保持当前状态；
+    //   ② 底部原本在屏幕外（贴底后列表仍能往回滚）→ 折叠顶栏让出大标题。
+    // 「回到底部」浮动按钮不在此列：它只在 canScrollForward（底部在屏幕外）时
+    // 出现，点它必然属于 ②，直接折到底即可。
+    /**
+     * 把顶栏压到完全折叠 —— 贴底时把大标题让出来，多露一屏聊天。
+     *
+     * - 折叠量取 `scrollBehavior.state.heightOffsetLimit`（负值，顶栏自己登记的大标题高度）。
+     *   heightOffset 的 setter 会 clamp 到 [limit, 0]，写 limit 就是 100% 折叠；液态皮肤读
+     *   collapsedFraction，同一份数值同时驱动玻璃带，不必分材质各写一套。材质关闭时顶栏
+     *   没登记 limit（为 0），跳过即可，不会崩。
+     * - contentOffset 同步置负：它既是「内容已滚离原位」的信号（液态按钮材质、详情页封面
+     *   判定都看它），也是 nestedScroll 下一次累计的起点。只改 heightOffset 的话，用户接着
+     *   滚一下就会按旧起点把顶栏弹回展开态。
+     * - 已折到底直接返回：流式跟随每个 chunk 都会贴一次底，不能每片都重启 Animatable。
+     */
+    fun collapseTopBar() {
+        val topBarState = scrollBehavior.state
+        val collapsed = topBarState.heightOffsetLimit
+        if (collapsed >= 0f) return
+        if (topBarState.heightOffset <= collapsed + 1f &&
+            topBarState.contentOffset <= collapsed + 1f
+        ) return
+        topBarState.contentOffset = collapsed
+        scope.launch {
+            Animatable(topBarState.heightOffset).animateTo(
+                targetValue = collapsed,
+                animationSpec = tween(durationMillis = 240),
+            ) { topBarState.heightOffset = value }
+        }
+    }
+
+    /** 贴底后的条件判定：只有底部真的超出过屏幕才动顶栏，否则保持原状。 */
+    fun maybeCollapseTopBarAfterBottom() {
+        if (!shouldCollapseTopBarAfterScrollToBottom(
+                canScrollBackward = listState.canScrollBackward,
+                heightOffsetLimit = scrollBehavior.state.heightOffsetLimit,
+            )
+        ) return
+        collapseTopBar()
+    }
+
+    /**
+     * 自动滚底动作之后的判定入口。新气泡是刚插入的，等一帧让 LazyColumn 完成
+     * remeasure，否则读到的是上一帧 layoutInfo，会把「刚好撑出一屏」判成没超出。
+     */
+    suspend fun maybeCollapseTopBarAfterFrame() {
+        withFrameNanos { }
+        maybeCollapseTopBarAfterBottom()
+    }
+
     // 流式输出视口跟随。
     //
     // 旧实现有两个坑（用户实测「流式过程中划不动」）：
@@ -208,6 +262,10 @@ fun AgentScreen(
             if (listState.isScrollInProgress) return@collectLatest
             val last = AgentSession.turns.value.lastIndex
             if (last >= 0) listState.scrollToItem(last)
+            // 回复边收边长，一旦把底部撑出屏幕就折叠；始终不足一屏则保持顶栏原状。
+            // 这里不等帧（chunk 很密，等帧会被 collectLatest 取消掉），由各滚底动作
+            // 之后的 maybeCollapseTopBarAfterFrame() 兜底补判。
+            maybeCollapseTopBarAfterBottom()
         }
     }
     // 用户手势期间判定是否还该跟随：只在贴底时继续跟随，上滑即脱钩
@@ -228,30 +286,13 @@ fun AgentScreen(
     }
 
     /**
-     * 回到最新一条消息，并顺手把顶栏压到完全折叠 —— 回到底部时把大标题让出来，多露一屏聊天。
-     *
-     * - 折叠量取 `scrollBehavior.state.heightOffsetLimit`（负值，顶栏自己登记的大标题高度）。
-     *   heightOffset 的 setter 会 clamp 到 [limit, 0]，写 limit 就是 100% 折叠；液态皮肤读
-     *   collapsedFraction，同一份数值同时驱动玻璃带，不必分材质各写一套。材质关闭时顶栏
-     *   没登记 limit（为 0），跳过即可，不会崩。
-     * - contentOffset 同步置负：它既是「内容已滚离原位」的信号（液态按钮材质、详情页封面
-     *   判定都看它），也是 nestedScroll 下一次累计的起点。只改 heightOffset 的话，用户接着
-     *   滚一下就会按旧起点把顶栏弹回展开态。
-     * - autoFollow 复位：上翻时视口跟随会脱钩，不复位的话下一条流式消息不会自动贴底。
+     * 回到最新一条消息。按钮只在「底部还在屏幕外」时出现，所以直接把顶栏折到底；
+     * 发送消息 / 技能回复那类自动贴底走的是 [maybeCollapseTopBarAfterBottom] 的两档判定，
+     * 不在这里。autoFollow 复位：上翻时视口跟随会脱钩，不复位的话下一条流式消息不会贴底。
      */
     fun jumpToBottom() {
         autoFollow = true
-        val topBarState = scrollBehavior.state
-        val collapsed = topBarState.heightOffsetLimit
-        if (collapsed < 0f) {
-            topBarState.contentOffset = collapsed
-            scope.launch {
-                Animatable(topBarState.heightOffset).animateTo(
-                    targetValue = collapsed,
-                    animationSpec = tween(durationMillis = 240),
-                ) { topBarState.heightOffset = value }
-            }
-        }
+        collapseTopBar()
         scope.launch {
             // 用列表自身的 totalItemsCount 而不是 turns.lastIndex：thinking 时列表末尾
             // 还挂着一条「思考中…」，按会话数算会差一项、滚不到真正的底部。
@@ -288,6 +329,7 @@ fun AgentScreen(
             )
             val last = AgentSession.turns.value.lastIndex
             if (last >= 0) listState.animateScrollToItem(last)
+            maybeCollapseTopBarAfterFrame()
         }
     }
 
@@ -378,7 +420,10 @@ fun AgentScreen(
             AgentSession.add(AgentSession.Turn(fromUser = true, text = trimmed))
             input = ""
             thinking = true
-            scope.launch { listState.scrollToItem(AgentSession.turns.value.lastIndex) }
+            scope.launch {
+                listState.scrollToItem(AgentSession.turns.value.lastIndex)
+                maybeCollapseTopBarAfterFrame()
+            }
             scope.launch {
                 val reply = runCatching { agent.submitGuess(trimmed) }.getOrElse {
                     KibaAgent.AgentReply("出错了：${it.message ?: "未知错误"}")
@@ -401,6 +446,7 @@ fun AgentScreen(
                 )
                 val idx = AgentSession.turns.value.lastIndex
                 if (idx >= 0) listState.animateScrollToItem(idx)
+                maybeCollapseTopBarAfterFrame()
             }
             return
         }
@@ -410,7 +456,10 @@ fun AgentScreen(
         input = ""
         thinking = true
         // 立刻滚到底部露出新气泡，否则流式内容在屏幕外增长，看起来就像没流式
-        scope.launch { listState.scrollToItem(AgentSession.turns.value.lastIndex) }
+        scope.launch {
+            listState.scrollToItem(AgentSession.turns.value.lastIndex)
+            maybeCollapseTopBarAfterFrame()
+        }
         scope.launch {
             val reply = runCatching {
                 agent.handleStream(trimmed) { chunk ->
@@ -446,6 +495,7 @@ fun AgentScreen(
             thinking = false
             val idx = AgentSession.turns.value.lastIndex
             if (idx >= 0) listState.animateScrollToItem(idx)
+            maybeCollapseTopBarAfterFrame()
         }
     }
 
