@@ -7,7 +7,7 @@ import android.content.Context
 import org.json.JSONObject
 
 /**
- * 萌娘百科内置知识库（舞萌DX / 舞萌系列 / CHUNITHM 三个条目）。
+ * 内置知识库（舞萌DX / 舞萌系列 / CHUNITHM 三个萌娘百科条目 + Simai 谱面语法）。
  *
  * 为什么内置而不是每次联网：Agent 被问「定数怎么算 Rating」「LEX 是什么档」这类
  * 机制类问题时，模型凭空编造的概率很高；而萌娘百科对国内访问并不稳定（Cloudflare），
@@ -156,9 +156,15 @@ object MoegirlKb {
      * v2 起默认取 6 节（原 4 节）：机制类问题常同时涉及「公式 + 评级区间 + 口径冲突」，
      * 只给 4 节容易漏掉互相矛盾的那条注解；最终长度仍由 MAX_RETURN_CHARS 兜底。
      */
-    fun search(context: Context, query: String, limit: Int = 6): String {
+    fun search(context: Context, query: String, limit: Int = 6, docFilter: String? = null): String {
         ensureLoaded(context)
-        val all = docs.orEmpty().flatMap { it.sections }
+        // docFilter 用于把某个技能限定在一篇文档里（例：simai_syntax 只查 Simai 语法，
+        // 免得「BPM / 拍数」这类词把舞萌机制条目也捞进来挤占回灌预算）。
+        val all = docs.orEmpty()
+            .filter { doc ->
+                docFilter.isNullOrBlank() || doc.title.contains(docFilter, ignoreCase = true)
+            }
+            .flatMap { it.sections }
         if (all.isEmpty() || query.isBlank()) return ""
 
         val terms = tokenize(query)
@@ -180,7 +186,7 @@ object MoegirlKb {
         if (scored.isEmpty()) return ""
 
         val sb = StringBuilder()
-        sb.append("【本地知识库检索结果】（萌娘百科条目，回答时可直接引用，不必再联网）\n")
+        sb.append("【本地知识库检索结果】（条目随 APK 固化，回答时可直接引用，不必再联网）\n")
         var used = 0
         scored.take(limit).forEach { (section, _) ->
             val block = buildString {

@@ -158,6 +158,20 @@ object LlmParse {
     }
 
     /**
+     * 一条回复里允许内联铺开的「技能说明卡」上限。
+     *
+     * 技能说明卡只是「技能 + 一句 summary」的纯文字卡（不可点击，功能菜单在顶栏），
+     * 而很多技能结果会带 `skills = SKILLS` 把**整个技能目录**塞回来。过去 UI 无脑
+     * `forEach` 渲染，执行一次 web_search 就会在气泡下面连着弹一整排说明卡。
+     * 这里给一个很小的上限：少量卡（未来真的想推荐两三个技能时）仍可展示，
+     * 一旦是整份目录就全部拦掉。
+     */
+    const val MAX_INLINE_SKILL_CARDS = 2
+
+    /** 是否应该在这条回复里渲染技能说明卡（供 UI 侧兜底，防后端漏改回归）。 */
+    fun shouldRenderSkillCards(count: Int): Boolean = count in 1..MAX_INLINE_SKILL_CARDS
+
+    /**
      * 把模型给出的 arguments 字符串解析成扁平 Map（值统一转成字符串）。
      *
      * 容错：

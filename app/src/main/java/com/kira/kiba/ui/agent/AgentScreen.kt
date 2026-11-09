@@ -64,6 +64,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.kira.kiba.core.agent.AgentSession
 import com.kira.kiba.core.agent.KibaAgent
+import com.kira.kiba.core.agent.LlmParse
 import com.kira.kiba.core.utils.SpUtil
 import com.kira.kiba.ui.common.ChartTypeChip
 import com.kira.kiba.ui.common.CoverFrame
@@ -102,8 +103,9 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  *   （舞萌功能 / 中二节奏功能 / 娱乐功能 / 清除对话），页内不再放按钮或卡片；
  *   分类只改 UI 入口，[KibaAgent.SKILLS] 仍是完整的 LLM tool 表，模型调用不受影响；
  * - 会话记录持久化（[AgentSession]），重启后恢复；
- * - 布局：顶部顶栏 clearance（防遮挡）+ 消息列表 + 底部输入栏
- *   （含悬浮底栏留白与键盘避让）。
+ * - 布局：与曲目 / 我 / 设置页一致 —— 内容从 y=0 铺满，玻璃顶栏悬浮其上；
+ *   顶部留白放在消息列表的 contentPadding（初始防遮挡、滚动时可被滚走，
+ *   文字能从顶栏下穿过产生玻璃/折叠效果）+ 底部输入栏（含悬浮底栏留白与键盘避让）。
  *
  * 「功能」按钮位于 [com.kira.kiba.ui.navigation.KibaMainScreen] 的顶栏动作区
  * （与曲目页排序 / 搜索按钮同款 KibaActionButton），开关由外层持有；
@@ -135,6 +137,8 @@ fun AgentScreen(
     val guessPending by KibaAgent.pendingGuess.collectAsState()
     val guessing = guessPending != null
 
+    // 顶栏遮挡量：只用在「消息列表 contentPadding 顶部」与「功能菜单锚点」两处，
+    // 绝不写成容器固定 padding —— 那会变成一条滚不走的不透明死带。
     val clearance = LocalTopBarClearance.current
     val navBarBottom = LocalNavBarBottomPadding.current
     // 输入行贴键盘上沿：Column 的 imePadding 已把内容顶起 IME 高度，让位里
@@ -272,7 +276,12 @@ fun AgentScreen(
                     fromUser = false,
                     text = reply.text,
                     songs = reply.songs,
-                    skills = reply.skills,
+                    // 技能说明卡不可点击，整份技能目录铺出来就是「弹一串卡片」。
+                    skills = if (LlmParse.shouldRenderSkillCards(reply.skills.size)) {
+                        reply.skills
+                    } else {
+                        emptyList()
+                    },
                     b50 = reply.b50,
                     imageUri = reply.imageUri,
                 )
@@ -380,7 +389,11 @@ fun AgentScreen(
                         fromUser = false,
                         text = reply.text,
                         songs = reply.songs,
-                        skills = reply.skills,
+                        skills = if (LlmParse.shouldRenderSkillCards(reply.skills.size)) {
+                            reply.skills
+                        } else {
+                            emptyList()
+                        },
                         b50 = reply.b50,
                         imageUri = reply.imageUri,
                         calls = reply.calls,
@@ -409,7 +422,7 @@ fun AgentScreen(
                     )
                 }
             }.getOrElse {
-                KibaAgent.AgentReply("出错了：${it.message ?: "未知错误"}", skills = KibaAgent.SKILLS)
+                KibaAgent.AgentReply("出错了：${it.message ?: "未知错误"}")
             }
             AgentSession.finishStream()
             // 技能数据（歌曲 / B50 / 梗图）等非流式产物，合并到最后一条。
@@ -419,7 +432,12 @@ fun AgentScreen(
                 AgentSession.replaceLast(
                     last.copy(
                         songs = reply.songs,
-                        skills = reply.skills,
+                        // 同上：LLM 回复里不铺整份技能目录
+                        skills = if (LlmParse.shouldRenderSkillCards(reply.skills.size)) {
+                            reply.skills
+                        } else {
+                            emptyList()
+                        },
                         b50 = reply.b50,
                         imageUri = reply.imageUri.ifBlank { last.imageUri },
                     )
@@ -435,22 +453,153 @@ fun AgentScreen(
         modifier = Modifier.fillMaxSize(),
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
     ) { padding ->
-        Column(
+        // 与曲目 / 我 / 设置页同一套结构：内容从 y=0 铺满，玻璃顶栏悬浮在内容之上，
+        // 顶部留白交给消息列表的 contentPadding（**可被滚走**）。
+        //
+        // 旧实现把 clearance 写成外层 Column 的固定 padding，等于在顶栏下面垫了一条
+        // 永远不参与滚动的不透明死带：消息文字压根进不了顶栏背后，玻璃折射/大标题
+        // 折叠时「内容从顶栏下穿过」的效果全丢，看起来顶栏下方有一块实体。
+        // 现在文字初始仍在 clearance + 8.dp（不会顶进 TopBar），滑动时却可以滚到
+        // 顶栏底下被玻璃采样，与其它 Tab 完全一致。
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(top = clearance)
                 .imePadding(),
         ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                // 消息列表 + 「回到底部」浮动按钮。按钮浮在列表底部、输入框正上方；
+                // 放进同一个 Box 才能跟着外层 imePadding 一起被键盘顶起，不会压住输入栏。
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                ) {
+                    LazyColumn(
+                        state = listState,
+                        // nestedScroll 必须挂在**真正滚动的列表**上：本页列表外套了
+                        // Box→Column→Box(weight) 四层，挂在 Scaffold 时滚动增量会被
+                        // 顶栏折叠优先吃掉，state.contentOffset 到不了负值 —— 而
+                        // GlassTopAppBar 的磨砂背板 / 按钮材质正是由 contentOffset < 0
+                        // 触发的，结果就是「文字穿透、顶栏没有背景效果」。
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .nestedScroll(scrollBehavior.nestedScrollConnection),
+                        contentPadding = PaddingValues(
+                            start = 16.dp,
+                            end = 16.dp,
+                            top = clearance + 8.dp,
+                            bottom = 8.dp,
+                        ),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        items(messages.size) { index ->
+                            ChatBubble(messages[index], onOpenSong = onOpenSong)
+                        }
+                        if (thinking) {
+                            item {
+                                ChatBubble(AgentSession.Turn(text = "思考中…"), onOpenSong = onOpenSong)
+                            }
+                        }
+                    }
+
+                    // 已在最底部（含内容不足一屏）时整颗按钮淡出；上翻看历史才浮出来。
+                    // 完全限定顶层函数：带隐式 receiver 的布局作用域会把简写解析成
+                    // ColumnScope.AnimatedVisibility 扩展，触发 Compose 的 DSL 作用域报错。
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = showJumpToBottom,
+                        modifier = Modifier.align(Alignment.BottomEnd),
+                        enter = fadeIn(tween(180)) + scaleIn(tween(220), initialScale = 0.8f),
+                        exit = fadeOut(tween(140)) + scaleOut(tween(160), targetScale = 0.8f),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .padding(end = 16.dp, bottom = 12.dp)
+                                .size(40.dp)
+                                .shadow(6.dp, CircleShape)
+                                .clip(CircleShape)
+                                .background(MiuixTheme.colorScheme.primary)
+                                .clickable { jumpToBottom() },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            // 玻璃图标库没有独立的 ArrowDown；拿右向 chevron 顺时针转 90°
+                            // 得到干净的向下箭头，比语义为「下载」的 Download 更贴切。
+                            Icon(
+                                MiuixGlassIcons.Regular.ChevronForward,
+                                contentDescription = "回到对话底部",
+                                modifier = Modifier
+                                    .size(22.dp)
+                                    .rotate(90f),
+                                tint = MiuixTheme.colorScheme.onPrimary,
+                            )
+                        }
+                    }
+                }
+
+                // ── 底部输入区：猜歌对局中 → 答题卡（无需 LLM）；
+                //    否则已配置 LLM 才是聊天输入框；都没有则提示走「功能」按钮 ──
+                when {
+                    guessing -> Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = inputRowBottom),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        TextField(
+                            value = input,
+                            onValueChange = { input = it },
+                            label = "答案是…（歌名 / 别名 / ID）",
+                            useLabelAsPlaceholder = true,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        // 放弃：直接公布答案、结束对局（输入「放弃 / 不猜了」等效）
+                        TextButton(text = "放弃", onClick = { send("放弃") })
+                        Spacer(Modifier.width(4.dp))
+                        Button(onClick = { send(input) }, colors = ButtonDefaults.buttonColorsPrimary()) {
+                            Text(text = if (thinking) "…" else "猜猜看")
+                        }
+                    }
+                    llmReady -> Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = inputRowBottom),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        TextField(
+                            value = input,
+                            onValueChange = { input = it },
+                            label = "问问 Kiba…",
+                            useLabelAsPlaceholder = true,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Button(onClick = { send(input) }, colors = ButtonDefaults.buttonColorsPrimary()) {
+                            Text(text = if (thinking) "…" else "发送")
+                        }
+                    }
+                    else -> Text(
+                        text = "未配置 LLM · 点顶栏「功能」按钮可直接使用（设置 → Agent 模型配置 可开启对话）",
+                        style = MiuixTheme.textStyles.footnote1,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 16.dp, end = 16.dp, bottom = navBarBottom + 16.dp),
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            }
+
             // ── 顶栏「功能」按钮的级联弹层锚点 ──
-            // 按钮已上移到外层顶栏动作区（与曲目页 Sort / 搜索按钮同款）。
-            // OverlayCascadingListPopup 依赖 Scaffold 提供的 MiuixPopupHost，必须留在
-            // content 内；默认 alignment=End + DropdownPositionProvider 让菜单从锚点
-            // 右缘向左、向下展开，正好贴着顶栏右侧的按钮。renderInRootScaffold=true
-            // 会把锚点坐标补偿到窗口，内层 Scaffold 不会让菜单偏移。
+            // 锚点必须是外层 Box 里的 overlay，绝不能排进 Column 占高度：
+            // 那会把消息列表整体推下 clearance，又变回顶栏下面那条不透明死带。
+            // 位置仍落在 y = clearance（顶栏右侧按钮下方）；
+            // OverlayCascadingListPopup 依赖 Scaffold 的 MiuixPopupHost，
+            // 留在 content 内即可，renderInRootScaffold=true 负责坐标补偿。
             Box(
                 modifier = Modifier
-                    .align(Alignment.End)
+                    .align(Alignment.TopEnd)
+                    .padding(top = clearance)
                     .size(1.dp),
             ) {
                 OverlayCascadingListPopup(
@@ -458,122 +607,6 @@ fun AgentScreen(
                     entries = functionEntries,
                     onDismissRequest = onDismissFunctionPopup,
                     collapseOnSelection = true,
-                )
-            }
-
-            // 消息列表 + 「回到底部」浮动按钮。按钮浮在列表底部、输入框正上方；
-            // 放进同一个 Box 才能跟着外层 imePadding 一起被键盘顶起，不会压住输入栏。
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
-            ) {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .nestedScroll(scrollBehavior.nestedScrollConnection),
-                    contentPadding = PaddingValues(
-                        start = 16.dp,
-                        end = 16.dp,
-                        top = 8.dp,
-                        bottom = 8.dp,
-                    ),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    items(messages.size) { index ->
-                        ChatBubble(messages[index], onOpenSong = onOpenSong)
-                    }
-                    if (thinking) {
-                        item {
-                            ChatBubble(AgentSession.Turn(text = "思考中…"), onOpenSong = onOpenSong)
-                        }
-                    }
-                }
-
-                // 已在最底部（含内容不足一屏）时整颗按钮淡出；上翻看历史才浮出来。
-                // 完全限定顶层函数：外层 Column 的隐式 receiver 会把简写解析成
-                // ColumnScope.AnimatedVisibility 扩展，触发 Compose 的 DSL 作用域报错。
-                androidx.compose.animation.AnimatedVisibility(
-                    visible = showJumpToBottom,
-                    modifier = Modifier.align(Alignment.BottomEnd),
-                    enter = fadeIn(tween(180)) + scaleIn(tween(220), initialScale = 0.8f),
-                    exit = fadeOut(tween(140)) + scaleOut(tween(160), targetScale = 0.8f),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .padding(end = 16.dp, bottom = 12.dp)
-                            .size(40.dp)
-                            .shadow(6.dp, CircleShape)
-                            .clip(CircleShape)
-                            .background(MiuixTheme.colorScheme.primary)
-                            .clickable { jumpToBottom() },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        // 玻璃图标库没有独立的 ArrowDown；拿右向 chevron 顺时针转 90°
-                        // 得到干净的向下箭头，比语义为「下载」的 Download 更贴切。
-                        Icon(
-                            MiuixGlassIcons.Regular.ChevronForward,
-                            contentDescription = "回到对话底部",
-                            modifier = Modifier
-                                .size(22.dp)
-                                .rotate(90f),
-                            tint = MiuixTheme.colorScheme.onPrimary,
-                        )
-                    }
-                }
-            }
-
-            // ── 底部输入区：猜歌对局中 → 答题卡（无需 LLM）；
-            //    否则已配置 LLM 才是聊天输入框；都没有则提示走「功能」按钮 ──
-            when {
-                guessing -> Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = inputRowBottom),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    TextField(
-                        value = input,
-                        onValueChange = { input = it },
-                        label = "答案是…（歌名 / 别名 / ID）",
-                        useLabelAsPlaceholder = true,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    // 放弃：直接公布答案、结束对局（输入「放弃 / 不猜了」等效）
-                    TextButton(text = "放弃", onClick = { send("放弃") })
-                    Spacer(Modifier.width(4.dp))
-                    Button(onClick = { send(input) }, colors = ButtonDefaults.buttonColorsPrimary()) {
-                        Text(text = if (thinking) "…" else "猜猜看")
-                    }
-                }
-                llmReady -> Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = inputRowBottom),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    TextField(
-                        value = input,
-                        onValueChange = { input = it },
-                        label = "问问 Kiba…",
-                        useLabelAsPlaceholder = true,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Button(onClick = { send(input) }, colors = ButtonDefaults.buttonColorsPrimary()) {
-                        Text(text = if (thinking) "…" else "发送")
-                    }
-                }
-                else -> Text(
-                    text = "未配置 LLM · 点顶栏「功能」按钮可直接使用（设置 → Agent 模型配置 可开启对话）",
-                    style = MiuixTheme.textStyles.footnote1,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 16.dp, end = 16.dp, bottom = navBarBottom + 16.dp),
-                    textAlign = TextAlign.Center,
                 )
             }
         }

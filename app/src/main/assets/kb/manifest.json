@@ -1,7 +1,7 @@
 {
-  "version": 2,
-  "generatedAt": "2026-11-08",
-  "note": "原条目由 tools/update_moegirl_kb.py 生成；v2 追加百科 / 玩家站 / 镜像的机制补充，来源核验层级见各 md 头部",
+  "version": 3,
+  "generatedAt": "2026-11-09",
+  "note": "原条目由 tools/update_moegirl_kb.py 生成；v2 追加百科 / 玩家站 / 镜像的机制补充，来源核验层级见各 md 头部；v3 新增 simai.md（谱面语法，供 simai_syntax 技能检索）",
   "docs": [
     {
       "file": "maimai_dx.md",
@@ -17,6 +17,11 @@
       "file": "chunithm.md",
       "title": "CHUNITHM",
       "url": "https://zh.moegirl.org.cn/CHUNITHM"
+    },
+    {
+      "file": "simai.md",
+      "title": "Simai 谱面语法",
+      "url": "https://w.atwiki.jp/simai/pages/1002.html"
     }
   ]
 }

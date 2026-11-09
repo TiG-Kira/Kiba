@@ -23,6 +23,7 @@ import com.kira.kiba.core.stats.ChuniPushRecommender
 import com.kira.kiba.core.stats.RecommendFusion
 import com.kira.kiba.core.utils.SpUtil
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -277,10 +278,16 @@ class KibaAgent(private val context: Context) {
             "today_kink" -> todayKink()
             "eat_what" -> eatWhat()
             "web_search" -> webSearch(
-                args["query"] ?: args["q"] ?: args["keyword"] ?: fallbackText
+                args["query"] ?: args["q"] ?: args["keyword"] ?: fallbackText,
+                args["url"] ?: args["href"] ?: "",
             )
             "moegirl_kb" -> moegirlKb(
                 args["query"] ?: args["q"] ?: args["keyword"] ?: fallbackText
+            )
+            "browser" -> browserAction(args)
+            "maimai_chart_simai" -> maimaiChartSimai(args)
+            "simai_syntax" -> simaiSyntax(
+                args["topic"] ?: args["query"] ?: args["q"] ?: fallbackText
             )
             "random_filtered" -> randomFiltered(
                 args["condition"] ?: args["filter"] ?: fallbackText
@@ -400,7 +407,10 @@ class KibaAgent(private val context: Context) {
                 val results = LinkedHashMap<KibaLlm.ToolCall, String>()
                 for (call in result.toolCalls) {
                     val reply = runToolCall(call.name, call.arguments, input)
-                    collected = collected.merge(reply)
+                    // 技能结果里的 skills 是「技能目录」（引导用户去功能菜单用的），
+                    // 不能并入 LLM 回复 —— 否则一次工具调用就会在气泡下面铺出整排
+                    // 不可点击的技能说明卡（用户看到的就是「弹一串卡片」）。
+                    collected = collected.merge(reply.copy(skills = emptyList()))
                     results[call] = reply.text
                     executed += call.name
                     invocations += invocationOf(call.name, call.arguments, reply)
@@ -464,7 +474,10 @@ class KibaAgent(private val context: Context) {
                 val results = LinkedHashMap<String, String>()
                 for (name in picked) {
                     val reply = runToolCall(name, "", input)
-                    collected = collected.merge(reply)
+                    // 技能结果里的 skills 是「技能目录」（引导用户去功能菜单用的），
+                    // 不能并入 LLM 回复 —— 否则一次工具调用就会在气泡下面铺出整排
+                    // 不可点击的技能说明卡（用户看到的就是「弹一串卡片」）。
+                    collected = collected.merge(reply.copy(skills = emptyList()))
                     results[name] = reply.text
                     executed += name
                     invocations += invocationOf(name, "", reply)
@@ -608,7 +621,13 @@ class KibaAgent(private val context: Context) {
                 "不要只描述「我打算调用什么」，也不要复述工具调用的过程。\n" +
                 "【游戏知识】关于 maimai 的游戏机制问题（新版本 / 新模式玩法、功能道具获取、" +
                 "解谜任务、活动情报等），必须先调用 web_search 查资料再总结回答；" +
-                "除非搜索后确实一无所获，否则不允许直接说不知道，更不能编造。"
+                "除非搜索后确实一无所获，否则不允许直接说不知道，更不能编造。\n" +
+                "【谱面问题】用户问某首歌某难度的谱面（配置 / 物量 / 滑键 / 长按 / 变速 / 段落 / " +
+                "「这段怎么写」）时，按 song_query 查曲目 ID → maimai_chart_simai 取标准 Simai " +
+                "谱面 → 看不懂记号就调 simai_syntax → 基于真实谱面文本回答。" +
+                "没拿到谱面文本时不许凭印象描述配置，也不许编造确定的物量数字。\n" +
+                "【浏览器】web_search 已用后台浏览器读渲染后正文；若页面还要点按钮 / 展开 / 翻页 / " +
+                "读某个元素 / 执行 JS，改用 browser（先 open，再对同一页面 text / click / fill / eval）。"
         )
     }
 
@@ -1690,24 +1709,38 @@ class KibaAgent(private val context: Context) {
         val hit = runCatching { MoegirlKb.search(context, q) }.getOrDefault("")
         if (hit.isBlank()) {
             return@withContext AgentReply(
-                "本地知识库（萌娘百科：舞萌DX / maimai 系列 / CHUNITHM）里没有检索到「$q」相关小节。\n" +
+                "本地知识库（舞萌DX / maimai 系列 / CHUNITHM / Simai 语法）里没有检索到「$q」相关小节。\n" +
                     "可以换更核心的名词再查一次，或改用 web_search 联网确认。",
             )
         }
         AgentReply(hit)
     }
 
-    private suspend fun webSearch(query: String): AgentReply {
+    /**
+     * 联网搜索（Bing / DDG）+ 抓正文。
+     *
+     * 「自主浏览器」的接入点：正文不再只靠 OkHttp 抠静态 HTML，而是交给 [AgentBrowser]
+     * 真正跑完页面 JS 再取 innerText，CSR 页面（React / Vue）也能读到用户看到的内容；
+     * 浏览器不可用时才回退旧的 [fetchPageText]。另外支持模型直接给 `url` 跳过搜索，
+     * 于是 web_search 从「搜一下」升级成「上网看一眼」，复杂交互再交给 browser 工具。
+     */
+    private suspend fun webSearch(query: String, directUrl: String = ""): AgentReply {
         val q = query.trim()
-        if (q.isEmpty()) return AgentReply("web_search 需要一个 query 参数。")
+        val url = directUrl.trim()
+        if (q.isEmpty() && url.isEmpty()) return AgentReply("web_search 需要 query 或 url 参数。")
         return withContext(Dispatchers.IO) {
             runCatching {
+                if (url.startsWith("http")) {
+                    val page = readWebPage(url)
+                    return@runCatching if (page.isNullOrBlank()) {
+                        AgentReply("没能读到 $url 的正文（页面可能需要 JS 渲染，或站点拒绝访问）。")
+                    } else {
+                        AgentReply("【web_search 打开网页】$url\n【渲染后正文】\n$page")
+                    }
+                }
                 val results = searchBing(q).ifEmpty { searchDuckDuckGo(q) }
                 if (results.isEmpty()) {
-                    return@runCatching AgentReply(
-                        "没搜到「$q」的相关资料，可能关键词太偏或网络受限。",
-                        skills = SKILLS,
-                    )
+                    return@runCatching AgentReply("没搜到「$q」的相关资料，可能关键词太偏或网络受限。")
                 }
                 val sb = StringBuilder("【web_search 搜索结果】关键词：$q\n")
                 results.take(5).forEachIndexed { i, r ->
@@ -1715,18 +1748,155 @@ class KibaAgent(private val context: Context) {
                 }
                 // 正文抓取（最多 2 条，各限 3500 字，超时/反爬就跳过）
                 for (r in results.take(2)) {
-                    val page = fetchPageText(r.url) ?: continue
+                    val page = readWebPage(r.url) ?: continue
                     if (page.isBlank()) continue
                     sb.append("\n【网页正文】${r.title}（${r.url}）\n$page\n")
                 }
-                AgentReply(sb.toString(), skills = SKILLS)
+                AgentReply(sb.toString())
             }.getOrElse {
                 AgentReply(
                     "搜索失败：${it.message}（设备网络可能受限，请基于已有知识谨慎回答，不知道就说不知道）",
-                    skills = SKILLS,
                 )
             }
         }
+    }
+
+    /** 用后台浏览器读渲染后的正文；失败退回静态 HTML 抓取。 */
+    private suspend fun readWebPage(url: String): String? {
+        val outcome = runCatching {
+            AgentBrowser.act(context, "open", url = url, waitMs = 1_200, maxChars = 3_500)
+        }.getOrNull()
+        if (outcome != null && outcome.ok && outcome.text.isNotBlank()) return outcome.text
+        return withContext(Dispatchers.IO) { fetchPageText(url) }
+    }
+
+    /**
+     * `browser` 工具：把 LLM 的 action / url / js / selector 直接转给 [AgentBrowser]。
+     * 结果（含失败原因）原样回灌，让模型自己决定下一步点哪、读哪。
+     */
+    private suspend fun browserAction(args: Map<String, String>): AgentReply {
+        val action = args["action"]?.trim().orEmpty()
+        if (action.isBlank()) {
+            return AgentReply("browser 需要 action 参数：open / text / eval / click / fill / scroll / close。")
+        }
+        val outcome = AgentBrowser.act(
+            context = context,
+            action = action,
+            url = args["url"] ?: args["href"] ?: "",
+            js = args["js"] ?: args["script"] ?: "",
+            selector = args["selector"] ?: args["sel"] ?: "",
+            value = args["value"] ?: args["text"] ?: "",
+            waitMs = (args["wait_ms"]?.toLongOrNull() ?: 1_500L).coerceIn(0L, 10_000L),
+            maxChars = (args["max_chars"]?.toIntOrNull() ?: 8_000).coerceIn(200, 200_000),
+        )
+        return AgentReply(outcome.render())
+    }
+
+    /**
+     * `maimai_chart_simai`（舞萌分类，LLM 专用）：读某曲目某难度的**标准 Simai 谱面**。
+     *
+     * 流程：后台浏览器打开落雪预览页 → 在页面上下文 fetch 它自己用的整曲 Simai
+     * （`assets2.lxns.net/maimai/chart/{id}.txt`，即「Simai 语句」栏的数据源）→
+     * 按 `&inote_{difficulty+2}=` 切出目标难度 → 保留元数据拼回单难度标准文本。
+     * 页面把 BPM/拍数渲染成 `BPM 174 | 1/16` 标记行是显示层，这里的数据本来就是标准写法，
+     * [SimaiChart.normalizeDisplayed] 再兜一层，防止拿到的是显示文本。
+     */
+    private suspend fun maimaiChartSimai(args: Map<String, String>): AgentReply {
+        val id = (args["song_id"] ?: args["id"] ?: args["chart_id"])?.trim()?.toIntOrNull()
+            ?: Regex("""\d{1,6}""").find(args.values.joinToString(" "))?.value?.toIntOrNull()
+        if (id == null || id <= 0) {
+            return AgentReply(
+                "maimai_chart_simai 需要 song_id（曲目 ID）。" +
+                    "请先用 song_query 按歌名查出 ID，再带上 difficulty 调用。",
+            )
+        }
+        val diff = args["difficulty"]?.trim()?.toIntOrNull()?.takeIf { it in 0..4 }
+        val maxChars = (args["max_chars"]?.toIntOrNull() ?: 20_000).coerceIn(2_000, 120_000)
+        val preview = SimaiChart.previewUrl(id, diff)
+        val cdn = SimaiChart.cdnUrl(id)
+
+        val opened = AgentBrowser.act(context, "open", url = preview, waitMs = 2_500, maxChars = 1_000)
+        if (!opened.ok) {
+            return AgentReply("打开落雪谱面预览页失败：${opened.text}\n页面：$preview")
+        }
+
+        // 页面自己就是从 assets2 取这份 txt，同源策略 / CORS 一定通；由 WebView 发起
+        // 比 App 直连更贴近「读取页面内 Simai 语句栏」的语义。
+        AgentBrowser.act(context, "eval", js = SimaiChart.fetchJs(cdn), maxChars = 200)
+        var ready = false
+        var fetchError = ""
+        repeat(24) {
+            if (ready || fetchError.isNotEmpty()) return@repeat
+            val state = AgentBrowser.act(
+                context, "eval", js = SimaiChart.STATE_JS, maxChars = 200,
+            ).text.trim()
+            when {
+                state.startsWith("done:") &&
+                    (state.removePrefix("done:").toIntOrNull() ?: 0) > 0 -> ready = true
+                state.startsWith("error:") -> fetchError = state.removePrefix("error:")
+                else -> delay(300)
+            }
+        }
+        var raw = if (ready) {
+            AgentBrowser.act(context, "eval", js = SimaiChart.RAW_JS, maxChars = 200_000).text
+        } else {
+            ""
+        }
+        if (raw.isBlank()) {
+            // 兜底：WebView 内 fetch 被拦时，App 侧直连同一个 CDN 纯文本
+            raw = withContext(Dispatchers.IO) {
+                runCatching { httpGet(cdn).orEmpty() }.getOrDefault("")
+            }
+        }
+        if (raw.isBlank()) {
+            return AgentReply(
+                "没拿到曲目 $id 的谱面数据（页面已打开但 Simai 文本为空）。" +
+                    (if (fetchError.isNotBlank()) "\n$fetchError" else "") +
+                    "\n页面：$preview\n数据源：$cdn",
+            )
+        }
+        val inote = SimaiChart.resolveInote(raw, diff)
+        val chart = SimaiChart.extract(raw, inote)
+        if (chart == null) {
+            return AgentReply(
+                "落雪谱面文件里没有难度 &inote_$inote。" +
+                    "可用：${SimaiChart.availableInotes(raw).joinToString("、")}" +
+                    "（URL difficulty = inote − 2）。\n数据源：$cdn",
+            )
+        }
+        val standard = SimaiChart.normalizeDisplayed(chart)
+        val body = if (standard.length > maxChars) {
+            standard.take(maxChars) + "\n…（谱面过长已截断，共 ${standard.length} 字符）"
+        } else {
+            standard
+        }
+        return AgentReply(buildString {
+            append("【舞萌 DX 标准 Simai 谱面】曲目 ID $id · ${SimaiChart.difficultyName(diff)}" +
+                "（落雪 &inote_$inote）\n")
+            append("来源：落雪谱面预览页「Simai 语句」栏 $preview\n")
+            append("BPM / 拍数已按标准 Simai 写法 `(bpm){n}` 归一，其余记号不变。\n\n")
+            append(SimaiChart.summarize(standard)).append('\n')
+            append("【谱面正文】\n").append(body)
+        })
+    }
+
+    /**
+     * `simai_syntax`（LLM 专用）：查 Simai 语法，用于解读上一步拿到的谱面，
+     * 或回答用户「simai 里 SLIDE 怎么写」这类写法讲解。
+     */
+    private suspend fun simaiSyntax(topic: String): AgentReply = withContext(Dispatchers.IO) {
+        val q = topic.trim()
+        if (q.isEmpty()) return@withContext AgentReply("simai_syntax 需要 topic 参数。")
+        val hit = runCatching {
+            MoegirlKb.search(context, q, limit = 8, docFilter = "Simai")
+        }.getOrDefault("")
+        if (hit.isBlank()) {
+            return@withContext AgentReply(
+                "Simai 语法知识库里没有检索到「$q」相关小节。" +
+                    "换个核心词再查（SLIDE / HOLD / BPM / 拍数 / EACH / BREAK / TOUCH / EX / 连结）。",
+            )
+        }
+        AgentReply(hit)
     }
 
     /** DuckDuckGo HTML 端点搜索。 */
@@ -2393,11 +2563,85 @@ class KibaAgent(private val context: Context) {
             ),
             AgentSkill(
                 "web_search", "网络搜索",
-                "联网搜索并抓取网页正文（maimai 新模式玩法 / 道具获取 / 解谜线索 / 活动情报等游戏机制类问题必查）",
+                "联网搜索并抓取网页正文（maimai 新模式玩法 / 道具获取 / 解谜线索 / 活动情报等游戏机制类问题必查）；" +
+                    "正文由后台浏览器渲染后读取，SPA 页面也拿得到。给 url 可跳过搜索直接打开某网页",
                 params = listOf(
                     KibaLlm.ToolParam(
                         "query", "string",
-                        "搜索关键词，例：maimai DX kaleidoscope 黄门钥匙 获取方法",
+                        "搜索关键词，例：maimai DX kaleidoscope 黄门钥匙 获取方法；给 url 时可省略",
+                    ),
+                    KibaLlm.ToolParam(
+                        "url", "string",
+                        "可选：直接打开并读取这个网址的渲染后正文，例：https://maimai.lxns.net/chart?chart_id=1920",
+                    ),
+                ),
+            ),
+            AgentSkill(
+                "browser", "后台浏览器",
+                "AI 可操控的后台 WebView：open 打开网页、text 读渲染后正文、eval 执行 JS、" +
+                    "click 点元素、fill 填表单、scroll 滚动、close 关闭。" +
+                    "适合需要 JS 渲染 / 展开 / 翻页 / 点按钮的站点；操作有状态，先 open 再操作同一页面。" +
+                    "返回的是当前页面真实内容，不要凭空猜网页里有什么",
+                params = listOf(
+                    KibaLlm.ToolParam(
+                        "action", "string",
+                        "open / text / eval / click / fill / scroll / close",
+                        required = true,
+                    ),
+                    KibaLlm.ToolParam("url", "string", "open 时必填，完整 http(s) 地址"),
+                    KibaLlm.ToolParam(
+                        "js", "string",
+                        "eval 时必填：在页面里执行的 JS，最后表达式的值会返回（可读 DOM / 取全局变量 / 调页面 API）",
+                    ),
+                    KibaLlm.ToolParam("selector", "string", "text/click/fill 时的 CSS 选择器"),
+                    KibaLlm.ToolParam(
+                        "value", "string",
+                        "fill 时要填的值；scroll 时填滚动像素（正数向下，默认 800）",
+                    ),
+                    KibaLlm.ToolParam(
+                        "wait_ms", "number",
+                        "open 后在 onPageFinished 之外额外等 SPA 渲染的毫秒数，默认 1500，慢站可给 4000",
+                    ),
+                    KibaLlm.ToolParam(
+                        "max_chars", "number",
+                        "返回文本上限，默认 8000；要拿完整长文本可给 200000",
+                    ),
+                ),
+            ),
+            AgentSkill(
+                "maimai_chart_simai", "读取舞萌谱面（Simai）",
+                "【舞萌 DX 分类】按曲目 ID + 难度从落雪谱面预览页「Simai 语句」栏读取谱面，" +
+                    "返回该难度的**标准 Simai 文本**（BPM / 拍数已还原成 (bpm){n} 写法）。" +
+                    "用户问某首歌某难度的谱面配置、物量、星星 / 滑键 / 长按、变速、段落、" +
+                    "或要你分析谱面时，**必须先调用它拿到真实谱面**，绝不能凭印象编造。" +
+                    "不知道曲目 ID 就先用 song_query 查；解读记号再调 simai_syntax",
+                params = listOf(
+                    KibaLlm.ToolParam(
+                        "song_id", "integer",
+                        "曲目 ID（本地 / 水鱼 id；DX 谱面与标准谱面共用 id，宴谱 ≥100000）",
+                        required = true,
+                    ),
+                    KibaLlm.ToolParam(
+                        "difficulty", "integer",
+                        "0=BASIC / 1=ADVANCED / 2=EXPERT / 3=MASTER / 4=Re:MASTER；宴谱可省略",
+                    ),
+                    KibaLlm.ToolParam(
+                        "max_chars", "number",
+                        "谱面正文返回上限，默认 20000；谱面很长时可给到 120000",
+                    ),
+                ),
+            ),
+            AgentSkill(
+                "simai_syntax", "Simai 谱面语法",
+                "查 Simai（舞萌 DX 谱面记述格式）的标准写法与记号含义：" +
+                    "BPM 与 (bpm){n} 拍数、TAP / HOLD / SLIDE 形状与连结、TOUCH、EACH、BREAK、EX、" +
+                    "first / E / 元数据。**用途一**：解读 maimai_chart_simai 拿到的谱面文本；" +
+                    "**用途二**：用户问「simai 里 XX 怎么写」时讲解写法。" +
+                    "来源为 simai 官方语法页整理，回答写法问题以它为准",
+                params = listOf(
+                    KibaLlm.ToolParam(
+                        "topic", "string",
+                        "要查的语法点，例：SLIDE 连结 / BPM 与拍数 / HOLD 时长 / BREAK / EACH / TOUCH / EX 音符",
                         required = true,
                     ),
                 ),

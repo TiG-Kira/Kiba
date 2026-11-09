@@ -211,4 +211,25 @@ class LlmParseTest {
         assertEquals("12", args["min"])
         assertEquals("13", args["max"])
     }
+
+    // ---------- 技能说明卡连弹防护 ----------
+
+    @Test
+    fun `整份技能目录不铺内联说明卡`() {
+        // 一次 web_search 把 SKILLS 全量带回时，不能在气泡下连着弹一整排卡
+        assertEquals(false, LlmParse.shouldRenderSkillCards(23))
+        assertEquals(false, LlmParse.shouldRenderSkillCards(3))
+    }
+
+    @Test
+    fun `少量推荐技能仍可展示`() {
+        assertEquals(true, LlmParse.shouldRenderSkillCards(1))
+        assertEquals(true, LlmParse.shouldRenderSkillCards(2))
+    }
+
+    @Test
+    fun `零张卡不渲染`() {
+        assertEquals(false, LlmParse.shouldRenderSkillCards(0))
+        assertEquals(false, LlmParse.shouldRenderSkillCards(-1))
+    }
 }
