@@ -166,12 +166,14 @@ fun ListenScreen(
 
     // ── Agent 专属歌单：历史存档（每张一个入口）──
     val llmReady = remember { KibaLlm.isConfigured() }
-    var agentHistory by remember { mutableStateOf(AgentPlaylistStore.load()) }
+    // 初值给空、读盘放到 LaunchedEffect：SP + JSON 解析不该占组合期的第一帧
+    var agentHistory by remember { mutableStateOf<List<AgentPlaylistStore.Item>>(emptyList()) }
     var agentRefreshing by remember { mutableStateOf(false) }
 
-    // 旧版「只存最新一份」的歌单迁移进历史（只跑一次）
+    // 旧版「只存最新一份」的歌单迁移进历史（按版本号只跑一次，内部幂等 + 全程兜底）
     LaunchedEffect(Unit) {
-        AgentPlaylistStore.migrateLegacy(context)
+        runCatching { AgentPlaylistStore.migrateLegacy(context) }
+            .onFailure { android.util.Log.w("Listen", "legacy migrate failed: ${it.message}") }
         agentHistory = AgentPlaylistStore.load()
     }
 
@@ -434,13 +436,9 @@ fun ListenScreen(
 
             // ══ Agent 专属歌单（历史存档，每张一个入口）══
             item(key = "agent_title") { SectionTitle("Agent 专属歌单") }
-            if (!llmReady) {
-                item(key = "agent_hint") {
-                    EmptyStateCard(
-                        text = "在「设置 → 模型配置」启用 LLM 后\nAgent 会按你的口味生成专属歌单（最多 15 首）",
-                    )
-                }
-            } else {
+            // 历史歌单先摆出来 —— 没配 LLM 也要能看到以前生成的（迁移进来的也在其中），
+            // 否则「关掉模型配置」等于把已生成的歌单一起藏了
+            if (llmReady) {
                 item(key = "agent_generate") {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
@@ -475,47 +473,53 @@ fun ListenScreen(
                         }
                     }
                 }
+            }
 
-                if (agentHistory.isEmpty()) {
-                    item(key = "agent_empty") {
-                        EmptyStateCard(text = "还没有生成过歌单\n点上面那一行，Agent 会按你的口味挑 5~15 首")
-                    }
-                } else {
-                    item(key = "agent_clear") {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                text = "共 ${agentHistory.size} 张歌单",
-                                style = MiuixTheme.textStyles.footnote2,
-                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                                modifier = Modifier.weight(1f),
-                            )
-                            TextButton(
-                                text = "清空全部",
-                                onClick = {
-                                    AgentPlaylistStore.clear()
-                                    agentHistory = AgentPlaylistStore.load()
-                                    Toast.makeText(context, "已清空全部 Agent 歌单", Toast.LENGTH_SHORT).show()
-                                },
-                            )
-                        }
-                    }
-                    items(agentHistory.size, key = { "agent_${agentHistory[it].id}" }) { index ->
-                        val item = agentHistory[index]
-                        AgentPlaylistEntry(
-                            item = item,
-                            onClick = { onOpenAgentPlaylist(item.id) },
-                            onDelete = {
-                                AgentPlaylistStore.delete(item)
+            if (agentHistory.isNotEmpty()) {
+                item(key = "agent_clear") {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "共 ${agentHistory.size} 张歌单",
+                            style = MiuixTheme.textStyles.footnote2,
+                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(
+                            text = "清空全部",
+                            onClick = {
+                                AgentPlaylistStore.clear()
                                 agentHistory = AgentPlaylistStore.load()
-                                Toast.makeText(context, "已删除「${item.name}」", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "已清空全部 Agent 歌单", Toast.LENGTH_SHORT).show()
                             },
                         )
                     }
+                }
+                items(agentHistory.size, key = { "agent_${agentHistory[it].id}" }) { index ->
+                    val item = agentHistory[index]
+                    AgentPlaylistEntry(
+                        item = item,
+                        onClick = { onOpenAgentPlaylist(item.id) },
+                        onDelete = {
+                            AgentPlaylistStore.delete(item)
+                            agentHistory = AgentPlaylistStore.load()
+                            Toast.makeText(context, "已删除「${item.name}」", Toast.LENGTH_SHORT).show()
+                        },
+                    )
+                }
+            } else if (llmReady) {
+                item(key = "agent_empty") {
+                    EmptyStateCard(text = "还没有生成过歌单\n点上面那一行，Agent 会按你的口味挑 5~15 首")
+                }
+            } else {
+                item(key = "agent_hint") {
+                    EmptyStateCard(
+                        text = "在「设置 → 模型配置」启用 LLM 后\nAgent 会按你的口味生成专属歌单（最多 15 首）",
+                    )
                 }
             }
         }
@@ -725,7 +729,13 @@ private fun AgentPlaylistEntry(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = "${item.ids.size} 首 · ${timeFmt.format(Date(item.createdAt))}",
+                    // createdAt=0 是「从旧版本迁移进来」的条目（当时没存时间），
+                    // 格式化出来会是 1970-01-01，不如直接不显示时间
+                    text = if (item.createdAt > 0L) {
+                        "${item.ids.size} 首 · ${timeFmt.format(Date(item.createdAt))}"
+                    } else {
+                        "${item.ids.size} 首 · 旧版迁移"
+                    },
                     style = MiuixTheme.textStyles.footnote2,
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                     maxLines = 1,

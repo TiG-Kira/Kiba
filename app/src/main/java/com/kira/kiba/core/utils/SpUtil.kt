@@ -921,14 +921,21 @@ object SpUtil {
         userInfoPrefs.edit { putString(KEY_AGENT_PLAYLIST_HISTORY, json) }
     }
 
-    /** 旧版单条歌单是否已迁入历史存档（只做一次）。 */
-    private const val KEY_AGENT_PLAYLIST_HISTORY_MIGRATED = "listen_agent_playlist_migrated"
+    /**
+     * 旧版单条歌单迁移进度（版本号，替代原来的 boolean）。
+     *
+     * 3.0.0 用的是 `listen_agent_playlist_migrated: Boolean`，且**先置 true 再迁移** ——
+     * 迁移途中因旧数据缺字段 NPE 时，标记已经落下，于是每次进「畅听」都跳过迁移、
+     * 又都崩在同一处（用户视角：升级后这个页面打不开了）。
+     * 改成版本号后，v1 机器（无论当年成没成功）都会重新跑一次，迁移本身是幂等的。
+     */
+    private const val KEY_AGENT_PLAYLIST_MIGRATION_VER = "listen_agent_playlist_migration_ver"
 
-    fun isAgentPlaylistHistoryMigrated(): Boolean =
-        userInfoPrefs.getBoolean(KEY_AGENT_PLAYLIST_HISTORY_MIGRATED, false)
+    fun getAgentPlaylistMigrationVersion(): Int =
+        userInfoPrefs.getInt(KEY_AGENT_PLAYLIST_MIGRATION_VER, 0)
 
-    fun setAgentPlaylistHistoryMigrated(migrated: Boolean) {
-        userInfoPrefs.edit { putBoolean(KEY_AGENT_PLAYLIST_HISTORY_MIGRATED, migrated) }
+    fun setAgentPlaylistMigrationVersion(version: Int) {
+        userInfoPrefs.edit { putInt(KEY_AGENT_PLAYLIST_MIGRATION_VER, version) }
     }
 
     /** Agent 歌单 JSON（[com.kira.kiba.core.listen.AgentPlaylist.Saved] 的序列化）。 */

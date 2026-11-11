@@ -51,11 +51,41 @@ object AgentPlaylist {
         val isEmpty: Boolean get() = ids.isEmpty()
     }
 
-    /** 当前保存的 Agent 歌单（无/解析失败返回 null）。 */
-    fun load(): Saved? {
-        val json = SpUtil.getAgentPlaylistJson()
+    /**
+     * 当前保存的 Agent 歌单（无 / 解析失败 / 内容为空都返回 null）。
+     *
+     * **手写逐字段解析，不用 `gson.fromJson(json, Saved::class.java)`** —— 旧版的坑：
+     * Gson 走 Unsafe 分配、不执行 Kotlin 构造器，v2.5 的 JSON 缺 `summary` / `reasons`
+     * 时读出来是 `null` 而非默认空值，迁移路径上 `summary.ifBlank {}` 直接 NPE 闪退。
+     * 这里每个字段都自己兜底，多脏的旧数据都能读成一个合法对象。
+     */
+    fun load(): Saved? = parseSaved(SpUtil.getAgentPlaylistJson())
+
+    /**
+     * 解析旧键里的歌单 JSON（纯函数，便于单测）。
+     *
+     * **手写逐字段解析，不用 `gson.fromJson(json, Saved::class.java)`** —— 旧版的坑：
+     * Gson 走 Unsafe 分配、不执行 Kotlin 构造器，v2.5 的 JSON 缺 `summary` / `reasons`
+     * 时读出来是 `null` 而非默认空值，迁移路径上 `summary.ifBlank {}` 直接 NPE 闪退。
+     * 这里每个字段都自己兜底，多脏的旧数据都能读成一个合法对象。
+     */
+    internal fun parseSaved(json: String): Saved? {
         if (json.isBlank()) return null
-        return runCatching { gson.fromJson(json, Saved::class.java) }.getOrNull()
+        val root = runCatching { JsonParser.parseString(json) }.getOrNull() ?: return null
+        if (!root.isJsonObject) return null
+        val obj = root.asJsonObject
+        val ids = obj.arrayOf("ids").mapNotNull { it.asIntOrNull() }
+        // 没有曲目 id 的歌单没有意义，迁移时也只会生成空壳
+        if (ids.isEmpty()) return null
+        return Saved(
+            ids = ids,
+            reasons = obj.arrayOf("reasons").mapNotNull { it.asStringOrNull() },
+            summary = obj.stringOrEmpty("summary"),
+            name = obj.stringOrEmpty("name"),
+            coverPath = obj.stringOrEmpty("coverPath"),
+            mood = obj.stringOrEmpty("mood"),
+            coverTags = obj.arrayOf("coverTags").mapNotNull { it.asStringOrNull() },
+        )
     }
 
     /**
@@ -199,6 +229,7 @@ object AgentPlaylist {
 
         // ── 封面：**每次生成歌单都必须过这道模板**（PlaylistCover）──
         // 模板保证中文可读性与版式稳定；模型只负责填 title/subtitle/mood/tags。
+        // 渲染是 1080×1080 位图 + PNG 编码，必须离开主线程（调用方通常在主线程 resume）。
         val coverSpec = PlaylistCover.Spec(
             title = saved.name.ifBlank { saved.summary.take(12) }.ifBlank { "专属歌单" },
             subtitle = saved.summary,
@@ -206,7 +237,9 @@ object AgentPlaylist {
             tags = saved.coverTags,
             songCount = saved.ids.size,
         )
-        val cover = PlaylistCover.render(context, coverSpec, generatedAt.toString())
+        val cover = withContext(Dispatchers.IO) {
+            PlaylistCover.render(context, coverSpec, generatedAt.toString())
+        }
         val withCover = saved.copy(coverPath = cover?.absolutePath.orEmpty())
 
         // 落两份：旧键只留「最近一份」兼容旧版本读取；历史存档供「畅听」页展示
