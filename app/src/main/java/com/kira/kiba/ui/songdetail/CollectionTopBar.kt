@@ -16,7 +16,9 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -139,6 +141,11 @@ fun CollectionTopBarSlot(
     val minExpansionPx = (screenWidthPx - statusBarPx - collapsedPx).coerceAtLeast(0)
 
     val liquidSkin = useLiquidBar()
+    // 折叠态顶栏真实高度（含副标题行，px）：液态皮肤底板用它对齐 miuix 骨架的底边。
+    // 不接的话玻璃底板只有「状态栏 + CollapsedHeight(56dp)」，而带副标题的折叠态实际是
+    // 56dp + 副标题行 + 底部 padding——底板停在标题行下缘，副标题整条露在玻璃外
+    // （歌单 / Agent 歌单 / 我的收藏三处共用本槽位，实证于收藏页；修法同 SongDetailTopBar）。
+    var liquidSkinCollapsedPx by remember { mutableIntStateOf(0) }
     val liquidActions = LocalMaterialFamily.current == MaterialFamily.LIQUID &&
         LocalAdvancedMaterialEnabled.current && collapsed
 
@@ -147,7 +154,11 @@ fun CollectionTopBarSlot(
             LiquidTopBarSkin(
                 backdrop = LocalLiquidBackdrop.current,
                 scrollBehavior = scrollBehavior,
-                collapsedHeight = TopAppBarDefaults.CollapsedHeight,
+                collapsedHeight = if (liquidSkinCollapsedPx > 0) {
+                    with(density) { liquidSkinCollapsedPx.toDp() }
+                } else {
+                    TopAppBarDefaults.CollapsedHeight
+                },
             )
         }
         androidx.compose.runtime.CompositionLocalProvider(
@@ -187,6 +198,7 @@ fun CollectionTopBarSlot(
                     }
                 },
                 minExpansionPx = minExpansionPx,
+                onCollapsedHeightPx = { liquidSkinCollapsedPx = it },
                 largeTitleBottomAligned = true,
                 largeTitleFontWeight = FontWeight.Bold,
                 largeTitleBlurRadius = 0.dp,
