@@ -533,6 +533,8 @@ object DivingFishAccount {
             // 落盘水鱼自己的 Rating：账户卡要一直显示水鱼身份，不能因切到落雪源
             // 让 account.nickname/rating 被落雪数据覆盖。
             SpUtil.saveDivingFishRating(best50Cache.rating)
+            // Rating 历史曲线：所有舞萌成绩通道最终都汇到这里，变化才记一条
+            RatingHistory.record(best50Cache.rating)
             _state.value = AccountState(
                 bound = true,
                 nickname = nickname.ifBlank { SpUtil.getDivingFishOAuthNickname() },
@@ -601,6 +603,8 @@ object DivingFishAccount {
                 new = sorted.filter { isNewBySongId[it.songId] == true }.take(15),
             )
             if (result.nickname.isNotBlank()) SpUtil.saveLxnsName(result.nickname)
+            // 落雪通道同样记历史：曲线口径 = 官方 B50 Rating 的变化点
+            RatingHistory.record(best50Cache.rating)
             _state.value = AccountState(
                 bound = true,
                 nickname = result.nickname.ifBlank { SpUtil.getLxnsName() },

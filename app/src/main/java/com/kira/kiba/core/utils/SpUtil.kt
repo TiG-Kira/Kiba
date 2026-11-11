@@ -336,6 +336,21 @@ object SpUtil {
         userInfoPrefs.edit { putBoolean(KEY_AGENT_MEMORY_ENABLED, enabled) }
     }
 
+    // ================= 舞萌 Rating 历史曲线 =================
+
+    private const val KEY_MAIMAI_RATING_HISTORY = "maimai_rating_history"
+
+    /**
+     * 舞萌 DX Rating 更新历史（JSON 数组：`List<RatingHistory.Entry>`）。
+     * 只在 Rating 实际发生变化时追加（见 [com.kira.kiba.core.account.RatingHistory.record]）。
+     */
+    fun getMaimaiRatingHistoryJson(): String =
+        userInfoPrefs.getString(KEY_MAIMAI_RATING_HISTORY, "") ?: ""
+
+    fun setMaimaiRatingHistoryJson(json: String) {
+        userInfoPrefs.edit { putString(KEY_MAIMAI_RATING_HISTORY, json) }
+    }
+
     /**
      * 长期记忆条目数（只做 JSON 计数）。
      * 设置页摘要用：不去碰 [com.kira.kiba.core.agent.AgentMemory] 的 StateFlow，

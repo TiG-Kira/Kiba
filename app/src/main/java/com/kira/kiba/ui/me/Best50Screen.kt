@@ -44,6 +44,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.kira.kiba.core.account.DivingFishAccount
+import com.kira.kiba.core.account.RatingHistory
 import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.db.entity.ChartEntity
 import com.kira.kiba.core.db.entity.RecordEntity
@@ -62,6 +63,7 @@ import com.kira.kiba.ui.common.ListSnapshotCache
 import com.kira.kiba.ui.common.difficultyColor
 import com.kira.kiba.ui.common.difficultyLabel
 import com.kira.kiba.ui.common.pageContentPadding
+import com.kira.kiba.ui.common.RatingTrendCard
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.Card
@@ -242,6 +244,18 @@ fun Best50Screen(
                                 )
                             }
                         }
+                    }
+                }
+                item(key = "trend", span = { GridItemSpan(maxLineSpan) }) {
+                    // Rating 历史曲线：完整详情（本地记录的全部变化点）。
+                    // 无记录（还没同步过成绩）不占位——空曲线卡只会让人困惑。
+                    val history by RatingHistory.entries.collectAsState()
+                    if (history.isNotEmpty()) {
+                        RatingTrendCard(
+                            title = "Rating 变化曲线",
+                            entries = history,
+                            subtitle = "本地记录 ${history.size} 次",
+                        )
                     }
                 }
                 if (new.isNotEmpty()) {

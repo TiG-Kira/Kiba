@@ -26,6 +26,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.kira.kiba.core.account.DivingFishAccount
 import com.kira.kiba.core.account.LxnsAccount
+import com.kira.kiba.core.account.RatingHistory
 import com.kira.kiba.core.data.ChuniRecordSync
 import com.kira.kiba.core.model.GameType
 import com.kira.kiba.core.model.ScoreSource
@@ -33,6 +34,7 @@ import com.kira.kiba.core.utils.BrowserJump
 import com.kira.kiba.core.utils.SpUtil
 import com.kira.kiba.ui.common.ChuniRatingTag
 import com.kira.kiba.ui.common.DxRatingTag
+import com.kira.kiba.ui.common.RatingTrendCard
 import com.kira.kiba.ui.common.SectionTitle
 import com.kira.kiba.ui.common.pageContentPadding
 import kotlinx.coroutines.launch
@@ -203,6 +205,25 @@ fun MeScreen(
                                 DxRatingTag(rating = if (account.bound) account.rating else 0)
                             },
                             startAction = { PrefIcon(MiuixGlassIcons.Regular.Contacts) },
+                        )
+                    }
+                }
+            }
+
+            // ── Rating 历史曲线（舞萌）：用户卡下方，最近 10 次更新的变化 ──
+            // 中二分支不显示——曲线口径是舞萌官方 B50 Rating，中二 Rating 是另一套公式
+            item(key = "rating_trend") {
+                if (!isChunithm) {
+                    val history by RatingHistory.entries.collectAsState()
+                    if (history.isNotEmpty()) {
+                        RatingTrendCard(
+                            title = "最近 Rating 变化",
+                            entries = history.takeLast(10),
+                            subtitle = if (history.size > 10) {
+                                "最近 10 次 · 共 ${history.size} 次"
+                            } else {
+                                "共 ${history.size} 次更新"
+                            },
                         )
                     }
                 }
