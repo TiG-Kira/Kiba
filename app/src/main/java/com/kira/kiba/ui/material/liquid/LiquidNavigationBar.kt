@@ -3,6 +3,7 @@
 
 package com.kira.kiba.ui.material.liquid
 
+import android.os.SystemClock
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.EaseOut
 import androidx.compose.animation.core.spring
@@ -144,6 +145,14 @@ fun LiquidNavigationBar(
         var offsetSnapJob: Job? = null
         /** 手指仍按在「其它 tab」上：玻璃保持到抬手（对齐 2.3.18 的按住手感）。 */
         var holdingOtherTab: Boolean = false
+        /**
+         * 最近一次指针手势在抬手时提交的落点（-1 = 无）。TabContent 的 clickable 会在
+         * 同一个 up 上再回调一次 onClick，它拿到的 i 是**按下时**的 tab，拖动 / 贴边
+         * 按下时会与最终落点不同；用它判定「这次 click 只是指针回声」，避免覆盖提交。
+         * 配时间戳做短窗失效，键盘 / 无障碍点击不受残留值影响。
+         */
+        var pointerCommitIndex: Int = -1
+        var pointerCommitAt: Long = 0L
     }
     val metrics = remember { Metrics() }
     metrics.isLtr = isLtr
@@ -153,6 +162,19 @@ fun LiquidNavigationBar(
     // 记录最后一次驱动过动画的 tab，避免「拖动吸附 + selectedIndex 回流」播两次玻璃。
     // 保留 State 对象本身：回调 lambda 在 remember 里构造，捕获解包后的 Int 会读到旧值。
     val lastAnimatedState = remember { mutableIntStateOf(selectedIndex) }
+
+    /**
+     * 页面切换的**唯一出口**：只在手势抬手（或键盘 / 无障碍点击）之后调用。
+     *
+     * 按下时玻璃照旧即飞，但页面留在原处；手指松开才按「液滴最终所在 tab」切过去。
+     * 先记账再回调，避免父级 `selectedIndex` 回流时 `snapshotFlow` 重播一次起飞动画。
+     * `onSelect` 本身幂等（父级有 `target != selectedTab` 保护），重复提交无副作用。
+     */
+    fun commitSelection(target: Int) {
+        val index = target.fastCoerceIn(0, items.size - 1)
+        lastAnimatedState.intValue = index
+        if (index != latestSelectedIndexState.value) latestOnSelectState.value(index)
+    }
 
     val panelOffsetState = remember(density) {
         derivedStateOf {
@@ -192,10 +214,14 @@ fun LiquidNavigationBar(
                 // 用「动画目标」而不是瞬时视觉值算落点：轻扫末帧 value 还来不及
                 // 跟上 targetValue，拿 value 判断会误以为胶囊已就位。
                 val target = dragTarget.fastRoundToInt().fastCoerceIn(0, items.size - 1)
-                // 无条件上报（onSelect 幂等）：轻扫时 target 可能恰好等于当前页，
-                // 但不能因此整段跳过，否则胶囊位置与 selectedIndex 会永久不一致。
-                latestOnSelectState.value(target)
-                lastAnimatedState.intValue = target
+                // 胶囊手势的抬手：无条件走提交（内部按当前页幂等去重）——
+                // 轻扫时 target 可能恰好等于当前页，但不能因此整段跳过，
+                // 否则胶囊位置与 selectedIndex 会永久不一致。
+                commitSelection(target)
+                // 同帧 TabContent 的 clickable 可能补一次 onClick，同样认作指针回声，
+                // 不能用按下时的 i 覆盖拖动后的落点。
+                metrics.pointerCommitIndex = target
+                metrics.pointerCommitAt = SystemClock.uptimeMillis()
                 // 无条件收敛位置：value 接近整数不代表 targetValue 不是半程残留值。
                 // settleTo 只收位置、不重启 press/release，玻璃收尾仍归 onDragEnd 的 release
                 // （它会等位置收敛后才凝回，飞行余韵不受影响）。
@@ -217,19 +243,17 @@ fun LiquidNavigationBar(
                     }
                 }
             },
-            // release 收敛完成后统一对齐：万一某条手势链完全漏掉 onDragStopped，
-            // 这里也能把页面索引拉回胶囊最终落点（极低概率竞态的最后一道兜底）。
-            onGestureSettled = { index ->
-                val target = index.fastCoerceIn(0, items.size - 1)
-                lastAnimatedState.intValue = target
-                if (target != latestSelectedIndexState.value) latestOnSelectState.value(target)
-            },
+            // 不再给 onGestureSettled 传切页兜底：release 的收敛时机晚于抬手，
+            // holdPress 还有 60 帧（约 1s）超时保护，长按不松手时若在这里 onSelect
+            // 就会提前把页面切走；而它读到的是飞行中途的 value，拖动后还可能把
+            // 最终落点覆盖成中途 tab。页面切换统一交给抬手出口（onDragStopped /
+            // Row A 观察器的 up / TabContent 的键盘无障碍点击）。
         ).also { holder.animation = it }
     }
 
     // 外部切 Tab（其它入口改 selectedIndex）→ 驱动液滴飞行。
-    // 底栏自身的点按已在按下瞬间驱动并记账，拖动吸附也已自己播过动画，
-    // 这里靠 lastAnimated 去重，避免玻璃起落两次。
+    // 底栏自身的点按在按下瞬间驱动动画、在抬手瞬间才提交切页，拖动吸附也已自己
+    // 播过动画，这里靠 lastAnimated 去重，避免玻璃起落两次。不负责切页。
     LaunchedEffect(dragAnimation) {
         snapshotFlow { latestSelectedIndexState.value }.collectLatest { index ->
             val target = index.fastCoerceIn(0, items.size - 1)
@@ -432,12 +456,16 @@ fun LiquidNavigationBar(
                 // snapshotFlow → 才起飞」，比旧版多花抬手 + 重组 + flow 好几帧，
                 // 真机上就是「点其它 tab 切入慢半拍」。胶囊手势只压在当前 tab 上，
                 // 点其它 tab 时这里才是唯一的即时入口。
+                // 注意：**起飞在这里，切页不在这里**。按下只播玻璃/位置动画，
+                // 页面等抬手后按液滴最终落点提交（2026-11-11 修订）。
                 .pointerInput(dragAnimation, items.size) {
                     awaitEachGesture {
                         val down = awaitFirstDown(
                             requireUnconsumed = false,
                             pass = PointerEventPass.Initial,
                         )
+                        // 新手势开始：清掉上一次的回声标记（上次抬手的 click 早已处理完）
+                        metrics.pointerCommitIndex = -1
                         val w = metrics.tabWidth
                         if (w > 0f) {
                             // 内容区宽 = tabWidth * n（左右各 4dp padding 已排除）
@@ -452,12 +480,12 @@ fun LiquidNavigationBar(
                                 lastAnimatedState.intValue = hit
                                 metrics.holdingOtherTab = true
                                 // 按下即起飞：玻璃浮现与位置飞行并行，不等抬手；
-                                // 手指仍按住时玻璃保持，松手才凝回提示
+                                // 手指仍按住时玻璃保持，松手才凝回提示。
+                                // **页面留到抬手再切**：按下期间只有指示器在动，
+                                // 顶栏 / 页面内容 / 列表位置全部保持原状。
                                 dragAnimation.animateToValue(hit.toFloat()) {
                                     metrics.holdingOtherTab
                                 }
-                                // 页面同步切换（onSelect 幂等，抬手时 onClick 再调一次也无副作用）
-                                latestOnSelectState.value(hit)
                                 // 按住期间继续左右拖动跟手（v1 兼容）：Initial pass 观察
                                 // move / up，全程不 consume，TabContent 的 clickable 照常收抬手。
                                 // 液滴飞到 hit 之后手指还能拖过任意 tab，松手吸附最近者。
@@ -502,19 +530,35 @@ fun LiquidNavigationBar(
                                 scope.launch {
                                     offsetAnimation.animateTo(0f, spring(1f, 300f, 0.5f))
                                 }
-                                if (dragging) {
-                                    // 纯点按绝不重发吸附：此刻起飞动画可能还在飞，
-                                    // round 半程点会把目标改成中途 tab 并掐断在飞的动画。
-                                    // 拖动过则用 targetValue 而非瞬时 value 算落点：
-                                    // 轻扫末帧的写入可能还没落到 value 上。
+                                // 抬手：按「液滴最终所在的 tab」提交切页。
+                                // - 拖动过：用 dragTarget（同步记账的落点，轻扫末帧写入
+                                //   可能还没落到 value 上）吸附；纯点按绝不重发吸附，
+                                //   此刻起飞动画可能还在飞，round 半程点会把目标改成中途 tab。
+                                // - 纯点按：落点就是起飞目标 hit；若手指贴着 tab 边界按下、
+                                //   抬手时已跨到相邻 tab 但位移没过 touchSlop，则按手指
+                                //   最终位置修正，保证「最终所在 tab」与切页一致。
+                                val finalTarget = if (dragging) {
                                     val target = dragAnimation.dragTarget.fastRoundToInt()
                                         .fastCoerceIn(0, items.size - 1)
-                                    lastAnimatedState.intValue = target
                                     // 只收敛位置，玻璃收尾仍交给按住链那次 release
                                     dragAnimation.settleTo(target.toFloat())
-                                    // 无条件上报，保证页面与胶囊落点一致
-                                    latestOnSelectState.value(target)
+                                    target
+                                } else {
+                                    val upX = if (metrics.isLtr) {
+                                        lastX
+                                    } else {
+                                        w * items.size - lastX
+                                    }
+                                    val target = (upX / w).toInt()
+                                        .fastCoerceIn(0, items.size - 1)
+                                    if (target != hit) dragAnimation.settleTo(target.toFloat())
+                                    target
                                 }
+                                commitSelection(finalTarget)
+                                // 标记给同帧 Main pass 的 TabContent.onClick：这次 click
+                                // 只是指针回声，观察器已按落点提交，别再用按下时的 i 覆盖。
+                                metrics.pointerCommitIndex = finalTarget
+                                metrics.pointerCommitAt = SystemClock.uptimeMillis()
                             }
                         }
                     }
@@ -526,14 +570,22 @@ fun LiquidNavigationBar(
                     item = item,
                     tint = if (i == highlightIndex) accentColor else unselectedTint(),
                     modifier = Modifier.weight(1f).fillMaxHeight(),
-                    // 键盘 / 无障碍点击没有 down 事件，这里兜底；普通点按已由上面的
-                    // Initial pass 观察器驱动，lastAnimatedState 去重避免玻璃起落两次。
+                    // 指针手势的抬手由上面的 Initial pass 观察器按「液滴最终落点」提交；
+                    // 同一个 up 还会走到 clickable 的 onClick，但它的 i 是**按下时**的 tab
+                    // （拖动 / 贴边按下时与落点不同），必须认出来并跳过。
+                    // 键盘 / 无障碍点击没有 down 事件，走 else 分支：驱动飞行 + 切页。
                     onClick = {
-                        if (i != lastAnimatedState.intValue) {
-                            lastAnimatedState.intValue = i
-                            dragAnimation.animateToValue(i.toFloat())
+                        val isPointerEcho = metrics.pointerCommitIndex >= 0 &&
+                            SystemClock.uptimeMillis() - metrics.pointerCommitAt < 250L
+                        if (isPointerEcho) {
+                            metrics.pointerCommitIndex = -1
+                        } else {
+                            if (i != lastAnimatedState.intValue) {
+                                lastAnimatedState.intValue = i
+                                dragAnimation.animateToValue(i.toFloat())
+                            }
+                            commitSelection(i)
                         }
-                        latestOnSelectState.value(i)
                     },
                 )
             }

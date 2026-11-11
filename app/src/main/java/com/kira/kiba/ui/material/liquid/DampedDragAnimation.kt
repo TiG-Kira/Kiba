@@ -64,7 +64,14 @@ class DampedDragAnimation(
     private val canDrag: (Offset) -> Boolean = { true },
     private val onDragStopped: DampedDragAnimation.() -> Unit,
     private val onDrag: DampedDragAnimation.(IntSize, Offset) -> Unit,
-    /** 每次 release 收敛完成后上报最终 tab，用于把页面索引与胶囊落点强制对齐（兜底）。 */
+    /**
+     * release 收敛完成后上报最终 tab，仅作位置自愈的观测点。
+     *
+     * Kiba 侧**不再用它切页**：release 的时机晚于抬手，且 `holdPress` 有 60 帧
+     * 超时保护，长按未松手时在这里 `onSelect` 会提前把页面切走；而它读到的是
+     * 飞行中途的 value，拖动后还会把最终落点覆盖成中途 tab。
+     * 页面切换统一由抬手出口（onDragStopped / 底栏观察器的 up / 键盘点击）负责。
+     */
     private val onGestureSettled: (Int) -> Unit = {},
 ) {
     private val valueAnimation = Animatable(initialValue, 0.001f)
@@ -170,8 +177,9 @@ class DampedDragAnimation(
             launch { pressAnimation.animateTo(0f, spring(1f, 1000f, 0.001f)) }
             launch { scaleXAnimation.animateTo(1f, spring(0.6f, 250f, 0.001f)) }
             launch { scaleYAnimation.animateTo(1f, spring(0.7f, 250f, 0.001f)) }
-            // 最后一道兜底：万一某条手势链完全没走到 onDragStopped，胶囊也必须
-            // 停在整数 tab，且页面索引要与它一致（onSelect 幂等）。
+            // 位置自愈的最后一道兜底：万一某条手势链完全没走到 onDragStopped，
+            // 胶囊也必须停在整数 tab。页面索引不在这里对齐（见 onGestureSettled 注释），
+            // 由抬手出口统一提交，避免按住期间或飞行中途提前切页。
             val settledIndex = valueAnimation.value.roundToInt()
                 .coerceIn(valueRange.start.toInt(), valueRange.endInclusive.toInt())
             if (abs(valueAnimation.value - settledIndex.toFloat()) > 0.01f) {

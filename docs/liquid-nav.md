@@ -10,6 +10,11 @@
 > settle 抢掉），且弹簧感、通透感明显弱于 HyperIsland。v2 的目标是「把对方状态完整拿过来」，
 > 而不是只挑几个参数。本文以下章节全部描述 v2。
 
+> **v2.1（2026-11-11）：「按下即飞」≠「按下即切」**
+> 指示器的玻璃浮现 / 液滴飞行仍严格发生在 **down 那一帧**，但**页面切换推迟到抬手之后**，
+> 且按「液滴最终所在的 tab」提交。按下期间顶栏、页面内容、列表位置全部保持原状。
+> 涉及 `DampedDragAnimation.kt` / `LiquidNavigationBar.kt` 两个文件，详见第 2 节与坑 15/16。
+>
 > 本文只描述 **`MaterialFamily.LIQUID`** 这一条分支。默认柔光玻璃+ / 未开启高级材质时的
 > 经典底栏由 miuix `GlassNavigationBar` 承担，改动液态底栏时**不要碰它们**。
 >
@@ -24,8 +29,8 @@
 |---|---|
 | 静止 | 一条强折射玻璃底栏；选中项只有淡灰色提示胶囊（纯色、无特效）+ 图标变色。无浮起玻璃。 |
 | **按住当前 tab** | 手指正落在胶囊上 → Initial pass 立即 `press()`：玻璃浮现、横纵不同阻尼地鼓起、镜面光斑亮起；松手等位置收敛后凝回灰提示。**v1 这里完全没反应。** |
-| 点击其它 tab | **按下（Initial pass）即刻** `animateToValue` + `onSelect`：玻璃浮现与液滴飞行并行启动，页面同步切换；按住期间玻璃保持，松手才凝回灰提示。不等抬手、不等 `selectedIndex` 回流（见第 2 节「切换出口」）。**飞到位后手指仍可继续左右拖动**，液滴跟手越过任意 tab，松手吸附最近者（2.3.21 补回 v1 兼容）。 |
-| 拖动 | 胶囊 `updateValue` 跟手（带一点弹簧），整条底栏 EaseOut 让位最多 4dp；松手吸附最近 tab 并回弹。 |
+| 点击其它 tab | **按下（Initial pass）即刻** `animateToValue`：玻璃浮现与液滴飞行并行启动；**页面不切**。抬手后按液滴最终落点 `commitSelection`（见第 2 节「切换出口」）。按住期间玻璃保持，松手才凝回灰提示。**飞到位后手指仍可继续左右拖动**，液滴跟手越过任意 tab，松手吸附最近者（2.3.21 补回 v1 兼容），此时才按吸附落点切页。 |
+| 拖动 | 胶囊 `updateValue` 跟手（带一点弹簧），整条底栏 EaseOut 让位最多 4dp；松手吸附最近 tab 并回弹，**同一次抬手**按该落点切页。 |
 | 图标高亮 | 跟随胶囊**实际位置**（`round(damped.value)`），不跟随目标 tab。 |
 
 ## 2. 状态机：DampedDragAnimation（HyperIsland 完整版）
@@ -47,6 +52,7 @@
   `snapshotFlow { value }.first { abs(it - targetValue) < 2.5% }` **等飞行真正收敛**才把
   press / scale 落回 0——不是抬手瞬间就把玻璃抹掉。`holdPress()` 为 true（手指仍按在
   目标 tab）时继续维持玻璃直到抬手，60 帧兜底防 up 事件丢失导致永不散。
+  末尾 `onGestureSettled` 只做位置自愈 / 落点观测，**不再切页**（v2.1，见坑 15）。
 - `updateValue` 用 `animateTo(..., spring(1f,1000f)) { updateVelocity() }` 跟手，
   不是生硬的 `snapTo`；`velocityTracker.addPosition(SystemClock.uptimeMillis(), Offset(value,0))`。
 - `settleTo(target)` 只收敛位置 + 清速度，**不重启 press / release**：按住拖动松手时
@@ -73,31 +79,41 @@ awaitEachGesture {
 - 该 modifier **挂在胶囊本体**（最上层、覆盖当前 tab），这是「按住当前 tab 有反馈」的根因：
   v1 把 press 挂在 Row A 上，down 会被同 index 的 settle 立刻把 press 归零。
 
-### 切换出口（2.3.20 修订：按下即飞）
+### 起飞出口 / 切换出口（v2.1，2026-11-11：起飞在 down，切页在 up）
 
-v2 初版把点按做成「抬手 `onClick` → `onSelect` → 等父级 `selectedIndex` 回流 →
-`snapshotFlow.collectLatest` → `animateToValue`」。真机实测这条链比 2.3.18 慢半拍：
-多花抬手、父级重组、快照流好几帧，液滴要等页面切过去才起跑。胶囊手势只压在**当前 tab**
-上，点其它 tab 时它根本收不到 down，所以必须有一个独立的即时入口。
+历史背景：v2 初版把点按做成「抬手 `onClick` → `onSelect` → 等父级 `selectedIndex` 回流 →
+`snapshotFlow.collectLatest` → `animateToValue`」，真机实测比 2.3.18 慢半拍：多花抬手、
+父级重组、快照流好几帧，液滴要等页面切过去才起跑。胶囊手势只压在**当前 tab**上，
+点其它 tab 时它收不到 down，所以 Row A 必须有一个独立的**即时起飞入口**。
+v2.1 把「即时」拆成两件事：**动画仍在 down 当帧起跑，页面改为抬手后提交**。
 
 - **Row A 链尾** `pointerInput(dragAnimation, items.size)`：
   `awaitFirstDown(requireUnconsumed = false, pass = Initial)` 按 down.x 算出 hit tab，
-  `hit != selectedIndex` 时同一帧内依次做 `lastAnimatedState = hit`（去重）→
-  `holdingOtherTab = true` → `animateToValue(hit) { holdingOtherTab }` → `onSelect(hit)`。
+  `hit != selectedIndex` 时同一帧做 `lastAnimatedState = hit`（去重）→
+  `holdingOtherTab = true` → `animateToValue(hit) { holdingOtherTab }`，**不调 onSelect**。
   随后继续用 Initial pass 观察 move / up：按住期间把 `dx / tabWidth` 累加到局部
   `dragBase` 并 `updateValue` 跟手，整条底栏 `offsetAnimation` 同步让位；
   首帧 `dragBase` 取胶囊**真实视觉位置**（起飞动画可能已飞出半程，用按下点起跳会回跳），
-  且首帧只定基准不叠位移。松手 `settleTo(round(value))` 吸附 + `onSelect(target)` +
-  让位回弹。全程**不 consume**，TabContent 的 clickable 照常收抬手事件。
+  且首帧只定基准不叠位移。全程**不 consume**，TabContent 的 clickable 照常收抬手事件。
+- **抬手统一出口** `commitSelection(target)`：先写 `lastAnimatedState`（防父级回流时
+  `snapshotFlow` 重播起飞），再在 `target != selectedIndex` 时调 `onSelect`。
+  `target` 取「液滴最终所在 tab」：拖动过 = `dragTarget.roundToInt()` 吸附落点并 `settleTo`；
+  纯点按 = 起飞目标 `hit`，若抬手位置已跨到相邻 tab（贴边界按下、位移未过 touchSlop）
+  则以 `lastX` 换算的 tab 为准并 `settleTo` 修正。让位回弹照旧。
 - **纯点按（含快速点按）绝不进拖动分支**：up 事件 `change.pressed == false` 必须先 break；
   否则起飞动画半程会被 `round` 吸附到中途 tab，快速连点直接切错页。
-- `TabContent.onClick` 只作键盘 / 无障碍兜底：`i != lastAnimatedState` 才驱动；
-  普通点按已由观察器处理，不会播两次玻璃，`onSelect` 本身也幂等。
-- `LaunchedEffect` 的 `snapshotFlow { selectedIndex }` 退化为**外部入口**（其它代码改 tab），
-  靠 `lastAnimatedState` 去重，不与底栏点按重复。
-- 拖动松手 → `onDragStopped` 里 `onSelect(target)` + `animateToValue(target)` +
-  `offsetAnimation.animateTo(0f, spring(1f,300f,0.5f))`；纯按住当前 tab 跳过
-  `animateToValue`，只让 `release()` 收尾，否则两个 press 动画抢同一 Animatable 会闪。
+- **clickable 抬手回声**：同一个 up 还会触发 `TabContent.onClick`，它拿到的 `i` 是
+  **按下时**的 tab，拖动 / 贴边按下时与最终落点不同。`metrics.pointerCommitIndex/At`
+  在提交时打标（250ms 短窗），`onClick` 认出回声就只消费标记、不重播动画也不切页；
+  没有标记（键盘 / 无障碍，无 down）才按 `i` 驱动 `animateToValue` 并切页。
+- **`onGestureSettled` 不再切页**（见坑 15）：`release()` 收敛时机晚于抬手，
+  `holdPress` 还有 60 帧超时，长按未松手会提前切页；读到飞行中途值还会覆盖落点。
+- `LaunchedEffect` 的 `snapshotFlow { selectedIndex }` 只作**外部入口**（其它代码改 tab），
+  靠 `lastAnimatedState` 去重，不负责切页。
+- 胶囊手势拖动松手 → `onDragStopped` 里 `commitSelection(target)` + `settleTo(target)` +
+  `offsetAnimation.animateTo(0f, spring(1f,300f,0.5f))`；同样打回声标记。
+  纯按住当前 tab 跳过 `animateToValue`，只让 `release()` 收尾，否则两个 press 动画
+  抢同一 Animatable 会闪。
 
 > 所有 `latestSelectedIndex` / `latestOnSelect` 必须保存 `rememberUpdatedState` 返回的
 > **State 对象**并读 `.value`。用 `by` 解包后再在 remember 构造的 lambda 里捕获，
@@ -192,6 +208,8 @@ z 序从下到上：
     `snapshotFlow` 还要等下一帧快照，叠加起来就是「按下 → 液滴起跑」的可见延迟。
     胶囊手势覆盖不到其它 tab，即时入口必须挂在 Row A 的 Initial pass，
     再用 `lastAnimatedState` 与回流去重（v2.3.19 真机实测慢半拍，v2.3.20 修）。
+    **v2.1 补充**：起飞仍严格在 down 当帧；移到 up 的只有 `onSelect`。别为了
+    「等抬手」顺手把 `animateToValue` 也推迟，否则又退回 v2 初版的慢半拍。
 12. **「按下即飞」后必须保留按住拖动**：只等 up 的观察器会让液滴到位后锁死
     （v2.3.20 真机反馈）。首帧基准取真实视觉位置（否则回跳）、纯点按的 up 提前
     break（否则飞行半程被吸附到中途 tab），两条缺一不可。
@@ -201,11 +219,30 @@ z 序从下到上：
     于是胶囊永久停在中间、`onSelect` 又因 `target == selectedIndex` 被跳过。
     修法：所有位置写入收敛到唯一入口 `animateValue()`（先 `valueJob?.cancel()` 再
     `UNDISPATCHED` 启动），用同步记账的 `pendingTarget / dragTarget` 读落点，
-    `onDragStopped` **无条件**上报 + `settleTo`，`release()` 末尾再兜一次
-    `onGestureSettled`（`onSelect` 幂等）。
+    `onDragStopped` **无条件**走提交 + `settleTo`；`release()` 末尾只做位置自愈
+    （v2.1 起不再借 `onGestureSettled` 切页，见坑 15）。
 14. **松手带速度时胶囊形状变形**：速度弹簧（`spring(0.5f,300f)`）衰减比玻璃凝回慢，
     残余 `velocity` 会继续横向拉伸静止形状，最右 tab 直接顶出底栏圆角。
     形变必须按 `pressProgress` 加权——`lerp(1f, 变形值, press)`，p=0 时严格 1:1。
+15. **`onGestureSettled` / release 兜底不能在按住期间切页（v2.1）**：
+    `release(holdPress)` 有 60 帧（约 1s）超时，长按不松手时它照样会跑到末尾；
+    若在 `onGestureSettled` 里 `onSelect`，页面会在手指还按着的时候切走。
+    且它读的是 `valueAnimation.value.roundToInt()`（可能是飞行中途值），拖动后还会
+    把最终落点覆盖成中途 tab。切页必须只由抬手出口 `commitSelection` 负责，
+    该回调退化为 no-op / 位置自愈观测点。
+16. **clickable 抬手回声的 `i` 不是最终落点（v2.1）**：Row A 观察器在 Initial pass
+    处理 down / up，TabContent 的 `clickable` 在同一个 up 的 Main pass 还会回调一次
+    `onClick`，它闭包里的 `i` 是**按下时**的 tab。拖动到别的 tab 松手、或贴着 tab
+    边界按下抬手跨到相邻 tab 时 `i != 落点`，若照旧 `onSelect(i)` 会把刚提交的
+    页面拽回去。用 `pointerCommitIndex/At` 打 250ms 短窗标记认出回声并跳过；
+    没有标记（键盘 / 无障碍，无 down）才按 `i` 驱动飞行并切页。短窗同时避免
+    残留标记影响后续键盘点击。
+17. **Git Bash 会把设备端路径当本机路径转换（v2.1 取证踩坑）**：
+    `adb shell uiautomator dump /sdcard/w.xml` 里以 `/` 开头的参数会被 MSYS 转成
+    `D:/.../PortableGit/sdcard/w.xml`，dump 看着"成功"其实读不回来（前三轮验证
+    全部空输出就是这个原因）。设备命令整体用单引号包住：
+    `adb shell 'uiautomator dump /sdcard/w.xml'` / `adb exec-out 'cat /sdcard/w.xml'`；
+    本地落盘一律用绝对路径（`tmp_avd/` 在工作区根，不在 `kiba/` 仓库根内）。
 
 ## 7. AVD 验证液态档的必做步骤
 
@@ -232,7 +269,8 @@ v2 实测记录（Pixel_10_Pro，2026-11-08）：
 - 长按「我」tab（x≈863, y≈2703）1500ms，0.5s 时抓图：该 tab 区域平均亮度
   idle 217.6 → 按住 229.6（白气泡已浮现）→ 松手 206.3（凝回灰提示）；
   证明**手指还按着液滴就已经飞到目标处**，且 hold 生效；
-- 长按 0.4s 时的 `uiautomator dump` 顶栏已是「我」→ 页面与液滴在 down 同步切换；
+- 长按 0.4s 时的 `uiautomator dump` 顶栏已是「我」→ 页面与液滴在 down 同步切换
+  （**历史行为**，v2.1 起页面改为抬手后切页，这条记录只说明当时起飞与切页都在 down）；
 - 快速连点「曲目」→「设置」最终停在「设置」；从「设置」横拖到「曲目」
   吸附回「曲目」，胶囊手势未被新增观察器破坏；
 - logcat 无 `FATAL EXCEPTION` / `ANR in com.kira.kiba.debug`；
@@ -248,3 +286,20 @@ v2 实测记录（Pixel_10_Pro，2026-11-08）：
   反向拖（从「听」按到「Kiba」）→「Kiba」，均正确；
 - logcat 无 `FATAL EXCEPTION` / `ANR in com.kira.kiba.debug`；
 - 验完 `adb emu kill` + 残留进程清干净、临时闸门回滚，编译单测通过。
+
+v2.1 修订实测（Pixel_10_Pro，2026-11-11，1280x2856；5 tab 中心 y≈2703、
+x≈186/413/640/863/1085）。用 `input motionevent DOWN/MOVE/UP` 拼手势，
+每个状态各做一次 `uiautomator dump`，按页面特征文字判当前页
+（曲目 = 歌曲列表；「我」= 查分器/成绩查询；「设置」= 外观/主题/真·高级材质）：
+
+- baseline「曲目」→ 按住「我」(863,2703) **2 秒**（故意超过 `holdPress` 的
+  60 帧超时）→ dump 仍是同一组歌曲列表，XML 与 baseline 只差 1 字节：
+  **按住期间页面完全没切**，也证明 `onGestureSettled` 不再趁长按提前切页；
+- UP → 变「我」页：**松手才切页**；
+- 从「曲目」(186) DOWN → 等液滴到位 → 连续 MOVE 到最右 → UP → 变「设置」页：
+  **按拖动最终落点切页**，clickable 抬手回声没把页面拽回按下时的 tab；
+- 快速点按「曲目」→ 回曲目页：纯点按未受「等抬手」影响；
+- logcat 无 `FATAL EXCEPTION` / `ANR in com.kira.kiba.debug`；
+- 验完 `adb emu kill`，`tasklist` 无 emulator/qemu 残留；临时闸门已回滚
+  （`git diff MainActivity.kt` 为空），回滚后 `:app:compileDebugKotlin
+  :app:testDebugUnitTest` 通过。取证原始 XML / 截图留在工作区 `tmp_avd/nav_*.png|xml`。
