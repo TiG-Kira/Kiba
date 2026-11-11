@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -25,6 +24,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -35,6 +35,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
@@ -50,9 +51,9 @@ import com.kira.kiba.core.db.entity.SongDataEntity
 import com.kira.kiba.core.listen.SongDownloader
 import com.kira.kiba.core.playback.SongPlaybackController
 import com.kira.kiba.core.playback.SongPlaybackController.LoopMode
+import com.kira.kiba.core.utils.RingtoneSetter
 import com.kira.kiba.ui.common.CoverFrame
 import com.kira.kiba.ui.common.coverCandidateUrls
-import com.kira.kiba.ui.material.KibaGlassDialog
 import com.kira.kiba.ui.navigation.LocalSystemNavBarBottom
 import com.kira.kiba.ui.navigation.LocalTopBarClearance
 import kotlinx.coroutines.Dispatchers
@@ -62,6 +63,7 @@ import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
+import top.yukonga.miuix.kmp.icon.glass.Alarm
 import top.yukonga.miuix.kmp.icon.glass.ChevronBackward
 import top.yukonga.miuix.kmp.icon.glass.ChevronForward
 import top.yukonga.miuix.kmp.icon.glass.Download
@@ -77,6 +79,12 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 private val ImmerseText = Color(0xF2FFFFFF)
 private val ImmerseTextDim = Color(0xB8FFFFFF)
 private val ImmerseTextFaint = Color(0x8CFFFFFF)
+
+/**
+ * 播放列表面板开合的缓动：快起慢收三次贝塞尔（与顶栏程序折叠共用同一曲线，
+ * 两边同频动画才像一块完整的转场而不是各动各的）。
+ */
+private val QueuePanelEasing = androidx.compose.animation.core.CubicBezierEasing(0.22f, 0.85f, 0.16f, 1f)
 
 /**
  * 乐曲播放页（曲目列表悬浮底栏 / 曲目详情「播放乐曲」/ 媒体通知 共同的目的地）。
@@ -97,13 +105,17 @@ fun SongPlayerScreen(
 ) {
     val state by SongPlaybackController.state.collectAsState()
     val track = state.track
-    var showQueue by remember { mutableStateOf(false) }
+    // 播放列表改为页内显示（不再弹层）：显隐状态放 [SongPlayerPanelState]，
+    // 顶栏（KibaMainScreen 提供）也要读它做收窄 + 改标题，兄弟树共享
+    val queueVisible by SongPlayerPanelState.queueVisible.collectAsState()
     val navBottom = LocalSystemNavBarBottom.current
     val context = LocalContext.current
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     // 下载状态：切曲时重查（已下载则按钮变「已下载」提示）
     var downloaded by remember(track?.songId) { mutableStateOf(false) }
     var downloading by remember { mutableStateOf(false) }
+    // 铃声设置进行中（未下载时先落盘，几秒到十几秒）
+    var ringtoneBusy by remember { mutableStateOf(false) }
     LaunchedEffect(track?.songId) {
         val id = track?.songId ?: return@LaunchedEffect
         downloaded = withContext(Dispatchers.IO) {
@@ -121,6 +133,12 @@ fun SongPlayerScreen(
     // 二级页面顶栏由 KibaMainScreen 提供，页面自己把内容压到 clearance 之下，
     // 否则封面会顶到大标题/返回键背后（首版实况：封面被顶栏盖住半截）。
     val clearance = LocalTopBarClearance.current
+
+    // 离开页面时面板必须复位：顶栏是全局共享的 scrollBehavior，残留的
+    // programCollapsed 会让下一次进入任意二级页都从收窄态开始（实测踩过）。
+    DisposableEffect(Unit) {
+        onDispose { SongPlayerPanelState.setVisible(false) }
+    }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -167,6 +185,19 @@ fun SongPlayerScreen(
                 val showInfoCard = maxWidth >= 340.dp
                 val showFuncRow = maxWidth >= 280.dp
 
+                // 播放列表面板的高度动画：weight(0→1) 用非线性缓动逐帧插值，
+                // Column 每帧重测（与顶栏收窄同一套缓动），内容随进度淡入。
+                // 比 AnimatedVisibility 稳：weight 必须由父 Column 作用域给出，
+                // 包在 AnimatedVisibility 里就没法跟布局动画共享同一个时钟。
+                val queueWeight by androidx.compose.animation.core.animateFloatAsState(
+                    targetValue = if (queueVisible) 1f else 0f,
+                    animationSpec = androidx.compose.animation.core.tween(
+                        durationMillis = 380,
+                        easing = QueuePanelEasing,
+                    ),
+                    label = "queuePanelWeight",
+                )
+
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -177,12 +208,23 @@ fun SongPlayerScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     // 封面与曲名/艺术家由顶栏提供（SongDetailTopBarSlot 复用，见 KibaMainScreen），
-                    // 页面主体：简要信息卡 → 功能行 → 进度 → 控制，压着顶栏底沿排布。
-                    Spacer(Modifier.weight(1f))
+                    // 页面主体：播放列表 / 简要信息卡 → 功能行 → 进度 → 控制。
+                    if (queueWeight > 0.01f) {
+                        QueuePanel(
+                            state = state,
+                            reveal = queueWeight,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(queueWeight.coerceIn(0f, 1f)),
+                        )
+                    } else {
+                        Spacer(Modifier.weight(1f))
+                    }
 
                     // ── 歌曲简要信息卡（深色玻璃观感：半透明黑 + 微高光描边）。
                     // 不能用 backdrop 玻璃：本页在取景层子树内，采样会成环。
-                    if (showInfoCard) songInfo?.let { info ->
+                    // 播放列表面板展开时让位（面板 + 功能行 + 进度 + 控制已占满一屏）。
+                    if (!queueVisible && showInfoCard) songInfo?.let { info ->
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -204,8 +246,10 @@ fun SongPlayerScreen(
                         Spacer(Modifier.height(22.dp))
                     }
 
-                    // ── 功能行（QQ 音乐铃声/音效/下载位）：下载 + 播放列表 + 音源说明 ──
-                    if (showFuncRow) {
+                    // ── 功能行（QQ 音乐铃声/音效/下载位）：下载 + 设为铃声 + 音源说明 ──
+                    // 三项等宽均分整行（各自居中）：固定间隙会把「音源来自落雪」这种
+                    // 宽标签的图标挤得离邻项更远，视觉间距不一致（用户实测反馈）
+                    if (!queueVisible && showFuncRow) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.Center,
@@ -246,14 +290,59 @@ fun SongPlayerScreen(
                                         }
                                     }
                                 },
+                                modifier = Modifier.weight(1f),
                             )
-                            Spacer(Modifier.width(40.dp))
+                            // ── 设为铃声：需「修改系统设置」特殊权限（两段式流程）；
+                            // 流媒体播放中的歌先落盘（已下载则直接复用本地文件）
+                            PlayerFunc(
+                                icon = MiuixGlassIcons.Regular.Alarm,
+                                label = if (ringtoneBusy) "处理中…" else "设为铃声",
+                                onClick = {
+                                    val t = track ?: return@PlayerFunc
+                                    if (ringtoneBusy) {
+                                        Toast.makeText(context, "正在处理，稍等", Toast.LENGTH_SHORT).show()
+                                        return@PlayerFunc
+                                    }
+                                    if (!RingtoneSetter.canWriteSettings(context)) {
+                                        // 特殊权限 requestPermissions 拿不到，只能引导去系统设置页手动开
+                                        Toast.makeText(
+                                            context,
+                                            "需要「修改系统设置」权限：请在接下来的页面允许后，回来再点一次",
+                                            Toast.LENGTH_LONG,
+                                        ).show()
+                                        RingtoneSetter.openWriteSettingsPage(context)
+                                        return@PlayerFunc
+                                    }
+                                    ringtoneBusy = true
+                                    scope.launch {
+                                        val msg = runCatching {
+                                            val localUri = SongDownloader.query(context, t.songId)?.uri
+                                                ?: SongDownloader.download(
+                                                    context = context,
+                                                    songId = t.songId,
+                                                    title = t.title,
+                                                    artist = t.artist,
+                                                    audioUrl = t.audioUrl,
+                                                    coverCandidates = t.coverCandidates,
+                                                ).also { downloaded = true }
+                                            RingtoneSetter.setRingtone(context, localUri)
+                                            "已将「${t.title}」设为来电铃声"
+                                        }.getOrElse { e ->
+                                            "设置失败：${e.message ?: "无法获取音源"}"
+                                        }
+                                        ringtoneBusy = false
+                                        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                                    }
+                                },
+                                modifier = Modifier.weight(1f),
+                            )
                             PlayerFunc(
                                 icon = MiuixGlassIcons.Regular.Music,
                                 label = "音源来自落雪",
                                 onClick = {
                                     Toast.makeText(context, "整轨音源：assets2.lxns.net（落雪）", Toast.LENGTH_SHORT).show()
                                 },
+                                modifier = Modifier.weight(1f),
                             )
                         }
 
@@ -325,7 +414,8 @@ fun SongPlayerScreen(
                             size = 46.dp,
                             tint = ImmerseText,
                         ) { SongPlaybackController.next() }
-                        // 右：播放列表（宽屏才显示；窄屏保留空槽占位保对称）
+                        // 右：播放列表（宽屏才显示；窄屏保留空槽占位保对称）。
+                        // 页内显隐切换：顶栏随面板收窄 / 恢复（见 KibaMainScreen 播放页分支）
                         Box(
                             modifier = Modifier.width(46.dp),
                             contentAlignment = Alignment.Center,
@@ -336,8 +426,9 @@ fun SongPlayerScreen(
                                     contentDescription = "播放列表 · ${state.queue.size} 首",
                                     enabled = true,
                                     size = 46.dp,
-                                    tint = ImmerseText,
-                                ) { showQueue = true }
+                                    tint = if (queueVisible) MiuixTheme.colorScheme.primary else ImmerseText,
+                                    active = queueVisible,
+                                ) { SongPlayerPanelState.toggle() }
                             }
                         }
                     }
@@ -356,20 +447,44 @@ fun SongPlayerScreen(
             }
         }
     }
+}
 
-    // ── 播放列表弹层：会话队列，点选切歌，当前曲高亮 ──
-    KibaGlassDialog(
-        show = showQueue,
-        title = "播放列表",
-        summary = if (state.queue.isNotEmpty() && state.queueIndex >= 0) {
-            "第 ${state.queueIndex + 1} / ${state.queue.size} 首 · 点选切歌"
-        } else null,
-        onDismissRequest = { showQueue = false },
+/**
+ * 页内播放列表面板：会话队列，点选切歌，当前曲高亮。
+ *
+ * 高度由父级 weight 动画驱动（[SongPlayerScreen] 里 0→1 插值），本组件只负责
+ * 按 [reveal] 淡入内容；面板展开时自动滚到当前播放曲。
+ */
+@Composable
+private fun QueuePanel(
+    state: SongPlaybackController.PlayerState,
+    reveal: Float,
+    modifier: Modifier = Modifier,
+) {
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    // 面板每次展开 / 切歌都把当前曲滚进视野（首条就不滚，scrollToItem(0) 无意义抖动）
+    androidx.compose.runtime.LaunchedEffect(state.queueIndex, state.queue.size) {
+        if (state.queueIndex > 0) {
+            runCatching { listState.scrollToItem(state.queueIndex) }
+        }
+    }
+    Column(
+        modifier = modifier
+            .alpha(reveal.coerceIn(0f, 1f)),
     ) {
+        Text(
+            text = if (state.queue.isNotEmpty() && state.queueIndex >= 0) {
+                "第 ${state.queueIndex + 1} / ${state.queue.size} 首 · 点选切歌"
+            } else {
+                "队列为空"
+            },
+            style = MiuixTheme.textStyles.footnote2,
+            color = ImmerseTextFaint,
+            modifier = Modifier.padding(start = 8.dp, top = 4.dp, bottom = 2.dp),
+        )
         LazyColumn(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(max = 380.dp),
+            state = listState,
+            modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             itemsIndexed(state.queue) { index, item ->
@@ -378,33 +493,43 @@ fun SongPlayerScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(12.dp))
-                        .clickable {
-                            SongPlaybackController.playAt(index)
-                            showQueue = false
-                        }
-                        .padding(horizontal = 8.dp, vertical = 10.dp),
+                        .then(
+                            if (isCurrent) {
+                                Modifier.background(Color.White.copy(alpha = 0.08f))
+                            } else {
+                                Modifier
+                            }
+                        )
+                        .clickable { SongPlaybackController.playAt(index) }
+                        .padding(horizontal = 8.dp, vertical = 9.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
                         text = "${index + 1}",
                         style = MiuixTheme.textStyles.footnote1,
-                        color = if (isCurrent) MiuixTheme.colorScheme.primary
-                        else MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        color = if (isCurrent) MiuixTheme.colorScheme.primary else ImmerseTextFaint,
                         modifier = Modifier.width(26.dp),
                     )
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = item.title,
                             style = MiuixTheme.textStyles.body2,
-                            color = if (isCurrent) MiuixTheme.colorScheme.primary
-                            else MiuixTheme.colorScheme.onSurface,
+                            color = if (isCurrent) MiuixTheme.colorScheme.primary else ImmerseText,
                             maxLines = 1,
                         )
                         Text(
                             text = item.artist,
                             style = MiuixTheme.textStyles.footnote2,
-                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            color = ImmerseTextDim,
                             maxLines = 1,
+                        )
+                    }
+                    if (isCurrent) {
+                        androidx.compose.material3.Icon(
+                            imageVector = if (state.playing) MiuixGlassIcons.Regular.Pause else MiuixGlassIcons.Regular.Play,
+                            contentDescription = if (state.playing) "正在播放" else "已暂停",
+                            tint = MiuixTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp),
                         )
                     }
                 }
@@ -462,9 +587,10 @@ private fun PlayerFunc(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = Modifier
+        modifier = modifier
             .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick)
             .padding(horizontal = 8.dp, vertical = 6.dp),

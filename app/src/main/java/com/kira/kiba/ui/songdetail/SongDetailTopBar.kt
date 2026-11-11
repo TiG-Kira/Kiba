@@ -55,6 +55,7 @@ import com.kira.kiba.ui.navigation.useLiquidBar
 import com.kira.kiba.ui.share.ShareImageAction
 import kotlinx.coroutines.delay
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
+import top.yukonga.miuix.kmp.basic.TopAppBarState
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.TopAppBarDefaults
 import top.yukonga.miuix.kmp.glass.GlassTopAppBar
@@ -77,6 +78,21 @@ fun SongDetailTopBarSlot(
     songId: Int,
     scrollBehavior: ScrollBehavior,
     onBack: () -> Unit,
+    /**
+     * 标题 / 副标题覆盖（非空时替换歌名 / 艺术家显示）。
+     * 播放页的「播放列表面板」用：顶栏收窄后标题改「播放列表」、副标题改「当前播放: xxx」。
+     */
+    titleOverride: String? = null,
+    subtitleOverride: String? = null,
+    /**
+     * 程序化折叠（面板显示时强制收窄到收缩态，封面渐隐）。
+     *
+     * 播放页内容不挂 nestedScroll，顶栏原本永不折叠；这里用 Animatable 驱动
+     * [TopAppBarState.heightOffset] 与 [TopAppBarState.contentOffset] 一起插值，
+     * 与真实滚动走同一套 mask / 背板时钟，收窄与恢复都有非线性缓动
+     * （快起慢收，与 Tab 切换同款贝塞尔）。
+     */
+    programCollapsed: Boolean = false,
 ) {
     val db = remember { AppDataBase.getInstance() }
 
@@ -178,6 +194,29 @@ fun SongDetailTopBarSlot(
     val collapsedPx = with(density) { TopAppBarDefaults.CollapsedHeight.roundToPx() }
     val minExpansionPx = (screenWidthPx - statusBarPx - collapsedPx).coerceAtLeast(0)
 
+    // ── 程序化折叠（播放列表面板）：不经过滚动，直接驱动折叠状态。
+    // heightOffset 控制收窄量（负），contentOffset 同步置负驱动 collapsed（封面渐隐）
+    // ——两者必须一起动，只写 heightOffset 时封面不消失、只写 contentOffset 时高度不变。
+    // 结束值精确落在 0 / limit，避免恢复后残留半折叠的中间态。
+    LaunchedEffect(programCollapsed, scrollBehavior) {
+        val st = scrollBehavior.state
+        val limit = st.heightOffsetLimit
+        if (limit >= 0f) return@LaunchedEffect // 材质关闭 / 未测量：没有可折叠的大标题
+        val target = if (programCollapsed) 1f else 0f
+        val current = (-st.heightOffset / limit).coerceIn(0f, 1f)
+        androidx.compose.animation.core.Animatable(current)
+            .animateTo(
+                targetValue = target,
+                animationSpec = androidx.compose.animation.core.tween(
+                    durationMillis = 380,
+                    easing = PanelCollapseEasing,
+                ),
+            ) {
+            st.heightOffset = limit * value
+            st.contentOffset = -limit * value
+        }
+    }
+
     // 液态玻璃模式下：封面还在时按钮保持 miuix（裸图标压在封面上才对），
     // 折叠后顶栏变成一条玻璃带 → 按钮随之换成液态玻璃圆钮（见 KibaActionButton）。
     // 液态材质下：收缩态（封面消失）顶栏的玻璃底板换成液态玻璃（其余材质保持原 miuix 玻璃）
@@ -202,9 +241,9 @@ fun SongDetailTopBarSlot(
         }
         CompositionLocalProvider(LocalInLiquidTopBar provides liquidActions) {
         GlassTopAppBar(
-            title = current?.title ?: "",
-            largeTitle = current?.title ?: "",
-            subtitle = current?.artist ?: "",
+            title = titleOverride ?: current?.title ?: "",
+            largeTitle = titleOverride ?: current?.title ?: "",
+            subtitle = subtitleOverride ?: current?.artist ?: "",
             titleColor = onCoverColor,
             largeTitleColor = onCoverColor,
             subtitleColor = onCoverColor.copy(alpha = 0.72f),
@@ -271,6 +310,12 @@ fun SongDetailTopBarSlot(
 
 /** 封面统一压暗系数（黑色 15% 叠层）：字色判定与视觉压暗共用，保证一致。 */
 private const val COVER_DARKEN_FACTOR = 0.85f
+
+/**
+ * 程序化折叠（播放列表面板开合）的缓动：快起慢收三次贝塞尔，与 Tab 切换
+ * （KibaMainScreen 的 TabSwitchEasing）同款——非线性是定稿口径，线性会显得机械。
+ */
+private val PanelCollapseEasing = androidx.compose.animation.core.CubicBezierEasing(0.22f, 0.85f, 0.16f, 1f)
 
 /** 折叠后状态栏外观切换的延迟：略大于渐隐 mask 时长（100ms），避开渐隐关键帧。 */
 private const val STATUS_BAR_SWITCH_DELAY_MS = 130L
