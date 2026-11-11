@@ -97,7 +97,7 @@ fun SettingsScreen(
     var coverSource by remember { mutableStateOf(SpUtil.getCoverSource()) }
     var showCoverSource by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    // ── 真·高级材质 ──
+    // ── 材质与特效 ──
     // 评分在启动时评测并落盘，这里只做展示与手动重评
     var advancedOn by remember { mutableStateOf(SpUtil.isAdvancedMaterialEnabled()) }
     var materialFamily by remember { mutableStateOf(SpUtil.getMaterialFamily()) }
@@ -161,8 +161,10 @@ fun SettingsScreen(
                 }
             }
 
-            // ── 真·高级材质 ──
-            item(key = "material_title") { SectionTitle("真·高级材质") }
+            // ── 材质与特效 ──
+            // 组名不再叫「真·高级材质」：这一组里除了那个开关，还包含设备评分与材质风格，
+            // 用总开关的名字当组名会让「评分」「风格」看起来像是它的子项。
+            item(key = "material_title") { SectionTitle("材质与特效") }
             item(key = "material_card") {
                 Card(modifier = (Modifier.fillMaxWidth())) {
                     // 摘要只留一句引导：分数 / 档位 / 六项明细 / 重新评分都在独立页面里，
