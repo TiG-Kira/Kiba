@@ -4,6 +4,7 @@ import android.util.Log
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import com.kira.kiba.core.account.RatingHistory
 import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.db.entity.ChuniRecordEntity
 import com.kira.kiba.core.model.GameType
@@ -141,6 +142,9 @@ object ChuniRecordSync {
         }
         outcome.onSuccess { parsed ->
             fetchedThisSession = true
+            // Rating 历史曲线：中二自成一桶（公式与水鱼/落雪的舞萌口径完全不同，
+            // 圆整后能对上的概率极低，混画只会变成两条互不相干的折线）
+            RatingHistory.record(GameType.CHUNITHM, source, SpUtil.getChuniRating())
             Log.i(
                 TAG,
                 "chuni records synced (${source.key}): ${parsed.records.size}, " +

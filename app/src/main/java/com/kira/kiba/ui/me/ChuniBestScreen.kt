@@ -23,6 +23,8 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.kira.kiba.core.account.RatingHistory
+import com.kira.kiba.core.account.formatRatingValue
 import com.kira.kiba.core.data.ChuniRecordSync
 import com.kira.kiba.core.data.ChuniStats
 import com.kira.kiba.core.db.entity.ChuniRecordEntity
@@ -41,6 +43,7 @@ import com.kira.kiba.ui.common.chuniDifficultyColor
 import com.kira.kiba.ui.common.chuniDifficultyLabel
 import com.kira.kiba.ui.common.chuniFcDisplay
 import com.kira.kiba.ui.common.chuniScoreText
+import com.kira.kiba.ui.common.RatingTrendCard
 import com.kira.kiba.ui.common.pageContentPadding
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Scaffold
@@ -135,6 +138,21 @@ fun ChuniBestScreen(
                             )
                         }
                     }
+                }
+            }
+
+            // ── Rating 变化曲线（中二自己的桶：公式与舞萌两源完全不同）──
+            item(key = "trend") {
+                val chuniSource by SpUtil.chuniSourceFlow.collectAsState()
+                val history by RatingHistory.entries(GameType.CHUNITHM, chuniSource)
+                    .collectAsState()
+                if (history.isNotEmpty()) {
+                    RatingTrendCard(
+                        title = "中二 Rating 变化",
+                        entries = history,
+                        subtitle = "${chuniSource.shortLabel}源 · 本地记录 ${history.size} 次",
+                        valueText = { formatRatingValue(GameType.CHUNITHM, it) },
+                    )
                 }
             }
 

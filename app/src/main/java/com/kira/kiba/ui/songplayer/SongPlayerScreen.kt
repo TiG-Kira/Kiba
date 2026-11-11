@@ -74,6 +74,7 @@ import top.yukonga.miuix.kmp.icon.glass.Play
 import top.yukonga.miuix.kmp.icon.glass.Playlist
 import top.yukonga.miuix.kmp.icon.glass.Redo
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+import com.kira.kiba.ui.theme.KibaMotion
 
 // 沉浸式播放页配色（QQ 音乐同款口径）：封面即背景，整页压暗后统一白系文字
 private val ImmerseText = Color(0xF2FFFFFF)
@@ -192,7 +193,7 @@ fun SongPlayerScreen(
                 val queueWeight by androidx.compose.animation.core.animateFloatAsState(
                     targetValue = if (queueVisible) 1f else 0f,
                     animationSpec = androidx.compose.animation.core.tween(
-                        durationMillis = 380,
+                        durationMillis = KibaMotion.millis(380),
                         easing = QueuePanelEasing,
                     ),
                     label = "queuePanelWeight",

@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.kira.kiba.ui.theme.KibaMotion
 import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.sin
@@ -384,8 +385,8 @@ fun rememberHeroEnter(delayMillis: Int = 0): Float {
     val progress by animateFloatAsState(
         targetValue = if (entered) 1f else 0f,
         animationSpec = tween(
-            durationMillis = 620,
-            delayMillis = delayMillis,
+            durationMillis = KibaMotion.millis(620),
+            delayMillis = KibaMotion.millis(delayMillis),
             easing = FastOutSlowInEasing,
         ),
         label = "aboutHeroEnter",

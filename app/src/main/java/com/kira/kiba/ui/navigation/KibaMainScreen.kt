@@ -32,6 +32,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -45,6 +46,7 @@ import com.kira.kiba.core.data.ChuniRecordSync
 import com.kira.kiba.core.data.ChuniSongSync
 import com.kira.kiba.core.data.SongDataSync
 import com.kira.kiba.core.agent.KibaAgent
+import com.kira.kiba.core.listen.AgentPlaylistStore
 import com.kira.kiba.core.playback.SongPlaybackController
 import com.kira.kiba.core.share.ShareService
 import com.kira.kiba.core.state.KibaState
@@ -56,6 +58,7 @@ import com.kira.kiba.ui.agent.AgentScreen
 import com.kira.kiba.ui.agent.LlmConfigScreen
 import com.kira.kiba.ui.listen.DownloadsScreen
 import com.kira.kiba.ui.listen.ListenScreen
+import com.kira.kiba.ui.listen.AgentPlaylistDetailScreen
 import com.kira.kiba.ui.listen.PlaylistDetailScreen
 import com.kira.kiba.ui.me.Best50Screen
 import com.kira.kiba.ui.me.ChuniBestScreen
@@ -66,6 +69,7 @@ import com.kira.kiba.ui.me.EasyMaiAccountScreen
 import com.kira.kiba.ui.me.MeScreen
 import com.kira.kiba.ui.me.ScoreQueryScreen
 import com.kira.kiba.ui.settings.AboutScreen
+import com.kira.kiba.ui.settings.DeviceScoreScreen
 import com.kira.kiba.ui.settings.SettingsScreen
 import com.kira.kiba.ui.share.ShareImageAction
 import com.kira.kiba.ui.songdetail.ChartDetailScreen
@@ -77,11 +81,13 @@ import com.kira.kiba.ui.tools.HotChartsScreen
 import com.kira.kiba.ui.tools.MachineUpdateScreen
 import com.kira.kiba.ui.tools.QrImportScreen
 import com.kira.kiba.ui.tools.RatingCalcScreen
+import com.kira.kiba.ui.tools.ToolboxScreen
 import com.kira.kiba.ui.tools.VersionMapScreen
 import com.kira.kiba.ui.songdetail.SongDetailScreen
 import com.kira.kiba.ui.songplayer.NowPlayingBar
 import com.kira.kiba.ui.songplayer.PlayerBarSnapshot
 import com.kira.kiba.ui.songplayer.SongPlayerScreen
+import com.kira.kiba.ui.songdetail.CollectionTopBarSlot
 import com.kira.kiba.ui.songdetail.SongDetailTopBarSlot
 import com.kira.kiba.ui.songdetail.ChuniSongDetailTopBarSlot
 import com.kira.kiba.ui.songdetail.ChuniSongDetailScreen
@@ -94,8 +100,13 @@ import com.kira.kiba.ui.material.liquid.LiquidNavHeight
 import com.kira.kiba.ui.material.liquid.LiquidNavigationBar
 import com.kira.kiba.ui.material.liquid.LiquidNowPlayingBar
 import com.kira.kiba.ui.material.liquid.LocalLiquidBackdrop
+import com.kira.kiba.ui.common.coverCandidateUrls
 import com.kira.kiba.ui.songs.SongsScreen
+import com.kira.kiba.ui.theme.KibaMotion
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
@@ -160,9 +171,11 @@ val LocalSystemNavBarBottom = staticCompositionLocalOf<Dp> { 0.dp }
 
 enum class KibaTab(val title: String) {
     Songs("曲目"),
-    Listen("听"),
+    // 2.6.0：「听」更名为「畅听」（这页已经是歌单 / 推荐 / 下载 / Agent 歌单的完整听歌中枢）
+    Listen("畅听"),
     Agent("Kiba"),
-    Me("我"),
+    // 2.6.0：「我」更名为「账户」（这页只承担账号与工具入口，曲库在曲目、听歌在畅听）
+    Me("账户"),
     Settings("设置")
 }
 
@@ -220,6 +233,11 @@ sealed interface KibaSubPage {
     /** 成绩查询（EasyMai 式筛选 / 排序 / 网格，替代旧成绩记录 + 版本/等级进度）。 */
     data object ScoreQuery : KibaSubPage {
         override val title: String = "成绩查询"
+    }
+
+    /** 工具箱（站外入口 + 本地小工具，2.6.0 从账户页合并成子页面）。 */
+    data object Toolbox : KibaSubPage {
+        override val title: String = "工具箱"
     }
 
     /** 单曲 Rating 计算（工具箱）。 */
@@ -300,9 +318,19 @@ sealed interface KibaSubPage {
         override val title: String = "歌单"
     }
 
+    /** Agent 歌单详情（「畅听」页历史歌单入口；曲目不可增删，可整单播放 / 删除）。 */
+    data class ListenAgentPlaylist(val id: String) : KibaSubPage {
+        override val title: String = "Agent 歌单"
+    }
+
     /** 我的下载（「听」页入口；已下载乐曲的试听与删除）。 */
     data object ListenDownloads : KibaSubPage {
         override val title: String = "我的下载"
+    }
+
+    /** 设备性能评分（设置页点击评分行进入；2.6.0 从摘要行独立成页）。 */
+    data object DeviceScore : KibaSubPage {
+        override val title: String = "设备性能评分"
     }
 
     /** 关于。 */
@@ -583,11 +611,17 @@ fun KibaMainScreen() {
                           // 收窄态出发：直接切换不做下沉（大标题从收窄态强行展开会残影跳变）
                           topBarWasCollapsed ->
                               fadeIn(tween(1)).togetherWith(fadeOut(tween(1)))
+                          // 转场时长走 KibaMotion：设备评分 < 15 分时归零 = 直接切换
                           sinkPage(initialState) || sinkPage(targetState) ->
-                              (slideInVertically(tween(260)) { -it } + fadeIn(tween(220)))
-                                  .togetherWith(slideOutVertically(tween(200)) { -it / 2 } + fadeOut(tween(160)))
+                              (slideInVertically(tween(KibaMotion.millis(260))) { -it } +
+                                  fadeIn(tween(KibaMotion.millis(220))))
+                                  .togetherWith(
+                                      slideOutVertically(tween(KibaMotion.millis(200))) { -it / 2 } +
+                                          fadeOut(tween(KibaMotion.millis(160)))
+                                  )
                                   .using(SizeTransform(clip = false))
-                          else -> fadeIn(tween(200)).togetherWith(fadeOut(tween(140)))
+                          else -> fadeIn(tween(KibaMotion.millis(200)))
+                              .togetherWith(fadeOut(tween(KibaMotion.millis(140))))
                       }
                   },
                   label = "kiba-topbar",
@@ -694,6 +728,57 @@ fun KibaMainScreen() {
                               navigationIcon = { KibaBackAction { popPage() } },
                           )
                       }
+                  } else if (sub is KibaSubPage.ListenAgentPlaylist) {
+                      // Agent 歌单：封面是模板生成的本地 PNG（file:// Uri），标题 = 歌单名
+                      val item = remember(sub.id) { AgentPlaylistStore.get(sub.id) }
+                      val candidates = remember(item?.coverPath) {
+                          item?.coverPath?.takeIf { it.isNotBlank() }
+                              ?.let { listOf(java.io.File(it).toURI().toString()) }
+                              .orEmpty()
+                      }
+                      CollectionTopBarSlot(
+                          candidates = candidates,
+                          title = item?.name ?: "Agent 歌单",
+                          subtitle = item?.let { "${it.ids.size} 首 · Agent 专属歌单" } ?: "",
+                          scrollBehavior = scrollBehavior,
+                          onBack = { popPage() },
+                      )
+                  } else if (sub is KibaSubPage.ListenPlaylist) {
+                      // 我的歌单：默认用**第一首曲子的封面**做大图（与歌曲详情页同一套顶栏）
+                      val info by produceState<Pair<String, Int>?>(null, sub.playlistId) {
+                          value = withContext(Dispatchers.IO) {
+                              runCatching {
+                                  val dao = com.kira.kiba.core.db.AppDataBase.getInstance().playlistDao()
+                                  val pl = dao.getById(sub.playlistId)
+                                  val refs = dao.observeSongs(sub.playlistId).first()
+                                  (pl?.name ?: "歌单") to (refs.firstOrNull()?.songId ?: -1)
+                              }.getOrNull()
+                          }
+                      }
+                      val firstId = info?.second ?: -1
+                      CollectionTopBarSlot(
+                          candidates = remember(firstId) {
+                              if (firstId > 0) coverCandidateUrls(firstId, "") else emptyList()
+                          },
+                          title = info?.first ?: "歌单",
+                          subtitle = if (firstId > 0) "点击曲目即可试听" else "空歌单",
+                          scrollBehavior = scrollBehavior,
+                          onBack = { popPage() },
+                      )
+                  } else if (sub is KibaSubPage.Favorites) {
+                      // 收藏：大图用**当前游戏的第一首收藏曲**封面（切游戏时跟着换）
+                      val favGame = remember { SpUtil.getGameType() }
+                      val favIds = remember(favGame) { SpUtil.getFavIds(favGame) }
+                      val firstId = remember(favIds) { favIds.firstOrNull()?.toIntOrNull() ?: -1 }
+                      CollectionTopBarSlot(
+                          candidates = remember(firstId) {
+                              if (firstId > 0) coverCandidateUrls(firstId, "") else emptyList()
+                          },
+                          title = "我的收藏",
+                          subtitle = "已收藏 ${favIds.size} 首",
+                          scrollBehavior = scrollBehavior,
+                          onBack = { popPage() },
+                      )
                   } else if (sub is KibaSubPage.SongDetail) {
                       // 歌曲详情页魔改顶栏：封面背景 + 歌名/艺术家 + 收藏 star（详见 SongDetailTopBar）
                       SongDetailTopBarSlot(
@@ -860,26 +945,37 @@ fun KibaMainScreen() {
                               // +1 = 目标在右侧（页面向左推），-1 = 目标在左侧（页面向右推）
                               val direction = if (targetTab.ordinal > initialTab.ordinal) 1 else -1
                               (slideInHorizontally(
-                                  animationSpec = tween(380, easing = TabSwitchEasing),
+                                  animationSpec = tween(
+                                      KibaMotion.millis(380),
+                                      easing = TabSwitchEasing,
+                                  ),
                                   initialOffsetX = { full -> full * direction },
-                              ) + fadeIn(tween(220, delayMillis = 40)))
+                              ) + fadeIn(tween(KibaMotion.millis(220), delayMillis = 40)))
                                   .togetherWith(
                                       slideOutHorizontally(
-                                          animationSpec = tween(340, easing = TabSwitchEasing),
+                                          animationSpec = tween(
+                                              KibaMotion.millis(340),
+                                              easing = TabSwitchEasing,
+                                          ),
                                           targetOffsetX = { full -> -full * direction },
-                                      ) + fadeOut(tween(200)),
+                                      ) + fadeOut(tween(KibaMotion.millis(200))),
                                   )
                           } else if (isSub) {
                               if (forward) {
-                                  (slideInHorizontally(tween(260)) { it / 4 } + fadeIn(tween(200)))
-                                      .togetherWith(fadeOut(tween(160)))
+                                  (slideInHorizontally(tween(KibaMotion.millis(260))) { it / 4 } +
+                                      fadeIn(tween(KibaMotion.millis(200))))
+                                      .togetherWith(fadeOut(tween(KibaMotion.millis(160))))
                               } else {
-                                  (fadeIn(tween(200)))
-                                      .togetherWith(slideOutHorizontally(tween(240)) { it / 4 } + fadeOut(tween(200)))
+                                  (fadeIn(tween(KibaMotion.millis(200))))
+                                      .togetherWith(
+                                          slideOutHorizontally(tween(KibaMotion.millis(240))) { it / 4 } +
+                                              fadeOut(tween(KibaMotion.millis(200)))
+                                      )
                               }
                           } else {
-                              (fadeIn(tween(200)) + slideInHorizontally(tween(240)) { it / 8 })
-                                  .togetherWith(fadeOut(tween(160)))
+                              (fadeIn(tween(KibaMotion.millis(200))) +
+                                  slideInHorizontally(tween(KibaMotion.millis(240))) { it / 8 })
+                                  .togetherWith(fadeOut(tween(KibaMotion.millis(160))))
                           }
                       },
                       label = "kiba-page",
@@ -941,6 +1037,17 @@ fun KibaMainScreen() {
                                   scrollBehavior = scrollBehavior,
                                   onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
                               )
+                              is KibaSubPage.Toolbox -> ToolboxScreen(
+                                  scrollBehavior = scrollBehavior,
+                                  gameType = gameType,
+                                  onOpenRatingCalc = { pushPage(KibaSubPage.RatingCalc) },
+                                  onOpenDxConverter = { pushPage(KibaSubPage.DxConverter) },
+                                  onOpenHotCharts = { pushPage(KibaSubPage.HotCharts) },
+                                  onOpenVersionMap = { pushPage(KibaSubPage.VersionMap) },
+                                  onOpenFriendQuery = { pushPage(KibaSubPage.FriendQuery) },
+                                  onOpenGatewayAccount = { pushPage(KibaSubPage.GatewayAccount) },
+                                  onOpenMachineLogin = { WeChatJump.openOfficialAccount(context) },
+                              )
                               is KibaSubPage.RatingCalc -> RatingCalcScreen(scrollBehavior = scrollBehavior)
                               is KibaSubPage.VersionMap -> VersionMapScreen(scrollBehavior = scrollBehavior)
                               is KibaSubPage.HotCharts -> HotChartsScreen(
@@ -984,12 +1091,18 @@ fun KibaMainScreen() {
                                   },
                                   onOpenPlayer = { pushPage(KibaSubPage.SongPlayer) },
                               )
+                              is KibaSubPage.DeviceScore -> DeviceScoreScreen(scrollBehavior = scrollBehavior)
                               is KibaSubPage.About -> AboutScreen(scrollBehavior = scrollBehavior)
                               is KibaSubPage.ListenPlaylist -> PlaylistDetailScreen(
                                   playlistId = target.playlistId,
                                   scrollBehavior = scrollBehavior,
                                   onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
                                   onBack = { popPage() },
+                              )
+                              is KibaSubPage.ListenAgentPlaylist -> AgentPlaylistDetailScreen(
+                                  playlistId = target.id,
+                                  scrollBehavior = scrollBehavior,
+                                  onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
                               )
                               is KibaSubPage.ListenDownloads -> DownloadsScreen(
                                   scrollBehavior = scrollBehavior,
@@ -1032,6 +1145,7 @@ fun KibaMainScreen() {
                                   scrollBehavior = scrollBehavior,
                                   onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
                                   onOpenPlaylist = { id -> pushPage(KibaSubPage.ListenPlaylist(id)) },
+                                  onOpenAgentPlaylist = { id -> pushPage(KibaSubPage.ListenAgentPlaylist(id)) },
                                   onOpenDownloads = { pushPage(KibaSubPage.ListenDownloads) },
                               )
                               KibaTab.Me -> MeScreen(
@@ -1040,20 +1154,12 @@ fun KibaMainScreen() {
                                   onOpenLxnsLogin = { pushPage(KibaSubPage.LxnsLogin) },
                                   onOpenBest50 = { pushPage(KibaSubPage.Best50) },
                                   onOpenScoreQuery = { pushPage(KibaSubPage.ScoreQuery) },
-                                  onOpenDxConverter = { pushPage(KibaSubPage.DxConverter) },
                                   onOpenFavorites = { pushPage(KibaSubPage.Favorites) },
-                                  // 登录机台：拉起微信「舞萌 | 中二」公众号拿玩家二维码
-                                  onOpenMachineLogin = {
-                                      WeChatJump.openOfficialAccount(context)
-                                  },
-                                  onOpenGatewayAccount = { pushPage(KibaSubPage.GatewayAccount) },
-                                  // 2.3.0：设置页「查分器工具」组整组迁入「我」页查分器组
+                                  // 2.3.0：设置页「查分器工具」组整组迁入账户页查分器组
                                   onOpenMachineUpdate = { pushPage(KibaSubPage.MachineUpdate) },
                                   onOpenQrImport = { pushPage(KibaSubPage.QrImport) },
-                                  onOpenRatingCalc = { pushPage(KibaSubPage.RatingCalc) },
-                                  onOpenVersionMap = { pushPage(KibaSubPage.VersionMap) },
-                                  onOpenFriendQuery = { pushPage(KibaSubPage.FriendQuery) },
-                                  onOpenHotCharts = { pushPage(KibaSubPage.HotCharts) },
+                                  // 2.6.0：工具箱合并成单入口（站外 + 本地工具都在子页里）
+                                  onOpenToolbox = { pushPage(KibaSubPage.Toolbox) },
                                   onOpenChuniBest = { pushPage(KibaSubPage.ChuniBest) },
                               )
                               KibaTab.Settings -> SettingsScreen(
@@ -1061,6 +1167,7 @@ fun KibaMainScreen() {
                                   onOpenLlmConfig = { pushPage(KibaSubPage.LlmConfig) },
                                   onOpenAgentMemory = { pushPage(KibaSubPage.AgentMemory) },
                                   onOpenAbout = { pushPage(KibaSubPage.About) },
+                                  onOpenDeviceScore = { pushPage(KibaSubPage.DeviceScore) },
                               )
                           }
                       }

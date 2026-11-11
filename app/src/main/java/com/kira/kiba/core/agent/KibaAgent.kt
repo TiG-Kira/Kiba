@@ -24,6 +24,8 @@ import com.kira.kiba.core.model.ChuniDiffType
 import com.kira.kiba.core.model.DifficultyType
 import com.kira.kiba.core.stats.ChuniPushRecommender
 import com.kira.kiba.core.stats.RecommendFusion
+import com.kira.kiba.core.listen.AgentPlaylistStore
+import com.kira.kiba.core.listen.PlaylistCover
 import com.kira.kiba.core.utils.SpUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -207,6 +209,7 @@ class KibaAgent(private val context: Context) {
             val parts = arg.split("|").map { it.trim() }
             runMeme(parts.firstOrNull().orEmpty(), parts.drop(1).filter { it.isNotEmpty() })
         }
+        "playlist_cover" -> playlistCover(emptyMap())
         else -> AgentReply("未知技能：$id", skills = SKILLS)
     }
 
@@ -273,6 +276,7 @@ class KibaAgent(private val context: Context) {
             }
             "today_kink" -> todayKink()
             "eat_what" -> eatWhat()
+            "playlist_cover" -> playlistCover(args)
             "web_search" -> webSearch(
                 args["query"] ?: args["q"] ?: args["keyword"] ?: fallbackText,
                 args["url"] ?: args["href"] ?: "",
@@ -1767,6 +1771,60 @@ class KibaAgent(private val context: Context) {
         }
     }
 
+    /**
+     * 歌单封面设计技能：把 Agent 填的文案套进 [PlaylistCover] 模板并落盘，
+     * 结果写回 [AgentPlaylistStore]（列表缩略图 / 详情页大封面 / 顶栏大图都用这张）。
+     *
+     * 文案兜底链：技能参数 → 歌单现有名字 / 推荐语 → 曲目数。**任何一步都不许失败到没封面**，
+     * 最差情况下用默认配色 + 默认标题渲染一张，也比「歌单没封面」强。
+     */
+    private suspend fun playlistCover(args: Map<String, String>): AgentReply =
+        withContext(Dispatchers.IO) {
+            val all = AgentPlaylistStore.load()
+            if (all.isEmpty()) {
+                return@withContext AgentReply(
+                    "还没有 Agent 歌单，先去「畅听 → Agent 专属歌单」生成一张，再来设计封面。",
+                )
+            }
+            val key = args["playlist"].orEmpty().trim()
+            val target = all.firstOrNull { it.id == key }
+                ?: all.firstOrNull { key.isNotBlank() && it.name.contains(key) }
+                ?: all.first()
+
+            val title = args["title"].orEmpty().trim().ifBlank { target.name }.take(12)
+            val subtitle = args["subtitle"].orEmpty().trim().ifBlank { target.summary }
+            val mood = args["mood"].orEmpty().trim()
+            val tags = args["tags"].orEmpty()
+                .split('、', ',', '，', '/', '|')
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .take(3)
+            val spec = PlaylistCover.Spec(
+                title = title,
+                subtitle = subtitle,
+                mood = mood,
+                tags = tags,
+                songCount = target.ids.size,
+            )
+            val file = PlaylistCover.render(context, spec, target.id)
+                ?: return@withContext AgentReply("封面渲染失败了（写文件出错），稍后再试一次。")
+            AgentPlaylistStore.update(
+                target.copy(name = spec.title, coverPath = file.absolutePath),
+            )
+            AgentReply(
+                buildString {
+                    append("已用「").append(spec.paletteName).append("」模板为「").append(spec.title)
+                    append("」生成封面：\n")
+                    append("· 主标题：").append(spec.title).append("\n")
+                    if (subtitle.isNotBlank()) append("· 副标题：").append(subtitle).append("\n")
+                    append("· 配色：").append(spec.paletteName)
+                    if (tags.isNotEmpty()) append("（标签 ").append(tags.joinToString("、")).append("）")
+                    append("\n到底部「畅听 → Agent 专属歌单」里就能看到这张新封面。")
+                },
+                skills = emptyList(),
+            )
+        }
+
     // ---------- 联网搜索（LLM 专用 web_search） ----------
 
     private val SEARCH_UA =
@@ -2759,6 +2817,29 @@ class KibaAgent(private val context: Context) {
                         "keyword", "string",
                         "forget 时按关键词匹配删除（拿不到 id 就用它）",
                     ),
+                ),
+            ),
+            AgentSkill(
+                "playlist_cover", "歌单封面设计",
+                "为 Agent 专属歌单生成封面。固定模板 kiba-nocturne：对角渐变底 + 左上柔光 + 右下同心弧，" +
+                    "左对齐排版（小标签 / 主标题 / 副标题 / 页脚），配色由 mood 决定。" +
+                    "**每次生成歌单都必须用它出封面**（生成流程已自动调一次，模型不必重复生成歌单）；" +
+                    "用户说「换个封面 / 改个名字 / 要更燃一点」时调用它重做。" +
+                    "填字段：title ≤ 12 字（主标题）、subtitle ≤ 24 字（一行副标题）、" +
+                    "mood 从「夜行 / 清晨 / 热血 / 静谧 / 赛博 / 复古 / 海洋 / 甜梦」里选、tags 2~3 个短标签。" +
+                    "不传 playlist 时默认改最近一张歌单。",
+                params = listOf(
+                    KibaLlm.ToolParam(
+                        "playlist", "string",
+                        "歌单 id 或名字关键词；省略则取最近生成的一张",
+                    ),
+                    KibaLlm.ToolParam("title", "string", "封面主标题，≤ 12 字，例：深夜循环"),
+                    KibaLlm.ToolParam("subtitle", "string", "封面副标题，≤ 24 字，例：给凌晨还在打歌的人"),
+                    KibaLlm.ToolParam(
+                        "mood", "string",
+                        "情绪关键词（决定配色）：夜行 / 清晨 / 热血 / 静谧 / 赛博 / 复古 / 海洋 / 甜梦",
+                    ),
+                    KibaLlm.ToolParam("tags", "string", "2~3 个短标签，用「、」分隔，例：电子、女声"),
                 ),
             ),
             AgentSkill(

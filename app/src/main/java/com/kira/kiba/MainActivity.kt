@@ -18,6 +18,7 @@ import com.kira.kiba.ui.material.LocalDeviceTier
 import com.kira.kiba.ui.material.LocalMaterialFamily
 import com.kira.kiba.ui.material.MaterialFamily
 import com.kira.kiba.ui.navigation.KibaMainScreen
+import com.kira.kiba.ui.theme.KibaMotion
 import com.kira.kiba.ui.theme.KibaTheme
 
 /**
@@ -59,6 +60,9 @@ class MainActivity : ComponentActivity(), NavigationEventDispatcherOwner {
             // 真·高级材质：开关状态来自偏好 + 设备评分门槛；风格由用户自选。
             // 这两项在设置页改动后走 Activity 重启落地，所以这里每次 onCreate 都是新值。
             val grade = remember { DeviceGrade.cachedOrEvaluate(this@MainActivity) }
+            // 动画闸门：评分低于 15 分直接关掉装饰性动画（转场 / 折叠 / 按压反馈）。
+            // 每次 onCreate 同步一次；设置页重新评分后由评分页再同步。
+            remember(grade) { KibaMotion.syncFromScore(grade.total) }
             val family = remember { MaterialFamily.of(SpUtil.getMaterialFamily()) }
             val materialEnabled = remember(grade) {
                 SpUtil.isAdvancedMaterialEnabled() && grade.total >= DeviceGrade.PASS_SCORE

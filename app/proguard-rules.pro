@@ -37,6 +37,9 @@
 -keep class * extends com.google.gson.reflect.TypeToken
 -keep class com.kira.kiba.core.account.** { *; }
 -keep class com.kira.kiba.core.agent.** { *; }
+# 2.6.0 新增：Agent 歌单存档（AgentPlaylistStore.Item）经 Gson 反射建实例、无 @SerializedName，
+# 字段名即 JSON key —— 被 R8 剥掉后升级读回全空。core.listen 里 Saved/Item 都是这类 DTO。
+-keep class com.kira.kiba.core.listen.** { *; }
 -keep class kotlin.Pair { *; }
 
 # ── Retrofit / OkHttp（接口经动态代理调用，注解须保留）──

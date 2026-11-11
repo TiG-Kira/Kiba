@@ -352,6 +352,21 @@ object SpUtil {
     }
 
     /**
+     * 按「游戏 × 查分器」分桶的 Rating 历史（JSON 对象：`Map<String, List<RatingHistory.Entry>>`）。
+     *
+     * 新键而不是改旧键：旧 JSON 是数组、新的是对象，混读会解析失败；
+     * 旧键留着只为一次性迁移（见 [com.kira.kiba.core.account.RatingHistory.ensureLoaded]）。
+     */
+    private const val KEY_RATING_HISTORY_BY_SOURCE = "rating_history_by_source"
+
+    fun getRatingHistoryBySourceJson(): String =
+        userInfoPrefs.getString(KEY_RATING_HISTORY_BY_SOURCE, "") ?: ""
+
+    fun setRatingHistoryBySourceJson(json: String) {
+        userInfoPrefs.edit { putString(KEY_RATING_HISTORY_BY_SOURCE, json) }
+    }
+
+    /**
      * 长期记忆条目数（只做 JSON 计数）。
      * 设置页摘要用：不去碰 [com.kira.kiba.core.agent.AgentMemory] 的 StateFlow，
      * 避免为了显示一个数字把记忆状态提前加载。
@@ -891,6 +906,29 @@ object SpUtil {
 
     private fun setAgentPlaylistGeneratedAt(ts: Long) {
         userInfoPrefs.edit { putLong(KEY_AGENT_GENERATED_AT, ts) }
+    }
+
+    /**
+     * Agent 歌单**历史存档**（JSON 数组：`List<AgentPlaylistStore.Item>`，2.6.0 起）。
+     * 旧键 KEY_AGENT_PLAYLIST 只保留「最近一份」的语义，仅供一次性迁移。
+     */
+    private const val KEY_AGENT_PLAYLIST_HISTORY = "listen_agent_playlist_history"
+
+    fun getAgentPlaylistHistoryJson(): String =
+        userInfoPrefs.getString(KEY_AGENT_PLAYLIST_HISTORY, "") ?: ""
+
+    fun setAgentPlaylistHistoryJson(json: String) {
+        userInfoPrefs.edit { putString(KEY_AGENT_PLAYLIST_HISTORY, json) }
+    }
+
+    /** 旧版单条歌单是否已迁入历史存档（只做一次）。 */
+    private const val KEY_AGENT_PLAYLIST_HISTORY_MIGRATED = "listen_agent_playlist_migrated"
+
+    fun isAgentPlaylistHistoryMigrated(): Boolean =
+        userInfoPrefs.getBoolean(KEY_AGENT_PLAYLIST_HISTORY_MIGRATED, false)
+
+    fun setAgentPlaylistHistoryMigrated(migrated: Boolean) {
+        userInfoPrefs.edit { putBoolean(KEY_AGENT_PLAYLIST_HISTORY_MIGRATED, migrated) }
     }
 
     /** Agent 歌单 JSON（[com.kira.kiba.core.listen.AgentPlaylist.Saved] 的序列化）。 */

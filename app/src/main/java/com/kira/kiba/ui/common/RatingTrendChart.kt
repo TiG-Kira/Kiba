@@ -57,6 +57,11 @@ fun RatingTrendCard(
     entries: List<RatingHistory.Entry>,
     subtitle: String,
     modifier: Modifier = Modifier,
+    /**
+     * 数值格式化：舞萌是整数（16000），中二保留两位小数（16.23）。
+     * 不传就按整数走，保持旧调用点行为不变。
+     */
+    valueText: (Double) -> String = { it.toInt().toString() },
 ) {
     val context = LocalContext.current
     val primary = MiuixTheme.colorScheme.primary
@@ -117,7 +122,7 @@ fun RatingTrendCard(
                                         "因新版本更新后新曲 Best 15 变化，\n" +
                                         "分数有所下降，属于更新后正常现象。"
                                 } else {
-                                    "${timeFmt.format(Date(hit.entry.ts))} · Rating ${hit.entry.rating}"
+                                    "${timeFmt.format(Date(hit.entry.ts))} · Rating ${valueText(hit.entry.rating)}"
                                 }
                                 Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                             }
@@ -211,11 +216,11 @@ fun RatingTrendCard(
                     val first = points.first()
                     val last = points.last()
                     val firstLabel = textMeasurer.measure(
-                        "${first.entry.rating}",
+                        valueText(first.entry.rating),
                         valueStyle,
                     )
                     val lastLabel = textMeasurer.measure(
-                        "${last.entry.rating}",
+                        valueText(last.entry.rating),
                         valueStyle,
                     )
                     drawText(

@@ -45,6 +45,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.kira.kiba.core.account.DivingFishAccount
 import com.kira.kiba.core.account.RatingHistory
+import com.kira.kiba.core.account.formatRatingValue
 import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.db.entity.ChartEntity
 import com.kira.kiba.core.db.entity.RecordEntity
@@ -53,7 +54,9 @@ import com.kira.kiba.core.best50.Best50ImageBuilder
 import com.kira.kiba.core.best50.Best50ImageService
 import com.kira.kiba.core.best50.GeneratedImage
 import com.kira.kiba.core.model.DifficultyType
+import com.kira.kiba.core.model.GameType
 import com.kira.kiba.core.share.ShareService
+import com.kira.kiba.core.utils.SpUtil
 import com.kira.kiba.ui.material.KibaGlassDialog
 import kotlinx.coroutines.launch
 import com.kira.kiba.ui.common.EmptyStateCard
@@ -72,6 +75,7 @@ import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.utils.PressFeedbackType
 
 /**
  * Best 50 页（官方口径 sd 35 + dx 15，ra 之和即 DX Rating）。
@@ -247,14 +251,18 @@ fun Best50Screen(
                     }
                 }
                 item(key = "trend", span = { GridItemSpan(maxLineSpan) }) {
-                    // Rating 历史曲线：完整详情（本地记录的全部变化点）。
+                    // Rating 历史曲线：**只画当前数据源自己的桶**——水鱼 / 落雪口径不同，
+                    // 混在一条线上会出现对不上的台阶。
                     // 无记录（还没同步过成绩）不占位——空曲线卡只会让人困惑。
-                    val history by RatingHistory.entries.collectAsState()
+                    val maimaiSource by SpUtil.maimaiSourceFlow.collectAsState()
+                    val history by RatingHistory.entries(GameType.MAIMAI, maimaiSource)
+                        .collectAsState()
                     if (history.isNotEmpty()) {
                         RatingTrendCard(
-                            title = "Rating 变化曲线",
+                            title = "Rating 变化曲线（${maimaiSource.shortLabel}）",
                             entries = history,
                             subtitle = "本地记录 ${history.size} 次",
+                            valueText = { formatRatingValue(GameType.MAIMAI, it) },
                         )
                     }
                 }
@@ -393,7 +401,12 @@ private fun Best50TileCard(
     genre: String,
     onClick: () -> Unit,
 ) {
-    Card(modifier = (Modifier.fillMaxWidth()), onClick = onClick) {
+    Card(
+        modifier = (Modifier.fillMaxWidth()),
+        onClick = onClick,
+        // 整卡按压缩放（与成绩查询 / 曲目页同一套 HyperOS 反馈）
+        pressFeedbackType = PressFeedbackType.Sink,
+    ) {
         Box(modifier = Modifier.padding(4.dp)) {
             Best50Tile(
                 record = record,

@@ -31,11 +31,12 @@ internal fun buildPoints(
     padBottom: Float,
 ): List<TrendPoint> {
     if (entries.isEmpty()) return emptyList()
+    // 舞萌是整数 Rating、中二两位小数，统一按 Double 算窗口再降到 Float 画图
     val ratings = entries.map { it.rating }
     val rawMin = ratings.min()
     val rawMax = ratings.max()
     var span = (rawMax - rawMin).toFloat()
-    if (span == 0f) span = if (rawMax > 60) rawMax * 0.04f else 20f
+    if (span == 0f) span = if (rawMax > 60) (rawMax * 0.04).toFloat() else 20f
     val yMin = rawMin - span * 0.15f
     val yMax = rawMax + span * 0.15f
     val plotW = (widthPx - padH * 2).coerceAtLeast(1f)
@@ -43,7 +44,7 @@ internal fun buildPoints(
 
     return entries.mapIndexed { i, e ->
         val x = if (entries.size == 1) widthPx / 2f else padH + plotW * i / (entries.size - 1)
-        val y = padTop + plotH * (1f - (e.rating - yMin) / (yMax - yMin))
+        val y = (padTop + plotH * (1f - (e.rating - yMin) / (yMax - yMin)).toFloat())
         TrendPoint(x, y, e)
     }
 }

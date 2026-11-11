@@ -2,6 +2,7 @@ package com.kira.kiba.ui.me
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -56,6 +57,7 @@ import com.kira.kiba.ui.common.SectionTitle
 import com.kira.kiba.ui.common.SyncBadge
 import com.kira.kiba.ui.common.difficultyColor
 import com.kira.kiba.ui.common.difficultyLabel
+import com.kira.kiba.ui.common.kibaPressScale
 import com.kira.kiba.ui.common.pageContentPadding
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
@@ -70,6 +72,7 @@ import com.kira.kiba.ui.material.KibaGlassDialog
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.OverlaySpinnerPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.utils.PressFeedbackType
 
 /**
  * 成绩查询页（移植自 EasyMai player-records，替代旧「成绩记录 / 版本进度 / 等级进度」三页）：
@@ -431,6 +434,8 @@ fun ScoreQueryScreen(
                             }
                         },
                     )
+                    // 网格角标只在网格视图有意义：列表模式整行置灰不可选（enabled=false 交给
+                    // miuix 压暗 + 拦截点击），副标题顺手说明原因，避免用户以为点坏了。
                     OverlaySpinnerPreference(
                         items = listOf("评级", "FC", "FS", "RA").map { DropdownItem(text = it) },
                         selectedIndex = when (iconDisplay) {
@@ -440,12 +445,17 @@ fun ScoreQueryScreen(
                             else -> 0
                         },
                         title = "网格角标",
-                        summary = when (iconDisplay) {
-                            "rate" -> "评级"
-                            "fc" -> "FC"
-                            "fs" -> "FS"
-                            else -> "RA"
+                        summary = if (viewMode != "grid") {
+                            "仅网格视图可用"
+                        } else {
+                            when (iconDisplay) {
+                                "rate" -> "评级"
+                                "fc" -> "FC"
+                                "fs" -> "FS"
+                                else -> "RA"
+                            }
                         },
+                        enabled = viewMode == "grid",
                         onSelectedIndexChange = { index ->
                             iconDisplay = when (index) {
                                 1 -> "fc"
@@ -650,6 +660,8 @@ private fun RecordListCard(
     Card(
         modifier = (Modifier.fillMaxWidth()),
         onClick = onClick,
+        // HyperOS 按压缩放反馈（miuix Card 默认无反馈，点下去像死卡）
+        pressFeedbackType = PressFeedbackType.Sink,
     ) {
         Row(
             modifier = Modifier
@@ -664,6 +676,8 @@ private fun RecordListCard(
                     imageUrl = "",
                     genre = "",
                     size = 64.dp,
+                    // 描边按难度上色：成绩查询是按「谱面」列，流派色无法区分是哪一档
+                    strokeColor = difficultyColor(difficultyOf(record.levelIndex)),
                 )
                 // 定数角标：覆盖在封面左下（EasyMai difficulty-badge）
                 Box(
@@ -733,19 +747,27 @@ private fun GridCoverCell(
     unplayed: Boolean = false,
     onClick: () -> Unit,
 ) {
+    // 网格格子是自拼 clickable（不是 miuix Card），按压反馈靠 kibaPressScale 补
+    val interaction = remember { MutableInteractionSource() }
     androidx.compose.foundation.layout.BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
             .aspectRatio(1f)
+            .kibaPressScale(interaction)
             .clip(RoundedCornerShape(10.dp))
-            .clickable(onClick = onClick),
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                onClick = onClick,
+            ),
     ) {
-        // 封面铺满整个格子（难度色描边由 CoverFrame 自带）
+        // 封面铺满整个格子，描边按难度上色（与列表卡口径一致）
         CoverFrame(
             songId = record.songId,
             imageUrl = song?.imageUrl ?: "",
             genre = song?.genre ?: "",
             size = maxWidth,
+            strokeColor = difficultyColor(difficultyOf(record.levelIndex)),
         )
         // 底部轻 scrim，衬出角标
         Box(

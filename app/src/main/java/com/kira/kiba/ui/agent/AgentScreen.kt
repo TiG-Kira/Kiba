@@ -97,6 +97,7 @@ import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
 import top.yukonga.miuix.kmp.icon.glass.*
 import top.yukonga.miuix.kmp.overlay.OverlayCascadingListPopup
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+import com.kira.kiba.ui.theme.KibaMotion
 
 /**
  * Agent 对话页：
@@ -595,8 +596,10 @@ fun AgentScreen(
                     androidx.compose.animation.AnimatedVisibility(
                         visible = showJumpToBottom,
                         modifier = Modifier.align(Alignment.BottomEnd),
-                        enter = fadeIn(tween(180)) + scaleIn(tween(220), initialScale = 0.8f),
-                        exit = fadeOut(tween(140)) + scaleOut(tween(160), targetScale = 0.8f),
+                        enter = fadeIn(tween(KibaMotion.millis(180))) +
+                            scaleIn(tween(KibaMotion.millis(220)), initialScale = 0.8f),
+                        exit = fadeOut(tween(KibaMotion.millis(140))) +
+                            scaleOut(tween(KibaMotion.millis(160)), targetScale = 0.8f),
                     ) {
                         Box(
                             modifier = Modifier

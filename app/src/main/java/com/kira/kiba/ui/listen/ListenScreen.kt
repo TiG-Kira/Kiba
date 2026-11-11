@@ -1,9 +1,11 @@
 package com.kira.kiba.ui.listen
 
-import android.util.Log
 import android.widget.Toast
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
@@ -16,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -31,16 +34,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.asFlow
+import coil.compose.AsyncImage
 import com.kira.kiba.core.agent.KibaLlm
 import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.db.entity.PlaylistEntity
 import com.kira.kiba.core.db.entity.SongWithChartsEntity
 import com.kira.kiba.core.listen.AgentPlaylist
+import com.kira.kiba.core.listen.AgentPlaylistStore
 import com.kira.kiba.core.listen.SongDownloader
 import com.kira.kiba.core.listen.SongRecommender
 import com.kira.kiba.core.playback.SongPlaybackController
@@ -65,31 +71,36 @@ import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.icon.glass.Add
 import top.yukonga.miuix.kmp.icon.glass.AiScan
+import top.yukonga.miuix.kmp.icon.glass.Delete
 import top.yukonga.miuix.kmp.icon.glass.Download
 import top.yukonga.miuix.kmp.icon.glass.Favorites
 import top.yukonga.miuix.kmp.icon.glass.Info
 import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
-import top.yukonga.miuix.kmp.icon.glass.Play
 import top.yukonga.miuix.kmp.icon.glass.Playlist
 import top.yukonga.miuix.kmp.icon.glass.Refresh
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.utils.PressFeedbackType
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import androidx.compose.animation.core.spring
+import com.kira.kiba.ui.theme.KibaMotion
 
 /**
- * 「听」页：Kiba 的音乐推荐与歌单中枢（仅舞萌——中二节奏无整轨音源）。
+ * 「畅听」页（2.6.0 由「听」更名）：Kiba 的音乐推荐与歌单中枢（仅舞萌——中二无整轨音源）。
  *
- * - **智能推荐**：本地算法从 Best 40 + 收藏提炼口味画像，从曲库挑 15 首；
- *   点击即播，「详情」按钮跳曲目详情。
- * - **收藏连播**：一键把收藏列表灌进播放队列（playAll 整队替换）。
- * - **我的下载**：已下载乐曲的管理入口（听 / 删）。
- * - **我的歌单**：用户自建歌单（Room 持久化），点歌即播、整单播放。
- * - **Agent 专属歌单**：LLM 生成的个性化歌单（≤15 首），按设置页间隔自动刷新。
+ * - **为你推荐**：本地算法从 Best 40 + 收藏提炼口味画像，从曲库挑 15 首。
+ *   2.6.0 起改成**横向分栏**：每栏竖排 5 首，栏宽只占屏幕 ~84%，
+ *   下一栏露一条边提示「还能往左滑」——比原来一长条竖列表更省滚动，一屏看全 5 首。
+ * - **收藏连播** / **我的下载** / **我的歌单**：沿用原有能力。
+ * - **Agent 专属歌单**：每次生成都存档（含模板封面），逐个入口展示，可单删 / 全清。
  */
 @Composable
 fun ListenScreen(
     scrollBehavior: ScrollBehavior,
     onOpenSong: (Int) -> Unit,
     onOpenPlaylist: (Long) -> Unit,
+    onOpenAgentPlaylist: (String) -> Unit,
     onOpenDownloads: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -153,17 +164,40 @@ fun ListenScreen(
         value = withContext(Dispatchers.IO) { SongDownloader.listAll(context) }
     }
 
-    // ── Agent 专属歌单（仅 LLM 配置后；过期自动刷新）──
+    // ── Agent 专属歌单：历史存档（每张一个入口）──
     val llmReady = remember { KibaLlm.isConfigured() }
-    var agentSaved by remember { mutableStateOf(AgentPlaylist.load()) }
+    var agentHistory by remember { mutableStateOf(AgentPlaylistStore.load()) }
     var agentRefreshing by remember { mutableStateOf(false) }
 
+    // 旧版「只存最新一份」的歌单迁移进历史（只跑一次）
     LaunchedEffect(Unit) {
-        if (llmReady && agentSaved == null || llmReady && AgentPlaylist.isStale()) {
+        AgentPlaylistStore.migrateLegacy(context)
+        agentHistory = AgentPlaylistStore.load()
+    }
+
+    // 过期自动续一张（间隔在设置页可调）；已有历史时只追加，不覆盖旧的
+    LaunchedEffect(llmReady, songs.size) {
+        if (llmReady && songs.isNotEmpty() && AgentPlaylist.isStale()) {
             agentRefreshing = true
-            val result = runCatching { AgentPlaylist.refreshWithProfile(songs, records, favoriteIds) }
-            result.onSuccess { agentSaved = it }
-                .onFailure { Log.w("Listen", "agent playlist refresh failed: ${it.message}") }
+            runCatching { AgentPlaylist.refreshWithProfile(context, songs, records, favoriteIds) }
+                .onFailure { android.util.Log.w("Listen", "agent playlist refresh failed: ${it.message}") }
+            agentHistory = AgentPlaylistStore.load()
+            agentRefreshing = false
+        }
+    }
+
+    fun generateAgentPlaylist() {
+        if (agentRefreshing) return
+        agentRefreshing = true
+        scope.launch {
+            runCatching { AgentPlaylist.refreshWithProfile(context, songs, records, favoriteIds) }
+                .onSuccess {
+                    agentHistory = AgentPlaylistStore.load()
+                    Toast.makeText(context, "已生成并加入「Agent 专属歌单」", Toast.LENGTH_SHORT).show()
+                }
+                .onFailure { e ->
+                    Toast.makeText(context, "生成失败：${e.message}", Toast.LENGTH_SHORT).show()
+                }
             agentRefreshing = false
         }
     }
@@ -179,6 +213,7 @@ fun ListenScreen(
         targetValue = if (playerState.track != null) {
             NOW_PLAYING_BAR_CLEARANCE + 16.dp
         } else 16.dp,
+        animationSpec = KibaMotion.snapOr(spring()),
         label = "listenBottomExtra",
     )
 
@@ -195,7 +230,7 @@ fun ListenScreen(
             contentPadding = pageContentPadding(bottomExtra = listenBottomExtra),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // ══ 智能推荐 ══
+            // ══ 智能推荐（横向分栏：每栏 5 首）══
             item(key = "rec_title") {
                 SectionTitle(
                     if (records.isEmpty() && favoriteIds.isEmpty()) "随便听听"
@@ -207,13 +242,11 @@ fun ListenScreen(
                     EmptyStateCard(text = "曲库还没同步\n先去「曲目」页右上角刷新曲库数据")
                 }
             } else {
-                items(recommendedSongs.size, key = { "rec_${recommendedSongs[it].songData.id}" }) { index ->
-                    ListenSongRow(
-                        song = recommendedSongs[index],
-                        onClick = {
-                            SongPlaybackController.play(context, recommendedSongs[index].toTrack())
-                        },
-                        onDetail = { onOpenSong(recommendedSongs[index].songData.id) },
+                item(key = "rec_row") {
+                    RecommendColumns(
+                        songs = recommendedSongs,
+                        onPlay = { song -> SongPlaybackController.play(context, song.toTrack()) },
+                        onDetail = { song -> onOpenSong(song.songData.id) },
                     )
                 }
             }
@@ -342,6 +375,8 @@ fun ListenScreen(
                 items(playlists.size, key = { "pl_${playlists[it].id}" }) { index ->
                     val pl = playlists[index]
                     val count = playlistSongCount.count { it.playlistId == pl.id }
+                    val firstSong = playlistSongCount.firstOrNull { it.playlistId == pl.id }
+                        ?.songId?.let { sid -> songs.firstOrNull { it.songData.id == sid } }
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         onClick = { onOpenPlaylist(pl.id) },
@@ -350,15 +385,33 @@ fun ListenScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            androidx.compose.material3.Icon(
-                                imageVector = MiuixGlassIcons.Regular.Playlist,
-                                contentDescription = "歌单",
-                                tint = MiuixTheme.colorScheme.primary,
-                                modifier = Modifier.size(22.dp),
-                            )
+                            // 歌单缩略图：首曲封面（与详情页大封面同源）
+                            if (firstSong != null) {
+                                CoverFrame(
+                                    songId = firstSong.songData.id,
+                                    imageUrl = firstSong.songData.imageUrl,
+                                    genre = firstSong.songData.genre,
+                                    size = 52.dp,
+                                )
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .size(52.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(MiuixTheme.colorScheme.onSurface.copy(alpha = 0.06f)),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    androidx.compose.material3.Icon(
+                                        imageVector = MiuixGlassIcons.Regular.Playlist,
+                                        contentDescription = null,
+                                        tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                        modifier = Modifier.size(22.dp),
+                                    )
+                                }
+                            }
                             Spacer(Modifier.width(12.dp))
                             Column(Modifier.weight(1f)) {
                                 Text(
@@ -379,7 +432,7 @@ fun ListenScreen(
                 }
             }
 
-            // ══ Agent 专属歌单 ══
+            // ══ Agent 专属歌单（历史存档，每张一个入口）══
             item(key = "agent_title") { SectionTitle("Agent 专属歌单") }
             if (!llmReady) {
                 item(key = "agent_hint") {
@@ -388,88 +441,80 @@ fun ListenScreen(
                     )
                 }
             } else {
-                val saved = agentSaved
-                if (agentRefreshing && saved == null) {
-                    item(key = "agent_loading") {
-                        EmptyStateCard(text = "Agent 正在品味你的歌单…")
-                    }
-                } else if (saved == null || saved.isEmpty) {
-                    item(key = "agent_empty") {
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            onClick = {
-                                if (!agentRefreshing) {
-                                    agentRefreshing = true
-                                    scope.launch {
-                                        runCatching { AgentPlaylist.refreshWithProfile(songs, records, favoriteIds) }
-                                            .onSuccess { agentSaved = it }
-                                            .onFailure { e ->
-                                                Toast.makeText(context, "生成失败：${e.message}", Toast.LENGTH_SHORT).show()
-                                            }
-                                        agentRefreshing = false
-                                    }
-                                }
-                            },
-                            pressFeedbackType = PressFeedbackType.Sink,
+                item(key = "agent_generate") {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = { if (!agentRefreshing) generateAgentPlaylist() },
+                        pressFeedbackType = PressFeedbackType.Sink,
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 14.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                androidx.compose.material3.Icon(
-                                    imageVector = MiuixGlassIcons.Regular.AiScan,
-                                    contentDescription = "生成专属歌单",
-                                    tint = MiuixTheme.colorScheme.primary,
-                                    modifier = Modifier.size(22.dp),
-                                )
-                                Spacer(Modifier.width(12.dp))
+                            androidx.compose.material3.Icon(
+                                imageVector = MiuixGlassIcons.Regular.AiScan,
+                                contentDescription = "生成专属歌单",
+                                tint = MiuixTheme.colorScheme.primary,
+                                modifier = Modifier.size(22.dp),
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
                                 Text(
-                                    text = if (agentRefreshing) "生成中…" else "让 Agent 生成专属歌单",
+                                    text = if (agentRefreshing) "正在生成…" else "让 Agent 生成一张新歌单",
                                     style = MiuixTheme.textStyles.body1,
                                     color = MiuixTheme.colorScheme.onSurface,
+                                )
+                                Text(
+                                    text = "每张歌单都会按封面模板生成专属封面，历史歌单保留可回看",
+                                    style = MiuixTheme.textStyles.footnote2,
+                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                                 )
                             }
                         }
                     }
-                } else {
-                    item(key = "agent_summary") {
-                        AgentPlaylistCard(
-                            saved = saved,
-                            refreshing = agentRefreshing,
-                            songs = songs,
-                            onRefresh = {
-                                if (!agentRefreshing) {
-                                    agentRefreshing = true
-                                    scope.launch {
-                                        runCatching { AgentPlaylist.refreshWithProfile(songs, records, favoriteIds) }
-                                            .onSuccess { agentSaved = it }
-                                            .onFailure { e ->
-                                                Toast.makeText(context, "生成失败：${e.message}", Toast.LENGTH_SHORT).show()
-                                            }
-                                        agentRefreshing = false
-                                    }
-                                }
-                            },
-                            onPlayAll = {
-                                val tracks = saved.ids.mapNotNull { id ->
-                                    songs.firstOrNull { it.songData.id == id }
-                                }.map { it.toTrack() }
-                                if (tracks.isNotEmpty()) SongPlaybackController.playAll(context, tracks)
-                            },
-                        )
+                }
+
+                if (agentHistory.isEmpty()) {
+                    item(key = "agent_empty") {
+                        EmptyStateCard(text = "还没有生成过歌单\n点上面那一行，Agent 会按你的口味挑 5~15 首")
                     }
-                    items(saved.ids.size, key = { "agent_${saved.ids[it]}" }) { index ->
-                        val song = songs.firstOrNull { it.songData.id == saved.ids[index] }
-                        if (song != null) {
-                            ListenSongRow(
-                                song = song,
-                                subtitle = saved.reasons.getOrNull(index),
-                                onClick = { SongPlaybackController.play(context, song.toTrack()) },
-                                onDetail = { onOpenSong(song.songData.id) },
+                } else {
+                    item(key = "agent_clear") {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = "共 ${agentHistory.size} 张歌单",
+                                style = MiuixTheme.textStyles.footnote2,
+                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                modifier = Modifier.weight(1f),
+                            )
+                            TextButton(
+                                text = "清空全部",
+                                onClick = {
+                                    AgentPlaylistStore.clear()
+                                    agentHistory = AgentPlaylistStore.load()
+                                    Toast.makeText(context, "已清空全部 Agent 歌单", Toast.LENGTH_SHORT).show()
+                                },
                             )
                         }
+                    }
+                    items(agentHistory.size, key = { "agent_${agentHistory[it].id}" }) { index ->
+                        val item = agentHistory[index]
+                        AgentPlaylistEntry(
+                            item = item,
+                            onClick = { onOpenAgentPlaylist(item.id) },
+                            onDelete = {
+                                AgentPlaylistStore.delete(item)
+                                agentHistory = AgentPlaylistStore.load()
+                                Toast.makeText(context, "已删除「${item.name}」", Toast.LENGTH_SHORT).show()
+                            },
+                        )
                     }
                 }
             }
@@ -527,42 +572,177 @@ fun ListenScreen(
     }
 }
 
-/** Agent 歌单头卡：总结语 + 整单播放 + 手动刷新。 */
+/**
+ * 推荐区：横向分栏，每栏竖排 5 首。
+ *
+ * 栏宽 = 屏宽 × 0.84，**故意留出 16% 给下一栏露头**——用户一眼就能看出「左边还有」，
+ * 不用试探性滑动。每栏内 5 首紧凑行（封面 44dp + 单行歌名），一屏正好一栏看完。
+ */
 @Composable
-private fun AgentPlaylistCard(
-    saved: AgentPlaylist.Saved,
-    refreshing: Boolean,
+private fun RecommendColumns(
     songs: List<SongWithChartsEntity>,
-    onRefresh: () -> Unit,
-    onPlayAll: () -> Unit,
+    onPlay: (SongWithChartsEntity) -> Unit,
+    onDetail: (SongWithChartsEntity) -> Unit,
 ) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(
+    val perColumn = 5
+    val columns = songs.chunked(perColumn)
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        val columnWidth = maxWidth * 0.84f
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(end = 8.dp),
+        ) {
+            items(columns.size, key = { "col_$it" }) { colIndex ->
+                Column(
+                    modifier = Modifier.width(columnWidth),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    columns[colIndex].forEach { song ->
+                        RecommendMiniCard(
+                            song = song,
+                            onClick = { onPlay(song) },
+                            onDetail = { onDetail(song) },
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** 推荐区紧凑卡：封面 44dp + 单行歌名 + 流派；整卡点播放，右侧小 ⓘ 进详情。 */
+@Composable
+private fun RecommendMiniCard(
+    song: SongWithChartsEntity,
+    onClick: () -> Unit,
+    onDetail: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = onClick,
+        pressFeedbackType = PressFeedbackType.Sink,
+    ) {
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 14.dp),
+                .padding(start = 8.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                text = "Agent 为你挑选了 ${saved.ids.size} 首",
-                style = MiuixTheme.textStyles.body1,
-                color = MiuixTheme.colorScheme.onSurface,
-                fontWeight = FontWeight.Medium,
+            CoverFrame(
+                songId = song.songData.id,
+                imageUrl = song.songData.imageUrl,
+                genre = song.songData.genre,
+                size = 44.dp,
             )
-            if (saved.summary.isNotBlank()) {
-                Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = saved.summary,
+                    text = song.songData.title,
+                    style = MiuixTheme.textStyles.body2,
+                    color = MiuixTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = song.songData.genre,
                     style = MiuixTheme.textStyles.footnote2,
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
-            Spacer(Modifier.height(10.dp))
-            Row {
-                TextButton(text = "整单播放", onClick = onPlayAll)
-                Spacer(Modifier.width(12.dp))
-                TextButton(
-                    text = if (refreshing) "刷新中…" else "重新生成",
-                    onClick = onRefresh,
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(onClick = onDetail)
+                    .padding(6.dp),
+            ) {
+                androidx.compose.material3.Icon(
+                    imageVector = MiuixGlassIcons.Regular.Info,
+                    contentDescription = "曲目详情",
+                    tint = MiuixTheme.colorScheme.primary,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+        }
+    }
+}
+
+/** Agent 歌单入口：模板封面缩略图 + 名称 + 曲目数/生成时间 + 删除。 */
+@Composable
+private fun AgentPlaylistEntry(
+    item: AgentPlaylistStore.Item,
+    onClick: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val timeFmt = remember { SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()) }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = onClick,
+        pressFeedbackType = PressFeedbackType.Sink,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // 封面：模板生成的 PNG；文件被清理时回落占位块（不显示破图）
+            val cover = item.coverPath.takeIf { it.isNotBlank() }
+            if (cover != null) {
+                AsyncImage(
+                    model = java.io.File(cover),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .size(52.dp)
+                        .clip(RoundedCornerShape(10.dp)),
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(52.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MiuixTheme.colorScheme.primary.copy(alpha = 0.12f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    androidx.compose.material3.Icon(
+                        imageVector = MiuixGlassIcons.Regular.Playlist,
+                        contentDescription = null,
+                        tint = MiuixTheme.colorScheme.primary,
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = item.name,
+                    style = MiuixTheme.textStyles.body1,
+                    fontWeight = FontWeight.Medium,
+                    color = MiuixTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = "${item.ids.size} 首 · ${timeFmt.format(Date(item.createdAt))}",
+                    style = MiuixTheme.textStyles.footnote2,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(onClick = onDelete)
+                    .padding(8.dp),
+            ) {
+                androidx.compose.material3.Icon(
+                    imageVector = MiuixGlassIcons.Regular.Delete,
+                    contentDescription = "删除歌单",
+                    tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    modifier = Modifier.size(18.dp),
                 )
             }
         }

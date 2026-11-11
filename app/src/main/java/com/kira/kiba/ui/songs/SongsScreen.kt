@@ -101,6 +101,8 @@ import top.yukonga.miuix.kmp.icon.glass.*
 import com.kira.kiba.ui.material.KibaGlassDialog
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.utils.PressFeedbackType
+import androidx.compose.animation.core.spring
+import com.kira.kiba.ui.theme.KibaMotion
 
 /**
  * 曲目列表快照（进程级）：从歌曲详情返回时首帧即渲染上次的完整列表，
@@ -336,6 +338,7 @@ fun SongsScreen(
         targetValue = if (bottomBarPlayerState.track != null) {
             NOW_PLAYING_BAR_CLEARANCE + 16.dp
         } else 16.dp,
+        animationSpec = KibaMotion.snapOr(spring()),
         label = "songsBottomExtra",
     )
 

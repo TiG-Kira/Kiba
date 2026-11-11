@@ -75,13 +75,6 @@ private fun PrefIcon(icon: androidx.compose.ui.graphics.vector.ImageVector) {
     )
 }
 
-/** 评分到档位文案。 */
-private fun tierLabel(score: Int): String = when {
-    score >= 75 -> "高"
-    score >= DeviceGrade.PASS_SCORE -> "中"
-    else -> "低"
-}
-
 /**
  * 设置页（严格 miuix preference 规范：ArrowPreference / SwitchPreference / OverlaySpinnerPreference）。
  */
@@ -91,6 +84,7 @@ fun SettingsScreen(
     onOpenLlmConfig: () -> Unit,
     onOpenAgentMemory: () -> Unit,
     onOpenAbout: () -> Unit,
+    onOpenDeviceScore: () -> Unit,
 ) {
     val context = LocalContext.current
     val themeMode by KibaState.themeMode.collectAsState()
@@ -107,9 +101,9 @@ fun SettingsScreen(
     // 评分在启动时评测并落盘，这里只做展示与手动重评
     var advancedOn by remember { mutableStateOf(SpUtil.isAdvancedMaterialEnabled()) }
     var materialFamily by remember { mutableStateOf(SpUtil.getMaterialFamily()) }
-    var score by remember { mutableStateOf(SpUtil.getDeviceScore()) }
-    var passes by remember { mutableStateOf(SpUtil.getDeviceScore() >= DeviceGrade.PASS_SCORE) }
-    var scoring by remember { mutableStateOf(false) }
+    // 评分本身在独立页面（DeviceScoreScreen）里重新评测，这里只需要「是否达标」这一个布尔：
+    // 页面返回时本组合会重建，remember 重新读一次 SpUtil，分数变化自动反映到开关可用性上。
+    val passes = remember { SpUtil.getDeviceScore() >= DeviceGrade.PASS_SCORE }
 
     // ── 封面缓存手动清理 ──
     var coverCacheMsg by remember { mutableStateOf<String?>(null) }
@@ -171,37 +165,13 @@ fun SettingsScreen(
             item(key = "material_title") { SectionTitle("真·高级材质") }
             item(key = "material_card") {
                 Card(modifier = (Modifier.fillMaxWidth())) {
+                    // 摘要只留一句引导：分数 / 档位 / 六项明细 / 重新评分都在独立页面里，
+                    // 挤在 preference 副标题的三行小字里既看不清也不好点。
                     ArrowPreference(
                         title = "设备性能评分",
-                        summary = if (scoring) {
-                            "正在重新评测…"
-                        } else if (score < 0) {
-                            "尚未评测 · 点击开始"
-                        } else {
-                            val breakdown = DeviceGrade.cachedOrEvaluate(context).details
-                                .joinToString(" · ") { "${it.first} ${it.second}" }
-                            "$score / 100 · ${"档位 " + tierLabel(score)}" +
-                                if (score >= DeviceGrade.PASS_SCORE) {
-                                    "\n$breakdown\n点击重新评分"
-                                } else {
-                                    "\n低于 ${DeviceGrade.PASS_SCORE} 分，材质不可用 · 点击重新评分"
-                                }
-                        },
+                        summary = "点击了解设备性能",
                         startAction = { PrefIcon(MiuixGlassIcons.Regular.MemoryFunction) },
-                        onClick = {
-                            scoring = true
-                            scope.launch(Dispatchers.IO) {
-                                val grade = DeviceGrade.evaluate(context)
-                                SpUtil.setDeviceScore(grade.total)
-                                withContext(Dispatchers.Main) {
-                                    score = grade.total
-                                    passes = grade.total >= DeviceGrade.PASS_SCORE
-                                    scoring = false
-                                    if (!passes) SpUtil.setAdvancedMaterialEnabled(false)
-                                }
-                            }
-                        },
-                        enabled = !scoring,
+                        onClick = onOpenDeviceScore,
                     )
                     SwitchPreference(
                         checked = advancedOn,

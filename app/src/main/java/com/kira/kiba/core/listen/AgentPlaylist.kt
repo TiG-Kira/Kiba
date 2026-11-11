@@ -39,6 +39,14 @@ object AgentPlaylist {
         @SerializedName("reasons") val reasons: List<String> = emptyList(),
         /** 歌单整段推荐语。 */
         @SerializedName("summary") val summary: String = "",
+        /** 歌单名（封面主标题）。 */
+        @SerializedName("name") val name: String = "",
+        /** 封面 PNG 绝对路径（由 [PlaylistCover] 模板渲染；空 = 尚未生成）。 */
+        @SerializedName("coverPath") val coverPath: String = "",
+        /** 封面色调关键词（模型给的 mood）。 */
+        val mood: String = "",
+        /** 封面页脚短标签。 */
+        val coverTags: List<String> = emptyList(),
     ) {
         val isEmpty: Boolean get() = ids.isEmpty()
     }
@@ -55,6 +63,7 @@ object AgentPlaylist {
      * 内部完成画像提取（流派分布 / 收藏名 / Rating）与本地预筛，再调 [refresh]。
      */
     suspend fun refreshWithProfile(
+        context: android.content.Context,
         songs: List<SongWithChartsEntity>,
         records: List<RecordEntity>,
         favoriteIds: List<String>,
@@ -112,7 +121,7 @@ object AgentPlaylist {
         val favTitles = favoriteIds.mapNotNull { it.toIntOrNull() }.mapNotNull { sid ->
             songs.firstOrNull { it.songData.id == sid }?.songData?.title
         }
-        return refresh(candidates, genreProfile, favTitles, null)
+        return refresh(context, candidates, genreProfile, favTitles, null)
     }
 
     /** 距上次生成是否已过期（intervalHours 来自设置页）。 */
@@ -134,6 +143,7 @@ object AgentPlaylist {
      * @return 保存结果；LLM 未配置/网络失败抛 [KibaLlm.LlmError]
      */
     suspend fun refresh(
+        context: android.content.Context,
         candidates: List<Profile>,
         genreProfile: String,
         favoriteTitles: List<String>,
@@ -157,8 +167,13 @@ object AgentPlaylist {
             append("1. 只能从候选里选，数量 5~").append(max).append(" 首；\n")
             append("2. 兼顾口味延续与新鲜感：多数贴合画像，少量跳出舒适区；\n")
             append("3. 每首给不超过 20 字的中文推荐理由；\n")
-            append("4. 严格输出 JSON：{\"summary\":\"歌单一句话\",\"reasons\":[\"理由1\",\"理由2\",...],\"picks\":[1,2,...]}，")
-            append("picks 是候选序号（从 1 开始），reasons 与 picks 一一对应；不要输出 JSON 以外内容。")
+            append("4. 严格输出 JSON：{\"summary\":\"歌单一句话\",")
+            append("\"cover\":{\"title\":\"封面主标题\",\"subtitle\":\"封面副标题\",\"mood\":\"情绪词\",\"tags\":[\"短标签\"]},")
+            append("\"reasons\":[\"理由1\",\"理由2\",...],\"picks\":[1,2,...]}，")
+            append("picks 是候选序号（从 1 开始），reasons 与 picks 一一对应；不要输出 JSON 以外内容。\n")
+            append("cover 是封面设计字段，必须填：title ≤ 12 字、subtitle ≤ 24 字、")
+            append("mood 从「夜行 / 清晨 / 热血 / 静谧 / 赛博 / 复古 / 海洋 / 甜梦」里选一个最贴合歌单气质的词，" )
+            append("tags 给 2~3 个短标签（每个 ≤ 4 字）。")
             // 长期记忆里用户自己声明的口味 / 雷点，比统计出来的流派分布更权威
             AgentMemory.promptBlock().takeIf { it.isNotBlank() }?.let {
                 append("\n若上面的长期记忆提到这个人的口味偏好或明确排斥，选曲时优先贴合它。\n")
@@ -180,8 +195,34 @@ object AgentPlaylist {
         ).getOrThrow()
 
         val saved = parse(result.text, candidates)
-        SpUtil.setAgentPlaylistJson(gson.toJson(saved), System.currentTimeMillis())
-        saved
+        val generatedAt = System.currentTimeMillis()
+
+        // ── 封面：**每次生成歌单都必须过这道模板**（PlaylistCover）──
+        // 模板保证中文可读性与版式稳定；模型只负责填 title/subtitle/mood/tags。
+        val coverSpec = PlaylistCover.Spec(
+            title = saved.name.ifBlank { saved.summary.take(12) }.ifBlank { "专属歌单" },
+            subtitle = saved.summary,
+            mood = saved.mood,
+            tags = saved.coverTags,
+            songCount = saved.ids.size,
+        )
+        val cover = PlaylistCover.render(context, coverSpec, generatedAt.toString())
+        val withCover = saved.copy(coverPath = cover?.absolutePath.orEmpty())
+
+        // 落两份：旧键只留「最近一份」兼容旧版本读取；历史存档供「畅听」页展示
+        SpUtil.setAgentPlaylistJson(gson.toJson(withCover), generatedAt)
+        AgentPlaylistStore.add(
+            AgentPlaylistStore.Item(
+                id = generatedAt.toString(),
+                name = coverSpec.title,
+                summary = withCover.summary,
+                ids = withCover.ids,
+                reasons = withCover.reasons,
+                coverPath = withCover.coverPath,
+                createdAt = generatedAt,
+            ),
+        )
+        withCover
     }
 
     /** 解析 LLM 输出：宽容处理围栏代码块 / 非法序号；picks 与 reasons 对齐截断。 */
@@ -195,11 +236,27 @@ object AgentPlaylist {
         val reasons = root.getAsJsonArray("reasons")?.map { it.asString } ?: emptyList()
         val picks = root.getAsJsonArray("picks")?.map { it.asInt } ?: emptyList()
 
+        // 封面字段：模型偶尔漏字段/写错类型，全部按「取不到就空」处理，
+        // 空值由 PlaylistCover 兜底（默认配色 + summary 当标题），不让整张歌单失败
+        val cover = root.getAsJsonObject("cover")
+        val coverTitle = cover?.get("title")?.takeIf { !it.isJsonNull }?.asString.orEmpty()
+        val coverMood = cover?.get("mood")?.takeIf { !it.isJsonNull }?.asString.orEmpty()
+        val coverTags = cover?.getAsJsonArray("tags")?.mapNotNull {
+            runCatching { it.asString }.getOrNull()
+        }.orEmpty()
+
         // 序号 → 曲目 id：候选序号从 1 起；越界丢弃，去重保序
         val ids = picks.mapNotNull { n ->
             candidates.getOrNull(n - 1)?.id
         }.distinct()
-        return Saved(ids = ids, reasons = reasons, summary = summary)
+        return Saved(
+            ids = ids,
+            reasons = reasons,
+            summary = summary,
+            name = coverTitle.ifBlank { summary.take(12) },
+            mood = coverMood,
+            coverTags = coverTags,
+        )
     }
 
     /** 候选条目（UI 层从曲库实体 + 画像转换）。 */

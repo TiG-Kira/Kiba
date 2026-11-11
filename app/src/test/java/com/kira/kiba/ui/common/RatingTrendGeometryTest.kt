@@ -12,7 +12,7 @@ import org.junit.Test
 class RatingTrendGeometryTest {
 
     private fun entry(rating: Int, ts: Long = 0L, dropped: Boolean = false) =
-        RatingHistory.Entry(ts = ts, rating = rating, dropped = dropped)
+        RatingHistory.Entry(ts = ts, rating = rating.toDouble(), dropped = dropped)
 
     private val W = 800f
     private val H = 400f

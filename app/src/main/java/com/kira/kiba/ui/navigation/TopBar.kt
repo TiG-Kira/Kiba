@@ -44,6 +44,7 @@ import top.yukonga.miuix.kmp.glass.GlassTopAppBar
 import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
 import top.yukonga.miuix.kmp.icon.glass.*
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+import com.kira.kiba.ui.theme.KibaMotion
 
 /**
  * 当前顶栏本身是否要用液态玻璃实现。
@@ -265,7 +266,7 @@ fun KibaGameSwitch(
     val inset = 2.dp
     val thumbOffset by animateDpAsState(
         targetValue = if (selectedIndex == 0) 0.dp else segmentWidth,
-        animationSpec = spring(dampingRatio = 0.82f, stiffness = 460f),
+        animationSpec = KibaMotion.snapOr(spring(dampingRatio = 0.82f, stiffness = 460f)),
         label = "kibaGameSwitchThumb",
     )
     Box(

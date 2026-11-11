@@ -108,8 +108,13 @@ fun CoverFrame(
     genre: String,
     modifier: Modifier = Modifier,
     size: androidx.compose.ui.unit.Dp = 52.dp,
+    /**
+     * 非空时覆盖流派描边色。成绩查询页按**难度**上色（BASIC 绿 / MASTER 紫…），
+     * 同一首歌有多个难度谱面时，流派色无法区分是哪一档，故由调用方指定。
+     */
+    strokeColor: Color? = null,
 ) {
-    val stroke = colorResource(genreStrokeRes(genre))
+    val stroke = strokeColor ?: colorResource(genreStrokeRes(genre))
     val candidates = remember(songId, imageUrl) { coverCandidateUrls(songId, imageUrl) }
 
     Box(

@@ -1,6 +1,9 @@
 package com.kira.kiba.ui.me
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -12,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -20,13 +24,16 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.kira.kiba.core.account.DivingFishAccount
 import com.kira.kiba.core.account.LxnsAccount
 import com.kira.kiba.core.account.RatingHistory
+import com.kira.kiba.core.account.formatRatingValue
 import com.kira.kiba.core.data.ChuniRecordSync
 import com.kira.kiba.core.model.GameType
 import com.kira.kiba.core.model.ScoreSource
@@ -37,18 +44,21 @@ import com.kira.kiba.ui.common.DxRatingTag
 import com.kira.kiba.ui.common.RatingTrendCard
 import com.kira.kiba.ui.common.SectionTitle
 import com.kira.kiba.ui.common.pageContentPadding
+import com.kira.kiba.ui.material.KibaGlassDialog
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
+import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
 import top.yukonga.miuix.kmp.icon.glass.*
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
- * 「我」页面 ArrowPreference 的左侧功能图标（HyperOS 设置风格：次要色单色图标）。
+ * 「账户」页面 ArrowPreference 的左侧功能图标（HyperOS 设置风格：次要色单色图标）。
  */
 @Composable
 private fun PrefIcon(icon: androidx.compose.ui.graphics.vector.ImageVector) {
@@ -61,12 +71,16 @@ private fun PrefIcon(icon: androidx.compose.ui.graphics.vector.ImageVector) {
 }
 
 /**
- * “我”页面（miuix preference 规范 + miuix Card 分组包裹）：
+ * 「账户」页面（原「我」页；miuix preference 规范 + miuix Card 分组包裹）：
  * - 置顶 [ArrowPreference]：已登录展示昵称 + DX Rating 段位徽章（官方色表），
- *   点击进 Best 50；未登录展示引导，点击进登录页（账号密码，OAuth 已暂时停用）；
- * - 查分器入口：成绩查询（EasyMai 式筛选 / 排序 / 网格视图，Best 50 由顶部卡片承载）；
- * - 我的收藏：收藏的歌曲列表；
- * - 工具箱（移植自 EasyMai 并合并原「工具」组）：实用网站 + 数据工具 + 登录机台等。
+ *   点击进 Best 50；未登录展示引导，点击进登录页；
+ * - 查分器组：水鱼 / 落雪账户、机台更新、二维码导入、成绩查询，以及**合并后的退出登录**
+ *   （弹层里按查分器多选，不再为每个源各挂一行）；
+ * - 我的曲库：收藏；
+ * - 工具箱：**单入口**，站外网站与本地小工具全部收进 [com.kira.kiba.ui.tools.ToolboxScreen]。
+ *
+ * 2.6.0 起「我」更名为「账户」：这页现在纯账户与工具属性，曲库浏览在「曲目」，
+ * 听歌在「畅听」，不必再叫「我」。
  */
 @Composable
 fun MeScreen(
@@ -75,16 +89,10 @@ fun MeScreen(
     onOpenLxnsLogin: () -> Unit,
     onOpenBest50: () -> Unit,
     onOpenScoreQuery: () -> Unit,
-    onOpenDxConverter: () -> Unit,
     onOpenFavorites: () -> Unit,
-    onOpenMachineLogin: () -> Unit,
-    onOpenGatewayAccount: () -> Unit,
     onOpenMachineUpdate: () -> Unit,
     onOpenQrImport: () -> Unit,
-    onOpenRatingCalc: () -> Unit,
-    onOpenVersionMap: () -> Unit,
-    onOpenHotCharts: () -> Unit,
-    onOpenFriendQuery: () -> Unit,
+    onOpenToolbox: () -> Unit,
     onOpenChuniBest: () -> Unit,
 ) {
     val account by DivingFishAccount.state.collectAsState()
@@ -117,13 +125,18 @@ fun MeScreen(
     val chuniNickname = remember(chuniSyncState) { ChuniRecordSync.getLocalNickname() }
     val chuniRecordCount = remember(chuniSyncState) { ChuniRecordSync.getLocalRecordCount() }
 
-    // 进中二「我」页自动同步一次（本进程内仅一次；顶栏手动刷新不受限）
+    // 进中二「账户」页自动同步一次（本进程内仅一次；顶栏手动刷新不受限）
     LaunchedEffect(isChunithm, account.bound, chuniReady) {
         if (isChunithm && chuniReady && ChuniRecordSync.shouldAutoRefresh()) {
             // 兜底：刷新内部已自捕获，这里再包一层，确保任何漏网异常都不会打死 UI 协程
             runCatching { ChuniRecordSync.refresh() }
         }
     }
+
+    // ── 退出登录（合并入口）：弹层里按查分器多选 ──
+    var showLogoutDialog by remember { mutableStateOf(false) }
+    var logoutWaterFish by remember { mutableStateOf(false) }
+    var logoutLxns by remember { mutableStateOf(false) }
 
     Scaffold(
         modifier = Modifier
@@ -210,22 +223,24 @@ fun MeScreen(
                 }
             }
 
-            // ── Rating 历史曲线（舞萌）：用户卡下方，最近 10 次更新的变化 ──
-            // 中二分支不显示——曲线口径是舞萌官方 B50 Rating，中二 Rating 是另一套公式
+            // ── Rating 历史曲线：跟随**当前游戏 + 当前数据源** ──
+            // 水鱼与落雪是两套口径，中二又是另一套公式，所以四条曲线各自独立记录；
+            // 这里只画用户当下正在用的那一条，避免「切了源曲线突然跳变」的困惑。
             item(key = "rating_trend") {
-                if (!isChunithm) {
-                    val history by RatingHistory.entries.collectAsState()
-                    if (history.isNotEmpty()) {
-                        RatingTrendCard(
-                            title = "最近 Rating 变化",
-                            entries = history.takeLast(10),
-                            subtitle = if (history.size > 10) {
-                                "最近 10 次 · 共 ${history.size} 次"
-                            } else {
-                                "共 ${history.size} 次更新"
-                            },
-                        )
-                    }
+                val trendGame = if (isChunithm) GameType.CHUNITHM else GameType.MAIMAI
+                val trendSource = if (isChunithm) chuniSource else maimaiSource
+                val history by RatingHistory.entries(trendGame, trendSource).collectAsState()
+                if (history.isNotEmpty()) {
+                    RatingTrendCard(
+                        title = if (isChunithm) "中二 Rating 变化" else "最近 Rating 变化",
+                        entries = history.takeLast(10),
+                        subtitle = "${trendSource.shortLabel}源 · " + if (history.size > 10) {
+                            "最近 10 次 · 共 ${history.size} 次"
+                        } else {
+                            "共 ${history.size} 次更新"
+                        },
+                        valueText = { formatRatingValue(trendGame, it) },
+                    )
                 }
             }
 
@@ -296,6 +311,30 @@ fun MeScreen(
                             onClick = onOpenScoreQuery,
                         )
                     }
+                    // ── 退出登录（水鱼 / 落雪合并成一个入口）──
+                    // 两行分开挂的做法在只登一边时信息量尚可，两边都登录后就是两块「退出」，
+                    // 用户得先判断点哪个。合并成一次弹层、勾选要退的查分器，一眼看清。
+                    if (account.dfLoggedIn || lxnsBound) {
+                        ArrowPreference(
+                            title = "退出登录",
+                            summary = buildString {
+                                val logged = buildList {
+                                    if (account.dfLoggedIn) add("水鱼")
+                                    if (lxnsBound) add("落雪")
+                                }
+                                append("当前登录：")
+                                append(logged.joinToString(" / "))
+                                append(" · 点击选择要退出的查分器")
+                            },
+                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Unlock) },
+                            onClick = {
+                                // 默认全选「已登录的那几项」，用户取消勾选即可保留
+                                logoutWaterFish = account.dfLoggedIn
+                                logoutLxns = lxnsBound
+                                showLogoutDialog = true
+                            },
+                        )
+                    }
                 }
             }
 
@@ -312,116 +351,129 @@ fun MeScreen(
                 }
             }
 
-            // ── 工具箱（移植自 EasyMai toolbox）──
+            // ── 工具箱：单入口（站外网站 + 本地小工具都收进子页面）──
             item(key = "toolbox_title") { SectionTitle("工具箱") }
 
-            item(key = "toolbox_sites") {
+            item(key = "toolbox_card") {
                 Card(modifier = (Modifier.fillMaxWidth())) {
-                    if (isChunithm) {
-                        ArrowPreference(
-                            title = "水鱼中二节奏查分器",
-                            summary = "本应用接口的本家，中二节奏成绩查询官网",
-                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Search) },
-                            onClick = {
-                                BrowserJump.openUrl(
-                                    context,
-                                    "https://www.diving-fish.com/chunithm/prober/",
-                                )
-                            },
-                        )
-                    } else {
-                        ArrowPreference(
-                            title = "水鱼查分器",
-                            summary = "本应用接口的本家，成绩上传与查询官网",
-                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Search) },
-                            onClick = {
-                                BrowserJump.openUrl(
-                                    context,
-                                    "https://www.diving-fish.com/maimaidx/prober/",
-                                )
-                            },
-                        )
-                        ArrowPreference(
-                            title = "DXRating.net",
-                            summary = "包含 ZXZR 曲目信息的查询网站",
-                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Layers) },
-                            onClick = { BrowserJump.openUrl(context, "https://dxrating.net/search") },
-                        )
-                    }
                     ArrowPreference(
-                        title = "音游地图",
-                        summary = "查查你地区的机台",
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.MapAlbum) },
-                        onClick = { BrowserJump.openUrl(context, "https://map.bemanicn.com/") },
+                        title = "工具箱",
+                        summary = "查分器官网 / 音游地图等站外入口，以及 Rating 计算、达成率反推、" +
+                            "热门排行、版本对照、查朋友等本地工具",
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Tune) },
+                        onClick = onOpenToolbox,
                     )
                 }
             }
+        }
+    }
 
-            item(key = "toolbox_tools") {
-                Card(modifier = (Modifier.fillMaxWidth())) {
-                    if (!isChunithm) {
-                        ArrowPreference(
-                            title = "单曲 Rating 计算",
-                            summary = "根据定数及达成率算出 Rating（附 RANK 系数表）",
-                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Tune) },
-                            onClick = onOpenRatingCalc,
-                        )
-                        ArrowPreference(
-                            title = "热门乐曲排行",
-                            summary = "按水鱼游玩样本数排序，看看最火爆的谱面是哪些",
-                            startAction = { PrefIcon(MiuixGlassIcons.Regular.TopDownloads) },
-                            onClick = onOpenHotCharts,
-                        )
-                        ArrowPreference(
-                            title = "版本名称对照表",
-                            summary = "版本名称与牌子代号对照，妈妈再也不担心分不清版本",
-                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Album) },
-                            onClick = onOpenVersionMap,
-                        )
-                    }
-                    ArrowPreference(
-                        title = "查朋友",
-                        summary = "输入好友码查看对方公开的落雪数据（玩家信息 / Best / 全量成绩统计）",
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.ContactsCircle) },
-                        onClick = onOpenFriendQuery,
+    // ── 退出登录弹层：按查分器多选 ──
+    if (showLogoutDialog) {
+        val nothingSelected = !logoutWaterFish && !logoutLxns
+        KibaGlassDialog(
+            show = true,
+            title = "退出登录",
+            summary = "勾选要退出登录的查分器。退出只会清除本机的登录凭据与账号缓存，" +
+                "已同步到本地的成绩与收藏不会删除。",
+            onDismissRequest = { showLogoutDialog = false },
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                if (account.dfLoggedIn) {
+                    LogoutChoiceRow(
+                        label = "水鱼查分器",
+                        detail = if (logoutWaterFish) {
+                            "将清除水鱼登录凭据与本机水鱼成绩缓存"
+                        } else {
+                            "保留水鱼登录"
+                        },
+                        checked = logoutWaterFish,
+                        onToggle = { logoutWaterFish = !logoutWaterFish },
                     )
-                    ArrowPreference(
-                        title = "登录机台",
-                        summary = "打开微信「舞萌 | 中二」公众号，点底部「玩家二维码」菜单即可扫码上机",
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Phone) },
-                        onClick = onOpenMachineLogin,
-                    )
-                    if (!isChunithm) {
-                        ArrowPreference(
-                            title = "接入 Easymai 账号",
-                            summary = "二维码导入成绩的前置账号：登录/注册、手动同步、注销",
-                            startAction = { PrefIcon(MiuixGlassIcons.Regular.ContactsBook) },
-                            onClick = onOpenGatewayAccount,
-                        )
-                        ArrowPreference(
-                            title = "达成率计算",
-                            summary = "由判定数量反推达成率与单曲 Rating",
-                            startAction = { PrefIcon(MiuixGlassIcons.Regular.ConvertFile) },
-                            onClick = onOpenDxConverter,
-                        )
-                    }
-                    if (account.dfLoggedIn) {
-                        ArrowPreference(
-                            title = "退出水鱼登录",
-                            summary = "清除本机水鱼成绩缓存与登录凭证；远端授权可在 auth.diving-fish.com/apps 撤销",
-                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Unlock) },
-                            onClick = { DivingFishAccount.unbind() },
-                        )
-                    }
-                    if (lxnsBound) {
-                        ArrowPreference(
-                            title = "退出落雪登录",
-                            summary = "清除本机落雪凭据（已同步进本地的成绩保留）",
-                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Unlock) },
-                            onClick = { LxnsAccount.logout() },
-                        )
-                    }
                 }
+                if (lxnsBound) {
+                    LogoutChoiceRow(
+                        label = "落雪查分器",
+                        detail = if (logoutLxns) {
+                            "将清除落雪登录凭据（已同步进本地的成绩保留）"
+                        } else {
+                            "保留落雪登录"
+                        },
+                        checked = logoutLxns,
+                        onToggle = { logoutLxns = !logoutLxns },
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(text = "取消", onClick = { showLogoutDialog = false })
+                    Spacer(Modifier.width(8.dp))
+                    TextButton(
+                        text = "确认退出",
+                        enabled = !nothingSelected,
+                        onClick = {
+                            if (logoutWaterFish) DivingFishAccount.unbind()
+                            if (logoutLxns) LxnsAccount.logout()
+                            showLogoutDialog = false
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 退出登录弹层里的单个查分器选项：整行可点，右侧方框勾选态。
+ *
+ * 用自绘方框而不是 SwitchPreference：这里语义是「选中要处理的对象」而非「开关某项功能」，
+ * 且弹层里 miuix preference 的左右内边距会把行挤得很窄。
+ */
+@Composable
+private fun LogoutChoiceRow(
+    label: String,
+    detail: String,
+    checked: Boolean,
+    onToggle: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onToggle)
+            .padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = label,
+                style = MiuixTheme.textStyles.body1,
+                color = MiuixTheme.colorScheme.onSurface,
+            )
+            Text(
+                text = detail,
+                style = MiuixTheme.textStyles.footnote2,
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            )
+        }
+        Box(
+            modifier = Modifier
+                .size(22.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(
+                    if (checked) MiuixTheme.colorScheme.primary
+                    else MiuixTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (checked) {
+                Icon(
+                    imageVector = MiuixGlassIcons.Regular.Ok,
+                    contentDescription = null,
+                    tint = MiuixTheme.colorScheme.onPrimary,
+                    modifier = Modifier.size(16.dp),
+                )
             }
         }
     }

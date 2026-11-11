@@ -36,7 +36,8 @@ enum class DeviceTier {
  *
  * @property total 总分 0..100
  * @property tier 由 [total] 推得的档位
- * @property details 逐项明细，用于在设置页解释分数构成
+ * @property details 逐项明细（名称 to 得分），用于在评分页解释分数构成
+ * @property detailMax 逐项满分（与 [details] 同序），「24 / 30」这种展示要用
  */
 data class DeviceScore(
     val total: Int,
@@ -49,6 +50,7 @@ data class DeviceScore(
     val lowRamDevice: Boolean,
     val sdkInt: Int,
     val details: List<Pair<String, Int>>,
+    val detailMax: List<Int> = listOf(30, 20, 15, 15, 10, 10),
 )
 
 /**
@@ -64,12 +66,12 @@ object DeviceGrade {
     /** 达标分数线：达到此分才允许开启真·高级材质。 */
     const val PASS_SCORE = 55
 
-    private const val W_RAM = 30
-    private const val W_CORES = 20
-    private const val W_FREQ = 15
-    private const val W_REFRESH = 15
-    private const val W_GLES = 10
-    private const val W_SDK = 10
+    const val W_RAM = 30
+    const val W_CORES = 20
+    const val W_FREQ = 15
+    const val W_REFRESH = 15
+    const val W_GLES = 10
+    const val W_SDK = 10
 
     /** 最新的评分结果（进程内缓存，避免每次重算）。 */
     @Volatile
@@ -103,6 +105,7 @@ object DeviceGrade {
         lowRamDevice = true,
         sdkInt = Build.VERSION.SDK_INT,
         details = listOf("评测失败" to 0),
+        detailMax = listOf(0),
     )
 
     private fun compute(context: Context): DeviceScore {
