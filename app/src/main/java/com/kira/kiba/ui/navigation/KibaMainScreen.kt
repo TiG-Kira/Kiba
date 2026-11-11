@@ -672,11 +672,20 @@ fun KibaMainScreen() {
                       // 顶栏会停留在上一首的封面/标题（AVD 实证）。
                       val playingTrack by SongPlaybackController.state.collectAsState()
                       val playingId = playingTrack.track?.songId
+                      // 播放列表面板：展开时顶栏程序化收窄（封面渐隐），标题改「播放列表」、
+                      // 副标题改「当前播放: 曲名」；收起恢复歌名 / 艺术家（动画见 SongDetailTopBarSlot）
+                      val queuePanelVisible by com.kira.kiba.ui.songplayer.SongPlayerPanelState
+                          .queueVisible.collectAsState()
                       if (playingId != null) {
                           SongDetailTopBarSlot(
                               songId = playingId,
                               scrollBehavior = scrollBehavior,
                               onBack = { popPage() },
+                              titleOverride = if (queuePanelVisible) "播放列表" else null,
+                              subtitleOverride = if (queuePanelVisible) {
+                                  "当前播放: ${playingTrack.track?.title ?: ""}"
+                              } else null,
+                              programCollapsed = queuePanelVisible,
                           )
                       } else {
                           KibaTopBar(
@@ -1079,7 +1088,7 @@ fun KibaMainScreen() {
  */
 private fun buildTintedNavLogo(context: android.content.Context, dark: Boolean): BitmapPainter? {
     return runCatching {
-        val src = ContextCompat.getDrawable(context, R.drawable.ic_launcher_foreground)
+        val src = ContextCompat.getDrawable(context, R.drawable.ic_logo_lineart)
             ?.toBitmap() ?: return@runCatching null
         val bmp = if (src.config == android.graphics.Bitmap.Config.ARGB_8888) src
         else src.copy(android.graphics.Bitmap.Config.ARGB_8888, false) ?: return@runCatching null

@@ -173,7 +173,7 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
                     // App Logo：launcher 前景图保留 alpha、整体染白，交给渐变做蒙版
                     val logoImage = remember(darkTheme) {
                         runCatching {
-                            ContextCompat.getDrawable(context, R.drawable.ic_launcher_foreground)
+                            ContextCompat.getDrawable(context, R.drawable.ic_logo_lineart)
                                 ?.toBitmap()
                         }.getOrNull()?.let { bm ->
                             val copy = bm.copy(android.graphics.Bitmap.Config.ARGB_8888, true)
