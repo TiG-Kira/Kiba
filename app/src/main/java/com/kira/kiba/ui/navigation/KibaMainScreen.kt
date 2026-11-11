@@ -169,6 +169,15 @@ val LocalNavBarBottomPadding = staticCompositionLocalOf<Dp> { 0.dp }
 /** 仅系统导航栏 inset 高度：二级页面（无悬浮底栏）底部留白用。 */
 val LocalSystemNavBarBottom = staticCompositionLocalOf<Dp> { 0.dp }
 
+/**
+ * 二级页面底部「正在播放」条的净占高（条高 + 与系统导航栏的间距），无播放条时为 0。
+ *
+ * 畅听系子页面（歌单 / Agent 歌单 / 收藏 / 下载）没有底部导航栏，播放条直接坐在底栏位置；
+ * 这个值由 MainScreen 从 Scaffold 实际底栏高度现算（`bottomBarHeight - 系统导航栏`），
+ * 因此「有没有播放条」两态都不需要页面自己判断，也不会和系统导航栏重复让位。
+ */
+val LocalNowPlayingBarInset = staticCompositionLocalOf<Dp> { 0.dp }
+
 enum class KibaTab(val title: String) {
     Songs("曲目"),
     // 2.6.0：「听」更名为「畅听」（这页已经是歌单 / 推荐 / 下载 / Agent 歌单的完整听歌中枢）
@@ -337,6 +346,35 @@ sealed interface KibaSubPage {
     data object About : KibaSubPage {
         override val title: String = "关于"
     }
+}
+
+/**
+ * 畅听系的「集合类」子页面：没有底部导航栏，但「正在播放」条要落到底栏位置。
+ *
+ * 只认这四页。歌曲详情 / 谱面详情自带「播放乐曲」按钮，播放器页本身就是全屏播放，
+ * 底下再挂一条播放条只会和页面内容抢位置；谱面预览是 WebView，也不适合压一条底栏。
+ */
+private fun KibaSubPage.showsNowPlayingBar(): Boolean = when (this) {
+    is KibaSubPage.ListenPlaylist,
+    is KibaSubPage.ListenAgentPlaylist,
+    is KibaSubPage.ListenDownloads,
+    is KibaSubPage.Favorites -> true
+
+    else -> false
+}
+
+/**
+ * 底栏用的播放状态快照。
+ *
+ * 只投影 NowPlayingBar 需要的字段。播放中 positionMs 每 500ms 刷新完整 PlayerState，
+ * 直接 collect 会把玻璃底栏拖进同频重组（glass 修饰符的 effects lambda 每次重组都是
+ * 新实例 → invalidateDrawCache → 全套取景重录 + 重模糊），滚动时表现为底栏细微抖动。
+ * derivedStateOf 按结构相等过滤，位置刷新不再触发重组。
+ */
+@Composable
+private fun rememberPlayerBarSnapshot(): PlayerBarSnapshot {
+    val source = SongPlaybackController.state.collectAsState()
+    return remember(source) { derivedStateOf { PlayerBarSnapshot.of(source.value) } }.value
 }
 
 private fun tabIcon(tab: KibaTab) = when (tab) {
@@ -824,16 +862,9 @@ fun KibaMainScreen() {
               }
           },
           bottomBar = {
+              val sub = subStack.lastOrNull()
               if (subStack.isEmpty()) {
-                  // 底栏状态快照：只投影 NowPlayingBar 需要的字段。播放中 positionMs
-                  // 每 500ms 刷新完整 PlayerState，直接 collect 会把两条玻璃底栏拖进
-                  // 同频重组（glass 修饰符 effects lambda 每次重组都是新实例 →
-                  // invalidateDrawCache → 全套取景重录+重模糊），滚动时表现为底栏
-                  // 细微抖动。derivedStateOf 按结构相等过滤，位置刷新不再触发重组。
-                  val playerStateSource = SongPlaybackController.state.collectAsState()
-                  val playerState by remember(playerStateSource) {
-                      derivedStateOf { PlayerBarSnapshot.of(playerStateSource.value) }
-                  }
+                  val playerState = rememberPlayerBarSnapshot()
                   // 底栏导航项与切页回调：两套材质共用同一份数据，只换渲染控件
                   // Kiba 页用产品 Logo（按亮/暗色整体重着色：亮色黑、暗色白）
                   val darkTheme = isSystemInDarkTheme()
@@ -909,16 +940,57 @@ fun KibaMainScreen() {
                           )
                       }
                   }
+              } else if (sub != null && sub.showsNowPlayingBar()) {
+                  // 畅听系子页面（歌单 / Agent 歌单 / 收藏 / 下载）没有底部导航栏：
+                  // 播放条直接坐在底栏位置 —— 左右 24dp 与悬浮底栏同宽，向下只让出
+                  // 系统导航栏 + 8dp 呼吸（与「播放条 + 导航栏」那套的间距一致）。
+                  // 没在播就整块不组合，页面底部留白靠 LocalNowPlayingBarInset 现算。
+                  val playerState = rememberPlayerBarSnapshot()
+                  if (playerState.track != null) {
+                      Column(
+                          modifier = Modifier
+                              .fillMaxWidth()
+                              .padding(
+                                  start = 24.dp,
+                                  end = 24.dp,
+                                  bottom = systemNavBarsHeight + 8.dp,
+                              ),
+                      ) {
+                          if (isLiquid) {
+                              LiquidNowPlayingBar(
+                                  state = playerState,
+                                  backdrop = liquidBackdrop,
+                                  onOpenPlayer = { pushPage(KibaSubPage.SongPlayer) },
+                              )
+                          } else {
+                              NowPlayingBar(
+                                  state = playerState,
+                                  backdrop = glassNavBackdrop,
+                                  onOpenPlayer = { pushPage(KibaSubPage.SongPlayer) },
+                              )
+                          }
+                      }
+                  }
               }
           }
       ) { padding ->
           // 顶栏遮挡量从 Scaffold 自身 padding 现取：顶栏塌缩时测量高度同步收缩，
           // 常量会留下一条不透带（Termux Ultra GlassPageHost 同款做法）。
           val topBarClearance = padding.calculateTopPadding()
+          // 底栏实际占高（含系统导航栏）。二级页里底栏槽只有「正在播放」条，
+          // 减掉系统导航栏就是页面该额外让出的净高；无播放条时底栏高 0 → 自然为 0。
+          // 主页 Tab 恒为 0：那些页走 withNavBar=true 的留白口径（导航栏 + 播放条分别计），
+          // 这里再叠一份会翻倍。
+          val nowPlayingInset = if (subStack.isEmpty()) {
+              0.dp
+          } else {
+              (padding.calculateBottomPadding() - systemNavBarsHeight).coerceAtLeast(0.dp)
+          }
           CompositionLocalProvider(
               LocalTopBarClearance provides topBarClearance,
               LocalNavBarBottomPadding provides navBarBottomPadding,
               LocalSystemNavBarBottom provides systemNavBarsHeight,
+              LocalNowPlayingBarInset provides nowPlayingInset,
           ) {
               Box(
                   modifier = Modifier

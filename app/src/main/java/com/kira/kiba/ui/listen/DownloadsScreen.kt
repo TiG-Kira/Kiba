@@ -79,7 +79,7 @@ fun DownloadsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
-            contentPadding = pageContentPadding(),
+            contentPadding = pageContentPadding(withNavBar = false),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             if (downloads.isEmpty()) {

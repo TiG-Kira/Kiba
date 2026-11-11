@@ -257,7 +257,7 @@ fun SettingsScreen(
                         startAction = { PrefIcon(MiuixGlassIcons.Regular.Notes) },
                         onClick = onOpenAgentMemory,
                     )
-                    // 「听」页 Agent 专属歌单的自动刷新间隔（进听页时检查过期）
+                    // 「畅听」页 Agent 歌单的自动更新间隔（进畅听时比对上次生成时间）
                     val intervalOptions = listOf(6, 12, 24, 48, 72)
                     var agentInterval by remember {
                         mutableIntStateOf(SpUtil.getAgentPlaylistIntervalHours())
@@ -265,8 +265,12 @@ fun SettingsScreen(
                     OverlaySpinnerPreference(
                         items = intervalOptions.map { DropdownItem(text = "$it 小时") },
                         selectedIndex = intervalOptions.indexOf(agentInterval).coerceAtLeast(0),
-                        title = "Agent 歌单刷新间隔",
-                        summary = "「听」页专属歌单每 $agentInterval 小时自动重新生成",
+                        title = "Agent 歌单更新间隔",
+                        // 实际行为：进「畅听」时比对上次生成时间，过期就**追加一张新歌单**，
+                        // 旧歌单原样留在历史里（3.0 起是历史存档，不再覆盖）。
+                        // 没配 LLM 时不会触发，所以一并写进摘要，免得用户以为设置失效。
+                        summary = "进「畅听」时若距上次生成超过 $agentInterval 小时，" +
+                            "自动追加一张新歌单（旧的保留）；需先启用模型配置",
                         startAction = { PrefIcon(MiuixGlassIcons.Regular.Refresh) },
                         onSelectedIndexChange = { idx ->
                             val hours = intervalOptions.getOrElse(idx) { 24 }

@@ -37,6 +37,7 @@ import com.kira.kiba.core.model.DifficultyType
 import com.kira.kiba.core.utils.CoverHits
 import com.kira.kiba.core.utils.CoverSources
 import com.kira.kiba.ui.navigation.LocalNavBarBottomPadding
+import com.kira.kiba.ui.navigation.LocalNowPlayingBarInset
 import com.kira.kiba.ui.navigation.LocalSystemNavBarBottom
 import com.kira.kiba.ui.navigation.LocalTopBarClearance
 import top.yukonga.miuix.kmp.basic.Card
@@ -66,7 +67,8 @@ fun SectionTitle(
  * 页面滚动容器的 contentPadding：顶部顶栏 clearance + 底部悬浮底栏留白 + 两侧 16dp。
  * 挂在 LazyColumn 的 contentPadding 上（可被滚走），不是页面根 padding（死带）。
  *
- * @param withNavBar false 用于二级页面（无悬浮底栏）：底部只留系统导航栏 inset。
+ * @param withNavBar false 用于二级页面（无悬浮底栏）：底部留系统导航栏 inset +
+ *   「正在播放」条净高（[LocalNowPlayingBarInset]，没在播时为 0）。
  */
 @Composable
 fun pageContentPadding(
@@ -80,7 +82,7 @@ fun pageContentPadding(
     bottom = if (withNavBar) {
         LocalNavBarBottomPadding.current + bottomExtra
     } else {
-        LocalSystemNavBarBottom.current + bottomExtra
+        LocalSystemNavBarBottom.current + LocalNowPlayingBarInset.current + bottomExtra
     },
 )
 
