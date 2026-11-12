@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
@@ -61,6 +62,7 @@ import com.kira.kiba.ui.navigation.KibaTopBar
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.Icon
+import top.yukonga.miuix.kmp.basic.LocalSynchronousTitleFade
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TopAppBarState
@@ -158,29 +160,34 @@ fun MeTopBarSlot(
         // 折叠态的下沿填充（见 [CollapsedBottomFill]）：必须画在顶栏**之下**、内容**之上**，
         // 所以放在 KibaTopBar 之前。
         CollapsedBottomFill(collapse = collapse)
-        KibaTopBar(
-            // 折叠后的那一行仍旧是昵称：前后同名，滚上去只是「大字缩成小字」，
-            // 不会有半路换标题的跳感（miuix 用 alpha 做大标题↔小标题的交叉淡出，换值即硬切）。
-            title = largeTitle,
-            largeTitle = largeTitle,
-            subtitle = subtitle,
-            // 折叠态不显示副标题：56dp 的折叠行装不下它，它会排到玻璃底板下沿之外，
-            // 内容滚上来时和它叠成一团（真机实测，材质开着也一样）。
-            collapsedSubtitle = "",
-            scrollBehavior = scrollBehavior,
-            // 大标题行尾留出头像位：昵称过长时在头像左边就截断，别让文字钻进被图片
-            // 压住的那一块（图片右上方是实的，字压上去会变脏）。折叠态标题走 miuix
-            // 自己的居中排版，不受这个插槽影响。
-            titleTrailing = { Spacer(Modifier.width(AVATAR_TITLE_INSET)) },
-            actions = {
-                // 刷新按钮：展开态在左、折叠态在右 —— 边右移边淡出，快落地时再淡回来。
-                MeRefreshAction(
-                    collapse = collapse,
-                    travel = barWidth - REFRESH_TRAVEL_INSET,
-                    onClick = onRefresh,
-                )
-            },
-        )
+        // 文案折叠与手势全程同步（见 BlurTopAppBar.LocalSynchronousTitleFade）：
+        // 这一页展开态还叠了方形头像与迁移按钮，若大标题在前 1/3 就淡完、小标题再播
+        // 一段 0.3s 定时 spring，视觉上就成了「一堆动画先跑完，顶栏才慢慢折」的假卡顿。
+        CompositionLocalProvider(LocalSynchronousTitleFade provides true) {
+            KibaTopBar(
+                // 折叠后的那一行仍旧是昵称：前后同名，滚上去只是「大字缩成小字」，
+                // 不会有半路换标题的跳感（miuix 用 alpha 做大标题↔小标题的交叉淡出，换值即硬切）。
+                title = largeTitle,
+                largeTitle = largeTitle,
+                subtitle = subtitle,
+                // 折叠态不显示副标题：56dp 的折叠行装不下它，它会排到玻璃底板下沿之外，
+                // 内容滚上来时和它叠成一团（真机实测，材质开着也一样）。
+                collapsedSubtitle = "",
+                scrollBehavior = scrollBehavior,
+                // 大标题行尾留出头像位：昵称过长时在头像左边就截断，别让文字钻进被图片
+                // 压住的那一块（图片右上方是实的，字压上去会变脏）。折叠态标题走 miuix
+                // 自己的居中排版，不受这个插槽影响。
+                titleTrailing = { Spacer(Modifier.width(AVATAR_TITLE_INSET)) },
+                actions = {
+                    // 刷新按钮：展开态在左、折叠态在右 —— 边右移边淡出，快落地时再淡回来。
+                    MeRefreshAction(
+                        collapse = collapse,
+                        travel = barWidth - REFRESH_TRAVEL_INSET,
+                        onClick = onRefresh,
+                    )
+                },
+            )
+        }
         if (!avatarGone.value) {
             MeTopBarAvatar(
                 url = avatarUrl,
