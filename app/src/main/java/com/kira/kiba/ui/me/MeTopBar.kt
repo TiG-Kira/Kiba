@@ -72,9 +72,9 @@ import kotlin.math.roundToInt
  *
  * | | 展开态 | 折叠态 |
  * |---|---|---|
- * | 小标题 | 隐藏（miuix 自己的 alpha 管） | 「账户」 |
+ * | 小标题 | 隐藏（miuix 自己的 alpha 管） | 账户昵称（与展开态同名，只是字号变小） |
  * | 大标题 | 账户昵称（没昵称才退回「账户」） | 隐藏 |
- * | 副标题 | 当前登录的查分器 | 同一行继续显示（miuix 的小副标题槽） |
+ * | 副标题 | 当前登录的查分器 | 随大标题一起淡出 |
  * | 右上角头像 | 方形大图，从状态栏上沿起画，左 / 下两侧渐隐到没有边 | 缩小 + 淡出 |
  * | 刷新按钮 | 停在左侧 | 滑到右侧（中途整颗淡出，落地前才重新淡入） |
  *
@@ -148,9 +148,9 @@ fun MeTopBarSlot(
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
         val barWidth = maxWidth
         KibaTopBar(
-            // 折叠后的那一行恒为「账户」：miuix 内部用 alpha 做大标题↔小标题的交叉淡出，
-            // 这里换值会变成硬切；昵称只出现在大标题上。
-            title = "账户",
+            // 折叠后的那一行仍旧是昵称：前后同名，滚上去只是「大字缩成小字」，
+            // 不会有半路换标题的跳感（miuix 用 alpha 做大标题↔小标题的交叉淡出，换值即硬切）。
+            title = largeTitle,
             largeTitle = largeTitle,
             subtitle = subtitle,
             scrollBehavior = scrollBehavior,
