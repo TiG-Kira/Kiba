@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.systemBars
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
@@ -35,6 +34,9 @@ import coil.compose.SubcomposeAsyncImage
 import coil.imageLoader
 import coil.request.ImageRequest
 import com.kira.kiba.R
+import com.kira.kiba.ui.common.COVER_DARK_FOREGROUND
+import com.kira.kiba.ui.common.COVER_LIGHT_LUMINANCE
+import com.kira.kiba.ui.common.rememberCoverTint
 import com.kira.kiba.ui.material.LocalAdvancedMaterialEnabled
 import com.kira.kiba.ui.material.LocalMaterialFamily
 import com.kira.kiba.ui.material.MaterialFamily
@@ -44,7 +46,6 @@ import com.kira.kiba.ui.material.liquid.LocalLiquidBackdrop
 import com.kira.kiba.ui.navigation.KibaBackAction
 import com.kira.kiba.ui.navigation.LocalGlassTopAppBarBackdrop
 import com.kira.kiba.ui.navigation.useLiquidBar
-import kotlinx.coroutines.delay
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.TopAppBarDefaults
 import top.yukonga.miuix.kmp.glass.GlassTopAppBar
@@ -98,29 +99,41 @@ fun CollectionTopBarSlot(
     val placeholderLum = remember(placeholder) { placeholder?.let { averageLuminanceOf(it) } }
     val lum = probe ?: placeholderLum
 
-    val collapsed by remember(scrollBehavior) {
-        derivedStateOf { scrollBehavior.state.contentOffset < 0f }
+    // 展开高度：完整露出正方形封面（同歌曲详情页口径）
+    val density = LocalDensity.current
+    val screenWidthPx = with(LocalDensity.current) {
+        LocalConfiguration.current.screenWidthDp.dp.roundToPx()
     }
+    val statusBarPx = WindowInsets.systemBars.getTop(density)
+    val collapsedPx = with(density) { TopAppBarDefaults.CollapsedHeight.roundToPx() }
+    val minExpansionPx = (screenWidthPx - statusBarPx - collapsedPx).coerceAtLeast(0)
 
+    // 前景色与折叠进度同源：见 SongDetailTopBar / rememberCoverTint。
     val themeOnSurface = MiuixTheme.colorScheme.onSurface
     val coverColor = when {
         lum == null -> themeOnSurface
-        lum * 0.85f >= 0.60f -> Color(0xFF1C1C1E)
+        lum * 0.85f >= COVER_LIGHT_LUMINANCE -> COVER_DARK_FOREGROUND
         else -> Color.White
     }
-    val onCoverColor = if (collapsed) themeOnSurface else coverColor
+    val tint = rememberCoverTint(
+        scrollBehavior = scrollBehavior,
+        coverColor = coverColor,
+        systemColor = themeOnSurface,
+        limitKey = minExpansionPx,
+    )
+    val onCoverColor by tint.color
+    val systemAppearance by tint.systemAppearance
 
-    // 状态栏图标外观跟随字色；折叠后延迟到渐隐结束再切回主题默认
+    // 状态栏图标外观跟随封面色；折叠过半后切回主题默认
     val themeIsDark = MiuixTheme.colorScheme.background.luminance() < 0.5f
     val themeDefaultLightBars = !themeIsDark
     val coverLightBars = coverColor != Color.White
     val activity = remember { (context as? ContextWrapper).findActivityOrNull() }
-    LaunchedEffect(activity, collapsed, coverLightBars) {
+    LaunchedEffect(activity, systemAppearance, coverLightBars, themeDefaultLightBars) {
         val controller = activity?.window?.let { WindowCompat.getInsetsController(it, it.decorView) }
             ?: return@LaunchedEffect
-        if (collapsed) delay(130L)
         controller.isAppearanceLightStatusBars =
-            if (collapsed) themeDefaultLightBars else coverLightBars
+            if (systemAppearance) themeDefaultLightBars else coverLightBars
     }
     DisposableEffect(activity) {
         onDispose {
@@ -131,15 +144,6 @@ fun CollectionTopBarSlot(
         }
     }
 
-    // 展开高度：完整露出正方形封面（同歌曲详情页口径）
-    val density = LocalDensity.current
-    val screenWidthPx = with(LocalDensity.current) {
-        LocalConfiguration.current.screenWidthDp.dp.roundToPx()
-    }
-    val statusBarPx = WindowInsets.systemBars.getTop(density)
-    val collapsedPx = with(density) { TopAppBarDefaults.CollapsedHeight.roundToPx() }
-    val minExpansionPx = (screenWidthPx - statusBarPx - collapsedPx).coerceAtLeast(0)
-
     val liquidSkin = useLiquidBar()
     // 折叠态顶栏真实高度（含副标题行，px）：液态皮肤底板用它对齐 miuix 骨架的底边。
     // 不接的话玻璃底板只有「状态栏 + CollapsedHeight(56dp)」，而带副标题的折叠态实际是
@@ -147,7 +151,7 @@ fun CollectionTopBarSlot(
     // （歌单 / Agent 歌单 / 我的收藏三处共用本槽位，实证于收藏页；修法同 SongDetailTopBar）。
     var liquidSkinCollapsedPx by remember { mutableIntStateOf(0) }
     val liquidActions = LocalMaterialFamily.current == MaterialFamily.LIQUID &&
-        LocalAdvancedMaterialEnabled.current && collapsed
+        LocalAdvancedMaterialEnabled.current && systemAppearance
 
     Box {
         if (liquidSkin) {

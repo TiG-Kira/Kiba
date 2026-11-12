@@ -1,5 +1,7 @@
 package com.kira.kiba.ui.me
 
+import android.app.Activity
+import android.content.ContextWrapper
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.drawable.BitmapDrawable
@@ -14,9 +16,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -27,6 +29,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.luminance
+import androidx.core.view.WindowCompat
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -44,6 +48,9 @@ import com.kira.kiba.core.data.ChuniRecordSync
 import com.kira.kiba.core.model.GameType
 import com.kira.kiba.core.model.ScoreSource
 import com.kira.kiba.core.utils.SpUtil
+import com.kira.kiba.ui.common.COVER_DARK_FOREGROUND
+import com.kira.kiba.ui.common.COVER_LIGHT_LUMINANCE
+import com.kira.kiba.ui.common.rememberCoverTint
 import com.kira.kiba.ui.material.LocalAdvancedMaterialEnabled
 import com.kira.kiba.ui.material.LocalMaterialFamily
 import com.kira.kiba.ui.material.MaterialFamily
@@ -85,10 +92,14 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  * - **封面位是用户头像**：自定义 > 自动抓取 > 默认，铺满展开区；
  *   底部叠一层渐变到 `MiuixTheme.colorScheme.background`，让贴底标题有可读底色、
  *   也让头像下缘无缝接上页面背景。
- * - **不做封面亮度取色**：文字一律走系统色 `onSurface`，状态栏图标与按钮沿用
- *   账户页原 TopBar 的判定（即主题默认），不随头像明暗切换。
+ * - **标题与按钮/状态栏分治取色**：标题文案（大标题 / 副标题 / 折叠小标题）
+ *   一律走系统色 `onSurface` —— 账户页封面底部本就渐变到系统底色，贴底标题压在浅色区，
+ *   系统色最可读；而顶部按钮与状态栏压在头像原色上，按**头像平均亮度**取白/黑，
+ *   与其余大封面页同一套规则（暗头像→白色图标，亮头像→深色图标）。
+ * - 按钮色与状态栏图标随 `collapsedFraction` 在折叠行程内渐变/切回系统默认，
+ *   不再等内容滚离原位（详见 [rememberCoverTint]）。
  * - **刷新按钮固定在右侧 actions 槽**，不再做左右迁移。
- * - 折叠态不带副标题：56dp 折叠行排不下，实测会和内容叠字。
+ * - 折叠态显示小标题「我的账户」，扩展态副标题仍是「当前登录：xx查分器」。
  */
 @Suppress("UNUSED_PARAMETER")
 @Composable
@@ -131,7 +142,10 @@ fun MeTopBarSlot(
     val avatarBitmap = customBitmap ?: remoteBitmap
 
     val onSurface = MiuixTheme.colorScheme.onSurface
-    val pageBackground = MiuixTheme.colorScheme.background
+    // 渐变终点必须与**页面真实底色**同源：Scaffold / 卡片底色与折叠态蒙版 bandBrush
+    // 用的都是 `surface`（实测 #F7F7F7），而 `background` 是纯白 #FFFFFF —— 旧版渐变到
+    // background 会在头像下缘留一条发白的色带，和系统底色对不上。
+    val pageBackground = MiuixTheme.colorScheme.surface
 
     // 展开态高度：与歌曲详情 / 集合页同口径，完整露出正方形背景。
     val density = LocalDensity.current
@@ -140,13 +154,53 @@ fun MeTopBarSlot(
     val collapsedPx = with(density) { TopAppBarDefaults.CollapsedHeight.roundToPx() }
     val minExpansionPx = (screenWidthPx - statusBarPx - collapsedPx).coerceAtLeast(0)
 
+    // 标题文案恒用系统色（贴底标题压在渐变到系统底色的浅色区，系统色最可读）。
+    // 顶部按钮 / 状态栏压在头像原色上，改按头像平均亮度取白/黑，并随折叠行程
+    // 渐变回系统色 —— 与歌曲详情 / 集合页同一套 [rememberCoverTint] 口径。
+    val avatarLuminance = remember(avatarBitmap, isChuni) {
+        avatarBitmap?.let { averageAvatarLuminance(it) } ?: DEFAULT_AVATAR_LUMINANCE
+    }
+    val coverColor = if (avatarLuminance >= COVER_LIGHT_LUMINANCE) {
+        COVER_DARK_FOREGROUND
+    } else {
+        Color.White
+    }
+    val tint = rememberCoverTint(
+        scrollBehavior = scrollBehavior,
+        coverColor = coverColor,
+        systemColor = onSurface,
+        limitKey = minExpansionPx,
+    )
+    val actionColor by tint.color
+    val systemAppearance by tint.systemAppearance
+
+    // 状态栏图标外观：展开态跟随头像亮度（暗头像→白色图标，亮头像→深色图标），
+    // 折叠过半后恢复主题默认；离开账户页时同样恢复。账户页原来完全没接管状态栏，
+    // 暗头像上一律深色图标，几乎看不清。
+    val context = LocalContext.current
+    val themeIsDark = MiuixTheme.colorScheme.background.luminance() < 0.5f
+    val themeDefaultLightBars = !themeIsDark
+    val coverLightBars = coverColor != Color.White
+    val activity = remember { (context as? ContextWrapper).findMeActivity() }
+    LaunchedEffect(activity, systemAppearance, coverLightBars, themeDefaultLightBars) {
+        val controller = activity?.window?.let { WindowCompat.getInsetsController(it, it.decorView) }
+            ?: return@LaunchedEffect
+        controller.isAppearanceLightStatusBars =
+            if (systemAppearance) themeDefaultLightBars else coverLightBars
+    }
+    DisposableEffect(activity) {
+        onDispose {
+            activity?.window?.let {
+                WindowCompat.getInsetsController(it, it.decorView).isAppearanceLightStatusBars =
+                    themeDefaultLightBars
+            }
+        }
+    }
+
     val liquidSkin = useLiquidBar()
     var liquidSkinCollapsedPx by remember { mutableIntStateOf(0) }
-    val collapsed by remember(scrollBehavior) {
-        derivedStateOf { scrollBehavior.state.contentOffset < 0f }
-    }
     val liquidActions = LocalMaterialFamily.current == MaterialFamily.LIQUID &&
-        LocalAdvancedMaterialEnabled.current && collapsed
+        LocalAdvancedMaterialEnabled.current && systemAppearance
 
     Box {
         if (liquidSkin) {
@@ -166,7 +220,11 @@ fun MeTopBarSlot(
                 title = largeTitle,
                 largeTitle = largeTitle,
                 subtitle = subtitle,
-                smallSubtitle = "",
+                // 折叠态两行：小标题下方补一行「我的账户」。带副标题后折叠态高度变大，
+                // BlurTopAppBar 会通过 onCollapsedHeightPx 把真实高度回报给
+                // LiquidTopBarSkin（见下方 collapsedHeight），玻璃底板自动往下盖住副标题，
+                // 不会像旧版 KibaTopBar 那样把副标题甩到底板下沿之外。
+                smallSubtitle = "我的账户",
                 titleColor = onSurface,
                 largeTitleColor = onSurface,
                 subtitleColor = onSurface.copy(alpha = 0.72f),
@@ -179,7 +237,7 @@ fun MeTopBarSlot(
                 },
                 navigationIcon = {},
                 actions = {
-                    MeRefreshAction(onClick = onRefresh, tint = onSurface)
+                    MeRefreshAction(onClick = onRefresh, tint = actionColor)
                 },
                 background = {
                     Box(modifier = Modifier.fillMaxSize()) {
@@ -315,3 +373,33 @@ private suspend fun loadAvatarBitmap(context: android.content.Context, url: Stri
 }
 
 private const val AVATAR_DECODE_PX = 384
+
+/** 无头像时的默认渐变偏暗（首字为白色），按暗封面处理 → 顶部按钮/状态栏用白色。 */
+private const val DEFAULT_AVATAR_LUMINANCE = 0.35f
+
+/** 24×24 下采样平均亮度（忽略透明像素），用于决定顶部按钮/状态栏图标的白/黑。 */
+private fun averageAvatarLuminance(src: Bitmap): Float {
+    val small = Bitmap.createScaledBitmap(src, 24, 24, true)
+    val px = IntArray(24 * 24)
+    small.getPixels(px, 0, 24, 0, 0, 24, 24)
+    var total = 0f
+    var count = 0
+    for (p in px) {
+        val a = (p ushr 24) and 0xFF
+        if (a < 128) continue
+        val r = ((p shr 16) and 0xFF) / 255f
+        val g = ((p shr 8) and 0xFF) / 255f
+        val b = (p and 0xFF) / 255f
+        total += 0.2126f * r + 0.7152f * g + 0.0722f * b
+        count++
+    }
+    if (count == 0) return DEFAULT_AVATAR_LUMINANCE
+    return (total / count).coerceIn(0f, 1f)
+}
+
+/** 沿 Context 链向上找宿主 Activity（状态栏图标外观需要 WindowInsetsController）。 */
+private tailrec fun ContextWrapper?.findMeActivity(): Activity? = when (this) {
+    null -> null
+    is Activity -> this
+    else -> (baseContext as? ContextWrapper).findMeActivity()
+}

@@ -14,7 +14,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -41,7 +40,10 @@ import com.kira.kiba.core.db.entity.ChuniSongEntity
 import com.kira.kiba.core.model.GameType
 import com.kira.kiba.core.utils.CoverSources
 import com.kira.kiba.core.utils.SpUtil
+import com.kira.kiba.ui.common.COVER_DARK_FOREGROUND
+import com.kira.kiba.ui.common.COVER_LIGHT_LUMINANCE
 import com.kira.kiba.ui.common.ChuniCoverPlaceholder
+import com.kira.kiba.ui.common.rememberCoverTint
 import com.kira.kiba.ui.material.LocalAdvancedMaterialEnabled
 import com.kira.kiba.ui.material.LocalMaterialFamily
 import com.kira.kiba.ui.material.MaterialFamily
@@ -52,7 +54,6 @@ import com.kira.kiba.ui.navigation.LocalGlassTopAppBarBackdrop
 import com.kira.kiba.ui.material.liquid.LiquidTopBarSkin
 import com.kira.kiba.ui.material.liquid.LocalLiquidBackdrop
 import com.kira.kiba.ui.navigation.useLiquidBar
-import kotlinx.coroutines.delay
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.TopAppBarDefaults
@@ -101,29 +102,42 @@ fun ChuniSongDetailTopBarSlot(
         value = bmp?.let { ChuniCoverProbe(it, chuniAverageLuminance(it)) }
     }
 
-    val collapsed by remember(scrollBehavior) {
-        derivedStateOf { scrollBehavior.state.contentOffset < 0f }
+    // 展开态高度：保证完整露出正方形封面。
+    val density = LocalDensity.current
+    val screenWidthPx = with(LocalDensity.current) {
+        LocalConfiguration.current.screenWidthDp.dp.roundToPx()
     }
+    val statusBarPx = WindowInsets.systemBars.getTop(density)
+    val collapsedPx = with(density) { TopAppBarDefaults.CollapsedHeight.roundToPx() }
+    val minExpansionPx = (screenWidthPx - statusBarPx - collapsedPx).coerceAtLeast(0)
 
+    // 前景色与折叠进度同源：见 SongDetailTopBar / rememberCoverTint。
+    // 旧版 collapsed = contentOffset < 0 在折叠阶段恒 false，暗封面折叠后仍是白字。
     val themeOnSurface = MiuixTheme.colorScheme.onSurface
     val coverColor = when {
         probe == null -> Color.White
-        probe!!.luminance * CHUNI_COVER_DARKEN_FACTOR >= 0.60f -> Color(0xFF1C1C1E)
+        probe!!.luminance * CHUNI_COVER_DARKEN_FACTOR >= COVER_LIGHT_LUMINANCE -> COVER_DARK_FOREGROUND
         else -> Color.White
     }
-    val onCoverColor = if (collapsed) themeOnSurface else coverColor
+    val tint = rememberCoverTint(
+        scrollBehavior = scrollBehavior,
+        coverColor = coverColor,
+        systemColor = themeOnSurface,
+        limitKey = minExpansionPx,
+    )
+    val onCoverColor by tint.color
+    val systemAppearance by tint.systemAppearance
 
-    // 状态栏图标外观：封面可见时跟随字色；滑出封面（折叠）后恢复主题默认。
+    // 状态栏图标外观：封面可见时跟随封面色，折叠过半后恢复主题默认。
     val themeIsDark = MiuixTheme.colorScheme.background.luminance() < 0.5f
     val themeDefaultLightBars = !themeIsDark
     val coverLightBars = coverColor != Color.White
     val activity = remember { (context as? ContextWrapper).chuniFindActivity() }
-    LaunchedEffect(activity, collapsed, coverLightBars) {
+    LaunchedEffect(activity, systemAppearance, coverLightBars, themeDefaultLightBars) {
         val controller = activity?.window?.let { WindowCompat.getInsetsController(it, it.decorView) }
             ?: return@LaunchedEffect
-        if (collapsed) delay(CHUNI_STATUS_BAR_SWITCH_DELAY_MS)
         controller.isAppearanceLightStatusBars =
-            if (collapsed) themeDefaultLightBars else coverLightBars
+            if (systemAppearance) themeDefaultLightBars else coverLightBars
     }
     DisposableEffect(activity) {
         onDispose {
@@ -134,15 +148,6 @@ fun ChuniSongDetailTopBarSlot(
         }
     }
 
-    // 展开态高度：保证完整露出正方形封面。
-    val density = LocalDensity.current
-    val screenWidthPx = with(LocalDensity.current) {
-        LocalConfiguration.current.screenWidthDp.dp.roundToPx()
-    }
-    val statusBarPx = WindowInsets.systemBars.getTop(density)
-    val collapsedPx = with(density) { TopAppBarDefaults.CollapsedHeight.roundToPx() }
-    val minExpansionPx = (screenWidthPx - statusBarPx - collapsedPx).coerceAtLeast(0)
-
     // 液态玻璃模式下：封面还在时按钮保持 miuix，折叠后换成液态玻璃圆钮
     // （与歌曲详情页同一套规则，见 KibaActionButton）。
     // 液态材质下：收缩态（封面消失）顶栏的玻璃底板换成液态玻璃（其余材质保持原 miuix 玻璃）
@@ -150,7 +155,7 @@ fun ChuniSongDetailTopBarSlot(
     // 折叠态顶栏真实高度（含副标题行，px）：液态皮肤底板用它对齐 miuix 骨架的底边
     var liquidSkinCollapsedPx by remember { mutableIntStateOf(0) }
     val liquidActions = LocalMaterialFamily.current == MaterialFamily.LIQUID &&
-        LocalAdvancedMaterialEnabled.current && collapsed
+        LocalAdvancedMaterialEnabled.current && systemAppearance
 
     Box {
         if (liquidSkin) {
@@ -260,7 +265,6 @@ private fun ChuniCoverChainBackground(
 private const val CHUNI_COVER_DARKEN_FACTOR = 0.85f
 
 /** 折叠后状态栏外观切换延迟。 */
-private const val CHUNI_STATUS_BAR_SWITCH_DELAY_MS = 130L
 
 /** 封面背景探测结果：位图 + 平均亮度（0~1）。 */
 private data class ChuniCoverProbe(val bitmap: Bitmap, val luminance: Float)

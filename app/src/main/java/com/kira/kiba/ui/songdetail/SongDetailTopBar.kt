@@ -15,7 +15,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -41,7 +40,10 @@ import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.db.entity.SongDataEntity
 import com.kira.kiba.core.share.ShareService
 import com.kira.kiba.core.utils.SpUtil
+import com.kira.kiba.ui.common.COVER_DARK_FOREGROUND
+import com.kira.kiba.ui.common.COVER_LIGHT_LUMINANCE
 import com.kira.kiba.ui.common.coverCandidateUrls
+import com.kira.kiba.ui.common.rememberCoverTint
 import com.kira.kiba.ui.material.LocalAdvancedMaterialEnabled
 import com.kira.kiba.ui.material.LocalMaterialFamily
 import com.kira.kiba.ui.material.MaterialFamily
@@ -53,7 +55,6 @@ import com.kira.kiba.ui.material.liquid.LiquidTopBarSkin
 import com.kira.kiba.ui.material.liquid.LocalLiquidBackdrop
 import com.kira.kiba.ui.navigation.useLiquidBar
 import com.kira.kiba.ui.share.ShareImageAction
-import kotlinx.coroutines.delay
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.TopAppBarState
 import top.yukonga.miuix.kmp.basic.Icon
@@ -140,50 +141,6 @@ fun SongDetailTopBarSlot(
     // 最终铺底的封面：真图优先，否则占位图（不因异步加载留空）。
     val probeValue = probe ?: placeholderProbe
 
-    // 折叠状态：与背板浮现同一触发点（内容离开原位即开始淡入背板、淡出封面）。
-    val collapsed by remember(scrollBehavior) {
-        derivedStateOf { scrollBehavior.state.contentOffset < 0f }
-    }
-
-    // 字色：展开态跟随封面平均亮度——按**压暗 15% 后**的亮度判定（偏亮→黑字，偏暗→白字），
-    // 与视觉上的压暗层保持一致；折叠后按正常 TopBar 行为回归主题色，
-    // 否则亮色封面页面滑出封面后会残留黑字在浅色背板上。
-    // 注意：这里**不做颜色动画**——渐隐本身就是视觉过渡，若再叠一层 200ms 的
-    // animateColorAsState，会让整个顶栏在渐隐期间逐帧重组（正文 + 大标题 + 按钮全部
-    // 重新求值），滑动中正好撞上封面大图淡出，表现成「卡一下再继续滑」。
-    val themeOnSurface = MiuixTheme.colorScheme.onSurface
-    val coverColor = when {
-        probeValue == null -> themeOnSurface
-        probeValue.luminance * COVER_DARKEN_FACTOR >= 0.60f -> Color(0xFF1C1C1E)
-        else -> Color.White
-    }
-    val onCoverColor = if (collapsed) themeOnSurface else coverColor
-
-    // 状态栏图标外观：封面可见时跟随字色（黑字→深色图标，白字→白色图标），
-    // 滑出封面（折叠）后恢复主题默认行为；离开本页时同样恢复。
-    // 折叠方向的切换延迟到封面渐隐（100ms mask）结束后再执行：insets 外观切换本身
-    // 会触发一次系统 dispatch，与渐隐首帧叠加是详情页滑动卡顿的来源之一；
-    // 渐隐期间封面仍占大头，延后切换在视觉上也是更正确的时机。
-    val themeIsDark = MiuixTheme.colorScheme.background.luminance() < 0.5f
-    val themeDefaultLightBars = !themeIsDark
-    val coverLightBars = coverColor != Color.White // 黑字 → 状态栏图标也用深色
-    val activity = remember { (context as? ContextWrapper).findActivity() }
-    LaunchedEffect(activity, collapsed, coverLightBars) {
-        val controller = activity?.window?.let { WindowCompat.getInsetsController(it, it.decorView) }
-            ?: return@LaunchedEffect
-        if (collapsed) delay(STATUS_BAR_SWITCH_DELAY_MS)
-        controller.isAppearanceLightStatusBars =
-            if (collapsed) themeDefaultLightBars else coverLightBars
-    }
-    DisposableEffect(activity) {
-        onDispose {
-            activity?.window?.let {
-                WindowCompat.getInsetsController(it, it.decorView).isAppearanceLightStatusBars =
-                    themeDefaultLightBars
-            }
-        }
-    }
-
     // 展开态高度：保证完整露出正方形封面（顶栏宽 ≈ 屏宽，高度 = 状态栏 + 屏宽）。
     // minExpansion = 屏宽 - 状态栏 - CollapsedHeight（collapsed 部分 BlurTopAppBar 自带）。
     val density = LocalDensity.current
@@ -193,6 +150,48 @@ fun SongDetailTopBarSlot(
     val statusBarPx = WindowInsets.systemBars.getTop(density)
     val collapsedPx = with(density) { TopAppBarDefaults.CollapsedHeight.roundToPx() }
     val minExpansionPx = (screenWidthPx - statusBarPx - collapsedPx).coerceAtLeast(0)
+
+    // 前景色与折叠进度同源：展开态按封面亮度取白字/黑字，折叠全程线性插值到系统
+    // onSurface。旧版用 `contentOffset < 0` 判折叠，而官方 behavior 在顶栏折叠阶段
+    // 独占滚动量、列表一帧都不滚，这个值恒为 0 —— 暗封面折成浅色蒙版后字仍是白的，
+    // 浅底白字彻底读不出来。现在字色、按钮 tint、状态栏图标、液态按钮材质共用
+    // 同一条 collapsedFraction，封面淡出多少就转过去多少。
+    val themeOnSurface = MiuixTheme.colorScheme.onSurface
+    val coverColor = when {
+        probeValue == null -> themeOnSurface
+        probeValue.luminance * COVER_DARKEN_FACTOR >= COVER_LIGHT_LUMINANCE -> COVER_DARK_FOREGROUND
+        else -> Color.White
+    }
+    val tint = rememberCoverTint(
+        scrollBehavior = scrollBehavior,
+        coverColor = coverColor,
+        systemColor = themeOnSurface,
+        limitKey = minExpansionPx,
+    )
+    val onCoverColor by tint.color
+    val systemAppearance by tint.systemAppearance
+
+    // 状态栏图标外观：封面可见时跟随封面色（黑字→深色图标，白字→白色图标），
+    // 折叠过半（蒙版已占主导）后恢复主题默认；离开本页时同样恢复。
+    // 去掉旧的 130ms 延迟：渐隐现在铺满整个折叠行程，延迟只会让图标切换慢半拍。
+    val themeIsDark = MiuixTheme.colorScheme.background.luminance() < 0.5f
+    val themeDefaultLightBars = !themeIsDark
+    val coverLightBars = coverColor != Color.White // 黑字 → 状态栏图标也用深色
+    val activity = remember { (context as? ContextWrapper).findActivity() }
+    LaunchedEffect(activity, systemAppearance, coverLightBars, themeDefaultLightBars) {
+        val controller = activity?.window?.let { WindowCompat.getInsetsController(it, it.decorView) }
+            ?: return@LaunchedEffect
+        controller.isAppearanceLightStatusBars =
+            if (systemAppearance) themeDefaultLightBars else coverLightBars
+    }
+    DisposableEffect(activity) {
+        onDispose {
+            activity?.window?.let {
+                WindowCompat.getInsetsController(it, it.decorView).isAppearanceLightStatusBars =
+                    themeDefaultLightBars
+            }
+        }
+    }
 
     // ── 程序化折叠（播放列表面板）：不经过滚动，直接驱动折叠状态。
     // heightOffset 控制收窄量（负），contentOffset 同步置负驱动 collapsed（封面渐隐）
@@ -224,7 +223,7 @@ fun SongDetailTopBarSlot(
     // 折叠态顶栏真实高度（含副标题行，px）：液态皮肤底板用它对齐 miuix 骨架的底边
     var liquidSkinCollapsedPx by remember { mutableIntStateOf(0) }
     val liquidActions = LocalMaterialFamily.current == MaterialFamily.LIQUID &&
-        LocalAdvancedMaterialEnabled.current && collapsed
+        LocalAdvancedMaterialEnabled.current && systemAppearance
 
     Box {
         if (liquidSkin) {
@@ -317,9 +316,6 @@ private const val COVER_DARKEN_FACTOR = 0.85f
  * （KibaMainScreen 的 TabSwitchEasing）同款——非线性是定稿口径，线性会显得机械。
  */
 private val PanelCollapseEasing = androidx.compose.animation.core.CubicBezierEasing(0.22f, 0.85f, 0.16f, 1f)
-
-/** 折叠后状态栏外观切换的延迟：略大于渐隐 mask 时长（100ms），避开渐隐关键帧。 */
-private const val STATUS_BAR_SWITCH_DELAY_MS = 130L
 
 /** 封面背景探测结果：位图（直接用于背景显示）+ 平均亮度（0~1）。 */
 private data class CoverProbe(val bitmap: Bitmap, val luminance: Float)

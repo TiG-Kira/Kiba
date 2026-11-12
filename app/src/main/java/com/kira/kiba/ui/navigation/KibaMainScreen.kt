@@ -658,32 +658,6 @@ fun KibaMainScreen() {
                           // 收窄态出发：直接切换不做下沉（大标题从收窄态强行展开会残影跳变）
                           topBarWasCollapsed ->
                               fadeIn(tween(1)).togetherWith(fadeOut(tween(1)))
-                          // 与账户页互换：那是唯一一块「更高」的顶栏（昵称 + 副标题 + 头像留白），
-                          // 纯淡切会让高度差看起来像抖一下。改成与页面推屏同向、同时长的横向切换，
-                          // 高度差由 SizeTransform 一路插值过去。其余 Tab 之间仍保持原来的淡切，
-                          // 不把这条动画蔓延到所有顶栏（既有口径）。
-                          initialTab != null && targetTab != null &&
-                              (initialTab == KibaTab.Me || targetTab == KibaTab.Me) -> {
-                              // +1 = 目标在右侧（顶栏向左推），-1 = 目标在左侧
-                              val direction = if (targetTab.ordinal > initialTab.ordinal) 1 else -1
-                              (slideInHorizontally(
-                                  animationSpec = tween(
-                                      KibaMotion.millis(380),
-                                      easing = TabSwitchEasing,
-                                  ),
-                                  initialOffsetX = { full -> full * direction },
-                              ) + fadeIn(tween(KibaMotion.millis(220), delayMillis = 40)))
-                                  .togetherWith(
-                                      slideOutHorizontally(
-                                          animationSpec = tween(
-                                              KibaMotion.millis(340),
-                                              easing = TabSwitchEasing,
-                                          ),
-                                          targetOffsetX = { full -> -full * direction },
-                                      ) + fadeOut(tween(KibaMotion.millis(200))),
-                                  )
-                                  .using(SizeTransform(clip = false))
-                          }
                           // 转场时长走 KibaMotion：设备评分 < 15 分时归零 = 直接切换
                           sinkPage(initialState) || sinkPage(targetState) ->
                               (slideInVertically(tween(KibaMotion.millis(260))) { -it } +
@@ -693,8 +667,13 @@ fun KibaMainScreen() {
                                           fadeOut(tween(KibaMotion.millis(160)))
                                   )
                                   .using(SizeTransform(clip = false))
+                          // 账户页专属的横向推屏已删除：它是过去「账户页顶栏更高、纯淡切会抖」
+                          // 时补的，现在账户页换成大封面顶栏，与普通顶栏之间靠 AnimatedContent
+                          // 自身的淡切 + SizeTransform 高度插值就够了。所有 Tab 统一走这一条，
+                          // clip=false 保证大封面在高度收缩过程中不被裁掉。
                           else -> fadeIn(tween(KibaMotion.millis(200)))
                               .togetherWith(fadeOut(tween(KibaMotion.millis(140))))
+                              .using(SizeTransform(clip = false))
                       }
                   },
                   label = "kiba-topbar",
