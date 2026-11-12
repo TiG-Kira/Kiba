@@ -9,8 +9,8 @@ package com.kira.kiba.core.model
  * 排序按钮选什么都毫无反应。
  *
  * 这里把排序抽成与游戏无关的 [SongSortKey]：两套曲库各自把实体映射成键，
- * 再走同一套比较器，两个游戏都能真正重排列表。归类仍只对舞萌生效
- * （分组子页是舞萌专用），但排序不再受它限制。
+ * 再走同一套比较器，两个游戏都能真正重排列表。归类也已经是两个游戏都支持的
+ * 维度（舞萌：版本 / 谱师 / 曲师，中二：版本），分组顺序见 [SongVersionOrder]。
  */
 enum class SongSortMode(val key: String, val label: String) {
     DEFAULT("default", "默认（曲库顺序）"),

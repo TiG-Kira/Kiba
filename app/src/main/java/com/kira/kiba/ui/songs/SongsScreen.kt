@@ -246,16 +246,33 @@ fun SongsScreen(
     }
 
     // ── 归类：不归类（默认）/ 按版本 / 按 MASTER 谱师 / 按曲师 ──
-    // 归类是舞萌专用（分组子页只查舞萌曲库）；中二节奏用上面的排序，不参与归类。
-    // 搜索进行中强制平铺（搜索结果跨分组，归类入口暂隐），搜索清空后恢复。
+    // 舞萌四档全开；中二节奏只做「按版本」（谱师 / 曲师在中二侧没有对应的产品口径，
+    // 给了也是半成品，干脆不给）。搜索进行中强制平铺（搜索结果跨分组，归类入口暂隐），
+    // 搜索清空后恢复。
     // 注意：groupMode 必须先于 grouping 声明（Kotlin 局部属性初始化顺序）。
     var groupMode by remember {
         mutableStateOf(SongGroupMode.fromKey(SpUtil.getSongGroupMode()))
     }
-    val grouping = gameType == GameType.MAIMAI &&
+    // 当前游戏支持的归类方式：用户可能在舞萌侧选了「按谱师」，切到中二后
+    // 这个偏好仍然存在，但必须降级成「不归类」而不是渲染一个空分组列表。
+    val availableGroupModes = remember(gameType) {
+        if (gameType == GameType.CHUNITHM) {
+            listOf(SongGroupMode.NONE, SongGroupMode.VERSION)
+        } else {
+            SongGroupMode.entries.toList()
+        }
+    }
+    val grouping = groupMode in availableGroupModes &&
         groupMode != SongGroupMode.NONE && query.isBlank()
     val groups = remember(sortedSongs, groupMode, grouping) {
-        if (grouping) buildSongGroups(sortedSongs, groupMode) else emptyList()
+        if (grouping && gameType == GameType.MAIMAI) buildSongGroups(sortedSongs, groupMode) else emptyList()
+    }
+    val chuniGroups = remember(sortedChuniSongs, groupMode, grouping) {
+        if (grouping && gameType == GameType.CHUNITHM) {
+            buildChuniSongGroups(sortedChuniSongs, groupMode)
+        } else {
+            emptyList()
+        }
     }
 
     val syncState by SongDataSync.state.collectAsState()
@@ -433,23 +450,11 @@ fun SongsScreen(
                 // 归类视图：分组入口（组名 + 歌曲数），点击进子页面
                 if (grouping) {
                     items(items = groups, key = { it.key }) { group ->
-                        Card(
-                            modifier = (Modifier.fillMaxWidth()),
+                        SongGroupCard(
+                            name = group.name,
+                            count = group.count,
                             onClick = { onOpenGroup(groupMode, group.key) },
-                            pressFeedbackType = PressFeedbackType.Sink,
-                        ) {
-                            BasicComponent(
-                                title = group.name,
-                                summary = "${group.count} 首",
-                                endActions = {
-                                    Icon(
-                                        MiuixGlassIcons.Regular.ChevronForward,
-                                        contentDescription = null,
-                                        tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                                    )
-                                },
-                            )
-                        }
+                        )
                     }
                 } else {
                     items(items = sortedSongs, key = { it.songData.id }) { song ->
@@ -457,7 +462,7 @@ fun SongsScreen(
                     }
                 }
             } else {
-                // ── 中二节奏（World's End 单独归类在列表尾部）──
+                // ── 中二节奏（平铺时 World's End 单独归在列表尾部；归类时按版本混排）──
                 if (chuniNormalSongs.isEmpty() && chuniWeSongs.isEmpty()) {
                     item(key = "chuni_state") {
                         EmptyStateCard(
@@ -482,6 +487,15 @@ fun SongsScreen(
                             },
                         )
                     }
+                } else if (grouping) {
+                    // 按版本归类：分组入口（版本名 + 曲目数），点进子页看该版本全部曲目
+                    items(items = chuniGroups, key = { "chuni_group_${it.key}" }) { group ->
+                        SongGroupCard(
+                            name = group.name,
+                            count = group.count,
+                            onClick = { onOpenGroup(groupMode, group.key) },
+                        )
+                    }
                 } else {
                     items(items = chuniNormalSongs, key = { it.song.id }) { song ->
                         ChuniSongCard(song = song, onClick = { onChuniSongClick(song) })
@@ -500,13 +514,12 @@ fun SongsScreen(
     }
 
     // 排序 / 归类选择弹层（单选圆点指示；由顶栏 Sort 按钮唤起）
-    // 排序对舞萌和中二节奏同时生效；归类是舞萌专用，中二节奏给明确说明，
-    // 不再出现「选了没有任何反应」的假选项。
+    // 排序对舞萌和中二节奏同时生效；归类两个游戏都支持（中二只有「按版本」）。
     if (showGroupPicker) {
         KibaGlassDialog(
             show = true,
             title = "排序与归类",
-            summary = "排序对舞萌 / 中二节奏同时生效；归类仅舞萌可用",
+            summary = "排序对舞萌 / 中二节奏同时生效；按版本归类时分组从新版本排到旧版本",
             onDismissRequest = onDismissGroupPicker,
         ) {
             Column(
@@ -537,38 +550,59 @@ fun SongsScreen(
 
                 Spacer(Modifier.height(12.dp))
                 Text(
-                    text = if (gameType == GameType.MAIMAI) {
-                        "归类方式（仅舞萌）"
+                    text = if (gameType == GameType.CHUNITHM) {
+                        "归类方式（中二节奏：按版本）"
                     } else {
-                        "归类方式（中二节奏暂不支持）"
+                        "归类方式（舞萌：版本 / 谱师 / 曲师）"
                     },
                     style = MiuixTheme.textStyles.footnote1,
                     color = MiuixTheme.colorScheme.primary,
                 )
                 Spacer(Modifier.height(4.dp))
-                if (gameType == GameType.MAIMAI) {
-                    SongGroupMode.entries.forEach { mode ->
-                        SongListOptionRow(
-                            label = mode.label,
-                            selected = groupMode == mode,
-                            onClick = {
-                                groupMode = mode
-                                SpUtil.setSongGroupMode(mode.key)
-                                scope.launch { listState.scrollToItem(0) }
-                                onDismissGroupPicker()
-                            },
-                        )
-                    }
-                } else {
-                    Text(
-                        text = "中二节奏曲库的分组语义与舞萌不同，请用上方排序方式重排列表。",
-                        style = MiuixTheme.textStyles.footnote1,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                availableGroupModes.forEach { mode ->
+                    SongListOptionRow(
+                        label = mode.label,
+                        selected = groupMode == mode,
+                        onClick = {
+                            groupMode = mode
+                            SpUtil.setSongGroupMode(mode.key)
+                            scope.launch { listState.scrollToItem(0) }
+                            onDismissGroupPicker()
+                        },
                     )
                 }
             }
         }
+    }
+}
+
+/**
+ * 归类分组入口卡（两个游戏共用）：版本名 / 谱师名 + 曲目数 + 右箭头。
+ *
+ * 抽出来是因为舞萌与中二两条渲染分支长得一模一样，之前各抄一份容易改一边忘一边。
+ */
+@Composable
+private fun SongGroupCard(
+    name: String,
+    count: Int,
+    onClick: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = onClick,
+        pressFeedbackType = PressFeedbackType.Sink,
+    ) {
+        BasicComponent(
+            title = name,
+            summary = "$count 首",
+            endActions = {
+                Icon(
+                    MiuixGlassIcons.Regular.ChevronForward,
+                    contentDescription = null,
+                    tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                )
+            },
+        )
     }
 }
 

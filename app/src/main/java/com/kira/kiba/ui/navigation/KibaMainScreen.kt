@@ -1150,6 +1150,9 @@ fun KibaMainScreen() {
                                   groupKey = target.key,
                                   scrollBehavior = scrollBehavior,
                                   onSongClick = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
+                                  onChuniSongClick = { song ->
+                                      pushPage(KibaSubPage.ChuniSongDetail(song.song.id))
+                                  },
                               )
                               is KibaSubPage.DxConverter -> DxConverterScreen(scrollBehavior = scrollBehavior)
                               is KibaSubPage.MachineUpdate -> MachineUpdateScreen(scrollBehavior = scrollBehavior)
