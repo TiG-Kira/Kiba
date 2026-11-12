@@ -222,6 +222,12 @@ fun LiquidTopBarSkin(
     scrollBehavior: ScrollBehavior?,
     modifier: Modifier = Modifier,
     collapsedHeight: Dp = 56.dp,
+    /**
+     * 大封面页专用：玻璃蒙版按**整个折叠行程**渐显，与封面淡出 / 按钮材质同一进度。
+     * 默认 false 保留原「前 1/3 就全成形」的口径（普通页面没有封面要交接，
+     * 半透明玻璃停在标题后面反而糊）。
+     */
+    fullRangeProgress: Boolean = false,
 ) {
     val collapse: () -> Float = remember(scrollBehavior) {
         if (scrollBehavior == null) {
@@ -252,8 +258,12 @@ fun LiquidTopBarSkin(
     // 这里让投影强度跟着同一个折叠进度走，且进度归零时直接返回 null——
     // ShadowNode 会连投影层一起跳过，彻底不留残影。lambda 身份恒定（remember），
     // 只在 draw 阶段读进度，不会触发取景重录/滚动细抖。
-    val glassAlpha: () -> Float = remember(collapse) {
-        { (collapse() * 3f).coerceIn(0f, 1f) }
+    val glassAlpha: () -> Float = remember(collapse, fullRangeProgress) {
+        if (fullRangeProgress) {
+            { collapse().coerceIn(0f, 1f) }
+        } else {
+            { (collapse() * 3f).coerceIn(0f, 1f) }
+        }
     }
     val glassShadow: () -> Shadow? = remember(glassAlpha) {
         {

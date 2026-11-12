@@ -158,6 +158,7 @@ fun ChuniSongDetailTopBarSlot(
             LiquidTopBarSkin(
                 backdrop = LocalLiquidBackdrop.current,
                 scrollBehavior = scrollBehavior,
+                fullRangeProgress = true,
                 collapsedHeight = if (liquidSkinCollapsedPx > 0) {
                     with(LocalDensity.current) { liquidSkinCollapsedPx.toDp() }
                 } else {

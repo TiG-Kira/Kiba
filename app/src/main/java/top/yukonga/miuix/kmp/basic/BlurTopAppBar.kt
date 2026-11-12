@@ -33,7 +33,6 @@ import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.derivedStateOf
@@ -78,19 +77,6 @@ import top.yukonga.miuix.kmp.anim.folmeSpring
 import top.yukonga.miuix.kmp.basic.TopAppBarState.Companion.Saver
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import kotlin.math.abs
-
-/**
- * 顶栏文案折叠是否与手势**全程同步**。
- *
- * 默认 false = miuix 原生：大标题在折叠前 1/3 就淡完（collapsedFraction × 3），小标题
- * 在同一阈值触发一段 0.3s spring 定时淡入。纯文字顶栏这样很跟手，但展开态还叠了
- * 头像 / 迁移按钮 / 底色的页面会把「一堆动画在前 1/3 跑完、后 2/3 只剩高度机械收缩」
- * 看成「动画先播完、折叠才慢半拍跟上」的假卡顿。
- *
- * 置 true 时大标题 / 小标题的 alpha 与位移全部直接由 collapsedFraction 计算，零时长、
- * 与顶栏收缩同帧同量，且铺满整个折叠行程。默认关闭，只有账户页开启。
- */
-val LocalSynchronousTitleFade = staticCompositionLocalOf { false }
 /**
  * A [BlurTopAppBar] whose large title blurs as it collapses.
  *
@@ -255,13 +241,10 @@ private fun TopAppBarLayout(
     // The title does not merely fade out — it goes out of focus on the way, the way the source
     // system dissolves it. `progress` is shared by both so the blur peaks exactly as the last of
     // the title goes, instead of stopping short of it or outliving it.
-    val synchronousTitleFade = LocalSynchronousTitleFade.current
-    val largeTitleFade = remember(scrollBehavior, synchronousTitleFade) {
+    val largeTitleFade = remember(scrollBehavior) {
         {
             val frac = scrollBehavior?.state?.collapsedFraction ?: 0f
-            // 原生 ×3：前 1/3 行程就淡完了；同步模式改全程线性，每一帧都能同时看到
-            // 顶栏收缩与文字交叉淡出在推进，不再有「动画跑完才轮到折叠」的断层。
-            if (synchronousTitleFade) frac.coerceIn(0f, 1f) else (frac * 3f).coerceIn(0f, 1f)
+            (frac * 3f).coerceIn(0f, 1f)
         }
     }
     val largeTitleAlpha = remember(largeTitleFade) {
@@ -305,38 +288,19 @@ private fun TopAppBarLayout(
             } ?: false
         }
     }
-    // 原生：阈值触发 + 0.3s spring，动画时长与手指进度无关（快速滑过时它会拖在后面）。
-    // 同步：alpha / 位移直接由 collapsedFraction 算，零时长，与顶栏收缩同帧同量。
-    val smallTitleAlphaLegacy = remember { Animatable(if (smallTitleVisible) 1f else 0f) }
-    val smallTitleTranslationYLegacy = remember { Animatable(if (smallTitleVisible) 0f else 20f) }
-    if (!synchronousTitleFade) {
-        LaunchedEffect(smallTitleVisible) {
-            if (smallTitleVisible) {
-                val showSpec = folmeSpring<Float>(damping = 1.0f, response = 0.3f)
-                launch { smallTitleAlphaLegacy.animateTo(1f, showSpec) }
-                launch { smallTitleTranslationYLegacy.animateTo(0f, showSpec) }
-            } else {
-                val hideSpec = folmeSpring<Float>(damping = 1.0f, response = 0.15f)
-                launch { smallTitleAlphaLegacy.animateTo(0f, hideSpec) }
-                launch { smallTitleTranslationYLegacy.animateTo(20f, hideSpec) }
-            }
+    val smallTitleAlpha = remember { Animatable(if (smallTitleVisible) 1f else 0f) }
+    val smallTitleTranslationY = remember { Animatable(if (smallTitleVisible) 0f else 20f) }
+
+    LaunchedEffect(smallTitleVisible) {
+        if (smallTitleVisible) {
+            val showSpec = folmeSpring<Float>(damping = 1.0f, response = 0.3f)
+            launch { smallTitleAlpha.animateTo(1f, showSpec) }
+            launch { smallTitleTranslationY.animateTo(0f, showSpec) }
+        } else {
+            val hideSpec = folmeSpring<Float>(damping = 1.0f, response = 0.15f)
+            launch { smallTitleAlpha.animateTo(0f, hideSpec) }
+            launch { smallTitleTranslationY.animateTo(20f, hideSpec) }
         }
-    }
-    val smallTitleAlpha: () -> Float = if (synchronousTitleFade) {
-        remember(scrollBehavior) {
-            {
-                val f = scrollBehavior?.state?.collapsedFraction ?: 0f
-                // 大标题退到一半再让小标题进来（两行文字不叠），剩下 55% 行程全程淡入。
-                ((f - 0.45f) / 0.55f).coerceIn(0f, 1f)
-            }
-        }
-    } else {
-        { smallTitleAlphaLegacy.value }
-    }
-    val smallTitleTranslationY: () -> Float = if (synchronousTitleFade) {
-        { 20f * (1f - smallTitleAlpha()) }
-    } else {
-        { smallTitleTranslationYLegacy.value }
     }
 
     val animatedTitleColor by animateColorAsState(
@@ -366,8 +330,8 @@ private fun TopAppBarLayout(
                     .layoutId("title")
                     .padding(horizontal = titlePadding)
                     .graphicsLayer {
-                        alpha = smallTitleAlpha() * titleAlpha()
-                        translationY = smallTitleTranslationY()
+                        alpha = smallTitleAlpha.value * titleAlpha()
+                        translationY = smallTitleTranslationY.value
                     },
             ) {
                 Text(
@@ -466,8 +430,8 @@ private fun TopAppBarLayout(
                     Modifier
                         .layoutId("smallSubtitle")
                         .graphicsLayer {
-                            alpha = smallTitleAlpha() * titleAlpha()
-                            translationY = smallTitleTranslationY()
+                            alpha = smallTitleAlpha.value * titleAlpha()
+                            translationY = smallTitleTranslationY.value
                         },
                 ) {
                     Text(

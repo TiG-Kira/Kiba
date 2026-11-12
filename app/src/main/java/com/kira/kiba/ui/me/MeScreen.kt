@@ -5,7 +5,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -30,9 +29,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.kira.kiba.core.account.DivingFishAccount
 import com.kira.kiba.core.account.LxnsAccount
@@ -47,9 +43,8 @@ import com.kira.kiba.ui.common.ChuniRatingTag
 import com.kira.kiba.ui.common.DxRatingTag
 import com.kira.kiba.ui.common.RatingTrendCard
 import com.kira.kiba.ui.common.SectionTitle
+import com.kira.kiba.ui.common.pageContentPadding
 import com.kira.kiba.ui.material.KibaGlassDialog
-import com.kira.kiba.ui.navigation.LocalNavBarBottomPadding
-import com.kira.kiba.ui.navigation.LocalTopBarClearance
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Icon
@@ -100,37 +95,6 @@ fun MeScreen(
     onOpenToolbox: () -> Unit,
     onOpenChuniBest: () -> Unit,
 ) {
-    // 内容留白**显式跟随顶栏折叠量**：顶栏收起多少，第一张卡就跟着上移多少；
-    // 松手吸附弹回/收到底时，卡片同样跟着退回原位或推进到折叠态顶部。
-    //
-    // 不能用 `pageContentPadding()`（`LocalTopBarClearance`）：那是 Scaffold 测量的
-    // **固定展开高度**，不会随 `heightOffset` 变 —— 顶栏折了卡片却纹丝不动（真机实测）。
-    // 也不能在组合期读 `heightOffset` 拼 PaddingValues：每帧一个值会整页重组，动画就卡。
-    // 这里把值放进 [PaddingValues.calculateTopPadding]（布局阶段）读：值变只重测不重组。
-    //
-    // 官方 `MiuixScrollBehavior` 在顶栏折完前独占滚动量（列表不滚），内容靠这份 padding
-    // 联动跟手上移；折完之后才把滚动交给列表。松手退回展开时列表滚动量为 0、padding
-    // 完整恢复，卡片**严格回原位** —— 不会像「按比例分配滚动量」那样留下不可逆的
-    // 列表滚动残量（反复轻微上滑会把卡片一点点顶进大标题栏）。
-    val density = LocalDensity.current
-    val topBarState = scrollBehavior.state
-    val liveTopClearance = LocalTopBarClearance.current
-    val baseTopPx = with(density) { (liveTopClearance + 8.dp).toPx() }
-    val bottomPadPx = with(density) { (LocalNavBarBottomPadding.current + 16.dp).toPx() }
-    val sidePadPx = with(density) { 16.dp.toPx() }
-    val meContentPadding = remember(topBarState, baseTopPx, bottomPadPx, sidePadPx, density) {
-        object : PaddingValues {
-            override fun calculateTopPadding(): Dp = with(density) {
-                (baseTopPx + topBarState.heightOffset).coerceAtLeast(0f).toDp()
-            }
-            override fun calculateBottomPadding(): Dp = with(density) { bottomPadPx.toDp() }
-            override fun calculateLeftPadding(layoutDirection: LayoutDirection): Dp =
-                with(density) { sidePadPx.toDp() }
-            override fun calculateRightPadding(layoutDirection: LayoutDirection): Dp =
-                with(density) { sidePadPx.toDp() }
-        }
-    }
-
     val account by DivingFishAccount.state.collectAsState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -184,7 +148,7 @@ fun MeScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
-            contentPadding = meContentPadding,
+            contentPadding = pageContentPadding(),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             // ── 置顶：Best 50 入口（按游戏切换；中二走账号密码通道同步成绩）──

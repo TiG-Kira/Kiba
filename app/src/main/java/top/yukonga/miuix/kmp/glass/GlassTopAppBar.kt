@@ -426,17 +426,58 @@ fun GlassTopAppBar(
     // 连带把玻璃按钮的阴影吃掉；这类页面已用 isContentScrolled 自行接管滚动判定，
     // 开启 rampFromOverlay 后阴影改由同一枚标记驱动，与 band / 按钮材质同步。
     val overlayRampState = GlassTopAppBarDefaults.overlayRamp(isContentScrolled)
-    val ramp = if (rampFromOverlay) overlayRampState else contentOffsetRamp
-    val floating = isContentScrolled
+
+    // 大封面页（歌曲详情 / 中二详情 / 播放列表面板 / 歌单 / 收藏 / 账户）：
+    // **封面淡出、蒙版渐显、按钮材质、阴影共用一条跟手的折叠进度**。
+    //
+    // 原生这几路各跑各的：mask 是 100ms tween、按钮材质是 350ms tween，都由
+    // `isContentScrolled` 布尔触发；而 `collapseRamp` 只有 32dp，顶栏真正的高度收缩
+    // 却是整个 `heightOffsetLimit`（大封面页上千 px）。结果遮罩与材质在手指刚动时
+    // 就播完了，顶栏还在后面慢慢折 —— 观感即「动画先跑完、折叠慢半拍继续」。
+    //
+    // 改成直接读 `collapsedFraction`（0=展开 / 1=完全折叠，覆盖整个行程）：
+    // 每一帧封面少一点、当前材质的蒙版多一点、按钮与文字同步转过去，谁也不等谁。
+    // 用 `State` 的 getter 实时读而不是 derivedStateOf：`heightOffsetLimit` 是普通字段
+    // 不是 snapshot state，换页重新测量时 derivedStateOf 可能卡在旧值；这样在 draw 阶段
+    // 读，只触发重绘不触发重组。普通页面（background == null）保持原生行为不变。
+    val coverSyncProgress: State<Float>? = if (background != null && scrollBehavior != null) {
+        remember(scrollBehavior) {
+            object : State<Float> {
+                override val value: Float
+                    get() = scrollBehavior.state.collapsedFraction.coerceIn(0f, 1f)
+            }
+        }
+    } else {
+        null
+    }
+
+    // 材质**不再等内容滚离原位**：`isContentScrolled` 是 `contentOffset < 0` 的布尔，
+    // 而官方 behavior 在顶栏折叠阶段独占滚动量、列表根本不滚 —— 旧行为要等折完、
+    // 再上滑一次让列表动起来，按钮/底板才切到折叠态材质（「再次上滑才变回原材质」）。
+    // 现在材质过渡搬进折叠行程，大封面页改由同一条 `coverSyncProgress` 跨过 0 的那一帧
+    // 启用（与封面淡出同帧）；普通页仍按原来的内容滚动判定。
+    val floating by remember(isContentScrolled, coverSyncProgress) {
+        if (coverSyncProgress != null) {
+            derivedStateOf { coverSyncProgress.value > 0f }
+        } else {
+            derivedStateOf { isContentScrolled }
+        }
+    }
     val transition = updateTransition(floating, label = "glassTopBarFloat")
-    val maskProgress = transition.animateFloat(
+    val transitionMask = transition.animateFloat(
         transitionSpec = { GlassMotion.topBarMask() },
         label = "glassTopBarMask",
     ) { if (it) 1f else 0f }
-    val materialProgress = transition.animateFloat(
+    val transitionMaterial = transition.animateFloat(
         transitionSpec = { GlassMotion.topBarButtonFloat() },
         label = "glassTopBarMaterial",
     ) { if (it) 1f else 0f }
+
+    // 三路过渡全部由同一条进度派生，不再各自跑定时 tween。
+    val ramp = coverSyncProgress
+        ?: (if (rampFromOverlay) overlayRampState else contentOffsetRamp)
+    val maskProgress: State<Float> = coverSyncProgress ?: transitionMask
+    val materialProgress: State<Float> = coverSyncProgress ?: transitionMaterial
     val buttonBackdrop = backdrop?.takeIf { isRuntimeShaderSupported() }
     // 真·高级材质开启（backdrop 存在且支持运行时着色器）时自动套用超级柔光标准值：
     // 模糊 20.dp、底板整体向上平移 24.dp。显式传入的 bandBlurRadius / 调高的全局默认值

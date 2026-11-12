@@ -154,6 +154,7 @@ fun CollectionTopBarSlot(
             LiquidTopBarSkin(
                 backdrop = LocalLiquidBackdrop.current,
                 scrollBehavior = scrollBehavior,
+                fullRangeProgress = true,
                 collapsedHeight = if (liquidSkinCollapsedPx > 0) {
                     with(density) { liquidSkinCollapsedPx.toDp() }
                 } else {
