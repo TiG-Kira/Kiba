@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -39,10 +40,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
@@ -291,74 +293,146 @@ private fun CropStage(
     onCancel: () -> Unit,
     onConfirm: (zoom: Float, offset: Offset, framePx: Float) -> Unit,
 ) {
-    // 变换状态放在这里而不是 Canvas 里：底部「使用这张」要用同一组值算裁切矩形。
-    var zoom by remember(source) { mutableFloatStateOf(1f) }
-    var offset by remember(source) { mutableStateOf(Offset.Zero) }
+    // 变换只存**一个** State：zoom 与 offset 必须原子更新，分成两个 State 会在
+    // 同一回调里先写 zoom 后写 offset，重组时可能读到「新 zoom + 旧 offset」的中间态。
+    val transform = remember(source) { mutableStateOf(CropTransform()) }
+    // 取景框实测像素边长（onSizeChanged 写入）。绘制与 clamp 都读它，保证同源。
+    var framePx by remember(source) { mutableFloatStateOf(0f) }
 
-    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        val side = minOf(maxWidth - 16.dp, maxHeight * 0.62f, 380.dp)
-        val framePx = with(LocalDensity.current) { side.toPx() }
-
-        Column(modifier = Modifier.fillMaxSize()) {
-            Text(
-                text = "拖动调整位置，双指缩放 · 框内即头像",
-                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                fontSize = MiuixTheme.textStyles.footnote1.fontSize,
-                modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
-            )
-            Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                CropCanvas(
+    Column(modifier = Modifier.fillMaxSize()) {
+        Text(
+            text = "拖动调整位置，双指缩放 · 框内即头像",
+            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            fontSize = MiuixTheme.textStyles.footnote1.fontSize,
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
+        )
+        // 手势区 = 整块可用区域，比取景框大一圈：框只有屏宽的一部分，
+        // 双指捏合时第二根手指很容易落在框外，挂在框上就只有单指 pan，放大形同无效。
+        //
+        // 手势节点用普通 Box，取景框尺寸交给内层 `BoxWithConstraints` 量：
+        // 布局代码按 SubcomposeLayout 的子组合顺序执行，把手势和测量拆开最省心，
+        // 也保证 `side` 是按这块区域自己的约束算的（取景框必须严格正方形）。
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .pointerInput(source) {
+                    detectTransformGestures { centroid, pan, gestureZoom, _ ->
+                        val frame = framePx
+                        if (frame <= 0f) return@detectTransformGestures
+                        val cur = transform.value
+                        val nextZoom = (cur.zoom * gestureZoom)
+                            .coerceIn(1f, AvatarCrop.MAX_ZOOM)
+                        // 以双指中心为锚点缩放：缩放前后，手指底下的那块图不动。
+                        val s0 = AvatarCrop.effectiveScale(
+                            frame, source.width, source.height, cur.zoom,
+                        )
+                        val s1 = AvatarCrop.effectiveScale(
+                            frame, source.width, source.height, nextZoom,
+                        )
+                        val ratio = if (s0 > 0f) s1 / s0 else 1f
+                        // 手势区比取景框大，但框恒居中 —— 所以手势区中心就是框中心。
+                        val area = this@pointerInput.size
+                        val cx = centroid.x - area.width / 2f
+                        val cy = centroid.y - area.height / 2f
+                        val nx = cx - (cx - cur.offset.x) * ratio + pan.x
+                        val ny = cy - (cy - cur.offset.y) * ratio + pan.y
+                        val (clampedX, clampedY) = AvatarCrop.clampOffset(
+                            offsetX = nx,
+                            offsetY = ny,
+                            frame = frame,
+                            imageW = source.width,
+                            imageH = source.height,
+                            zoom = nextZoom,
+                        )
+                        transform.value = CropTransform(nextZoom, Offset(clampedX, clampedY))
+                    }
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            BoxWithConstraints(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center,
+            ) {
+                val side = minOf(maxWidth - 32.dp, maxHeight - 8.dp, 380.dp)
+                    .coerceAtLeast(80.dp)
+                CropFrame(
                     source = source,
                     side = side,
-                    framePx = framePx,
-                    zoom = zoom,
-                    offset = offset,
-                    onTransform = { nextZoom, nextOffset ->
-                        zoom = nextZoom
-                        offset = nextOffset
-                    },
+                    transform = transform,
+                    onSizeChanged = { framePx = it },
                 )
             }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                TextButton(
-                    text = "取消",
-                    onClick = onCancel,
-                    modifier = Modifier.weight(1f),
-                    enabled = !saving,
-                )
-                Button(
-                    onClick = { onConfirm(zoom, offset, framePx) },
-                    colors = ButtonDefaults.buttonColorsPrimary(),
-                    modifier = Modifier.weight(1f),
-                    enabled = !saving,
-                ) {
-                    Text(text = if (saving) "保存中…" else "使用这张")
-                }
-            }
-            Spacer(Modifier.height(4.dp))
         }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            TextButton(
+                text = "取消",
+                onClick = onCancel,
+                modifier = Modifier.weight(1f),
+                enabled = !saving,
+            )
+            Button(
+                onClick = {
+                    val t = transform.value
+                    onConfirm(t.zoom, t.offset, framePx)
+                },
+                colors = ButtonDefaults.buttonColorsPrimary(),
+                modifier = Modifier.weight(1f),
+                enabled = !saving,
+            ) {
+                Text(text = if (saving) "保存中…" else "使用这张")
+            }
+        }
+        Spacer(Modifier.height(4.dp))
     }
 }
 
 /**
- * 取景框画布。
+ * 裁切态的一次变换。
  *
- * 绘制用的 `dstOffset / dstSize` 与 [AvatarCrop.cropRect] 完全同源：
- * 都是「按 s 缩放后居中 + offset」，所以框里看到什么，存下去就是什么。
+ * - [zoom]：相对「铺满」的放大倍数（≥ 1，≤ [AvatarCrop.MAX_ZOOM]）；
+ * - [offset]：图片中心相对取景框中心的位移，单位是取景框屏幕像素。
+ *
+ * 两个值必须一起写（见 [CropStage]），否则会出现「新 zoom 配旧 offset」的中间帧。
+ */
+private data class CropTransform(
+    val zoom: Float = 1f,
+    val offset: Offset = Offset.Zero,
+)
+
+/**
+ * 取景框。
+ *
+ * ## 为什么缩放不重绘位图
+ *
+ * 画布只画**基准那一帧**（zoom=1 的铺满图），缩放与平移全部交给
+ * [graphicsLayer] 的 `scaleX/scaleY/translationX/translationY`。
+ *
+ * 之前的写法是把缩放后的目标尺寸算进 `drawImage(dstSize = 原图 × s)`，
+ * 每一帧都要对 1440px 的源图做一次高质量重采样 —— 掉帧之后手势事件成批到达，
+ * 拖起来就是一顿一顿地「发抖」。走 layer 以后缩放只是 GPU 合成，手势期间
+ * 既不重组（State 只在 layer block 里读），也不重采样，跟手程度完全不一样。
+ *
+ * ## 为什么用 onSizeChanged 而不是 side.toPx()
+ *
+ * `Modifier.size(side)` 在父约束不足时会被**压小**，`side.toPx()` 却仍是请求值。
+ * 两者一旦不等，clamp 允许的拖动余量就比肉眼看到的小，手感是「拖不动」。
+ * 这里把画布实测宽度交回去，绘制、clamp、裁切共用同一个 frame。
+ *
+ * 几何仍然与 [AvatarCrop.cropRect] 同源：图片按 `baseScale × zoom` 缩放、
+ * 中心落在「框中心 + offset」，所以框里看到什么，存下去就是什么。
  */
 @Composable
-private fun CropCanvas(
+private fun CropFrame(
     source: Bitmap,
     side: Dp,
-    framePx: Float,
-    zoom: Float,
-    offset: Offset,
-    onTransform: (zoom: Float, offset: Offset) -> Unit,
+    transform: State<CropTransform>,
+    onSizeChanged: (Float) -> Unit,
 ) {
     val image: ImageBitmap = remember(source) { source.asImageBitmap() }
     Canvas(
@@ -366,42 +440,28 @@ private fun CropCanvas(
             .size(side)
             .clip(RoundedCornerShape(18.dp))
             .background(Color.Black)
-            .pointerInput(source, framePx) {
-                detectTransformGestures { centroid, pan, gestureZoom, _ ->
-                    val nextZoom = (zoom * gestureZoom).coerceIn(1f, AvatarCrop.MAX_ZOOM)
-                    // 以双指中心为锚点缩放：缩放前后，手指底下的那块图不动。
-                    val s0 = AvatarCrop.effectiveScale(framePx, source.width, source.height, zoom)
-                    val s1 = AvatarCrop.effectiveScale(framePx, source.width, source.height, nextZoom)
-                    val ratio = if (s0 > 0f) s1 / s0 else 1f
-                    val cx = centroid.x - framePx / 2f
-                    val cy = centroid.y - framePx / 2f
-                    val nx = cx - (cx - offset.x) * ratio + pan.x
-                    val ny = cy - (cy - offset.y) * ratio + pan.y
-                    val (clampedX, clampedY) = AvatarCrop.clampOffset(
-                        offsetX = nx,
-                        offsetY = ny,
-                        frame = framePx,
-                        imageW = source.width,
-                        imageH = source.height,
-                        zoom = nextZoom,
-                    )
-                    onTransform(nextZoom, Offset(clampedX, clampedY))
-                }
+            .onSizeChanged { onSizeChanged(it.width.toFloat()) }
+            .graphicsLayer {
+                // 只在 layer block 里读 State：值变只失效图层，不触发重组/重绘。
+                val t = transform.value
+                scaleX = t.zoom
+                scaleY = t.zoom
+                translationX = t.offset.x
+                translationY = t.offset.y
             },
     ) {
-        val s = AvatarCrop.effectiveScale(framePx, source.width, source.height, zoom)
-        val dw = source.width * s
-        val dh = source.height * s
-        val dx = framePx / 2f + offset.x - dw / 2f
-        val dy = framePx / 2f + offset.y - dh / 2f
+        val frame = size.width
+        val base = AvatarCrop.baseScale(frame, source.width, source.height)
+        val bw = source.width * base
+        val bh = source.height * base
         drawImage(
             image = image,
-            dstOffset = IntOffset(dx.roundToInt(), dy.roundToInt()),
-            dstSize = IntSize(
-                dw.roundToInt().coerceAtLeast(1),
-                dh.roundToInt().coerceAtLeast(1),
+            dstOffset = IntOffset(
+                ((frame - bw) / 2f).roundToInt(),
+                ((frame - bh) / 2f).roundToInt(),
             ),
-            filterQuality = FilterQuality.High,
+            dstSize = IntSize(bw.roundToInt().coerceAtLeast(1), bh.roundToInt().coerceAtLeast(1)),
+            filterQuality = FilterQuality.Medium,
         )
     }
 }
