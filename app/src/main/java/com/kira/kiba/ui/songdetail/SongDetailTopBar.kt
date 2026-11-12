@@ -170,19 +170,18 @@ fun SongDetailTopBarSlot(
     )
     val onCoverColor by tint.color
     val systemAppearance by tint.systemAppearance
+    val lightStatusBars by tint.lightStatusBars
 
-    // 状态栏图标外观：封面可见时跟随封面色（黑字→深色图标，白字→白色图标），
-    // 折叠过半（蒙版已占主导）后恢复主题默认；离开本页时同样恢复。
-    // 去掉旧的 130ms 延迟：渐隐现在铺满整个折叠行程，延迟只会让图标切换慢半拍。
+    // 状态栏图标绑定按钮 / 标题的 onCoverColor：按钮白 → 图标白，按钮深 → 图标深，
+    // 折叠中随插值同帧翻转。不再用独立的折叠进度阈值，否则会出现
+    // 「按钮还偏白、状态栏图标已经变黑」的脱节。
     val themeIsDark = MiuixTheme.colorScheme.background.luminance() < 0.5f
     val themeDefaultLightBars = !themeIsDark
-    val coverLightBars = coverColor != Color.White // 黑字 → 状态栏图标也用深色
     val activity = remember { (context as? ContextWrapper).findActivity() }
-    LaunchedEffect(activity, systemAppearance, coverLightBars, themeDefaultLightBars) {
+    LaunchedEffect(activity, lightStatusBars) {
         val controller = activity?.window?.let { WindowCompat.getInsetsController(it, it.decorView) }
             ?: return@LaunchedEffect
-        controller.isAppearanceLightStatusBars =
-            if (systemAppearance) themeDefaultLightBars else coverLightBars
+        controller.isAppearanceLightStatusBars = lightStatusBars
     }
     DisposableEffect(activity) {
         onDispose {

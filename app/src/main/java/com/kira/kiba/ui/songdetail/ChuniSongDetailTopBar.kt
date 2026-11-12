@@ -127,17 +127,16 @@ fun ChuniSongDetailTopBarSlot(
     )
     val onCoverColor by tint.color
     val systemAppearance by tint.systemAppearance
+    val lightStatusBars by tint.lightStatusBars
 
-    // 状态栏图标外观：封面可见时跟随封面色，折叠过半后恢复主题默认。
+    // 状态栏图标绑定按钮 / 标题的 onCoverColor，折叠中随插值同帧翻转。
     val themeIsDark = MiuixTheme.colorScheme.background.luminance() < 0.5f
     val themeDefaultLightBars = !themeIsDark
-    val coverLightBars = coverColor != Color.White
     val activity = remember { (context as? ContextWrapper).chuniFindActivity() }
-    LaunchedEffect(activity, systemAppearance, coverLightBars, themeDefaultLightBars) {
+    LaunchedEffect(activity, lightStatusBars) {
         val controller = activity?.window?.let { WindowCompat.getInsetsController(it, it.decorView) }
             ?: return@LaunchedEffect
-        controller.isAppearanceLightStatusBars =
-            if (systemAppearance) themeDefaultLightBars else coverLightBars
+        controller.isAppearanceLightStatusBars = lightStatusBars
     }
     DisposableEffect(activity) {
         onDispose {

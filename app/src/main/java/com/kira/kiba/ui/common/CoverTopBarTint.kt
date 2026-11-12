@@ -6,6 +6,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 
 /**
@@ -33,6 +34,15 @@ import top.yukonga.miuix.kmp.basic.ScrollBehavior
  * 重组（折叠全程最多 16 次），档间由 `BlurTopAppBar` 内既有的
  * `animateColorAsState(tween(50))` 抹平，视觉仍是连续渐变。
  *
+ * ## 状态栏图标 = 按钮颜色
+ *
+ * `isAppearanceLightStatusBars` 只能是布尔，但必须与按钮 tint 同源同帧：
+ * [CoverTint.lightStatusBars] 直接从 [CoverTint.color] 投影（深色按钮 →
+ * 深色图标，白色按钮 → 白色图标）。四个大封面页一律走它，账户页也不例外
+ * —— 账户页只是标题文字恒用系统色（不读 [CoverTint.color]），按钮 tint
+ * 仍是 [CoverTint.color]。若另用独立的折叠进度阈值切状态栏，就会出现
+ * 「按钮还偏白、状态栏图标已经变黑」的脱节。
+ *
  * @param coverColor 展开态按封面亮度取的前景色（暗封面→白，亮封面→深色）。
  * @param systemColor 折叠态的系统前景色，一般传 `MiuixTheme.colorScheme.onSurface`。
  * @param limitKey 顶栏展开量锚点（各页传 `minExpansionPx`）：`heightOffsetLimit`
@@ -53,28 +63,37 @@ fun rememberCoverTint(
             lerp(coverColor, systemColor, q)
         }
     }
-    // 状态栏图标与液态按钮材质是布尔量，无法插值，在折叠过半时切到系统态。
-    // 阈值取 0.5：此时蒙版 alpha 已过半，浅色底占主导，深色图标更可读。
+    // 液态按钮外壳（miuix 裸图标 ↔ 液态玻璃圆钮）是布尔量，无法插值，
+    // 仍在折叠过半时切换。状态栏图标不再用它，改走下面的 lightStatusBars。
     val systemAppearance = remember(scrollBehavior, limitKey) {
         derivedStateOf {
             scrollBehavior.state.collapsedFraction.coerceIn(0f, 1f) >= SYSTEM_APPEARANCE_FRACTION
         }
     }
-    return remember(color, systemAppearance) { CoverTint(color, systemAppearance) }
+    // 状态栏图标绑定按钮 tint：按钮色偏暗 → 深色图标，偏亮 → 白色图标。
+    // 与 color 读同一条派生链，跨档同帧，不会出现按钮白 / 状态栏黑。
+    val lightStatusBars = remember(color) {
+        derivedStateOf { color.value.luminance() < 0.5f }
+    }
+    return remember(color, systemAppearance, lightStatusBars) {
+        CoverTint(color, systemAppearance, lightStatusBars)
+    }
 }
 
 /** [rememberCoverTint] 的投影结果。 */
 class CoverTint(
-    /** 标题 / 副标题 / 返回 / 收藏 / 分享等前景色，随折叠从封面色渐变到系统色。 */
+    /** 按钮 / 标题等前景色，随折叠从封面色渐变到系统色（账户页文字不读它）。 */
     val color: State<Color>,
-    /** 是否已进入系统态：驱动状态栏图标外观与液态按钮材质。 */
+    /** 折叠是否过半：现在只驱动液态按钮外壳材质。 */
     val systemAppearance: State<Boolean>,
+    /** 状态栏图标外观，与 [color] 同源：四个大封面页一律用它。 */
+    val lightStatusBars: State<Boolean>,
 )
 
 /** 颜色插值档数：16 档在 200~400ms 的折叠里足够平滑，又把重组压到 16 次以内。 */
 private const val COVER_TINT_STEPS = 16
 
-/** 布尔外观（状态栏图标 / 液态按钮）的切换点。 */
+/** 液态按钮外壳的切换点（状态栏图标已改为跟随按钮颜色，不再用此阈值）。 */
 const val SYSTEM_APPEARANCE_FRACTION = 0.5f
 
 /** 封面亮度阈值：压暗系数作用后仍 >= 此值视为亮封面，用深色前景。 */

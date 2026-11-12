@@ -173,20 +173,19 @@ fun MeTopBarSlot(
     )
     val actionColor by tint.color
     val systemAppearance by tint.systemAppearance
+    val lightStatusBars by tint.lightStatusBars
 
-    // 状态栏图标外观：展开态跟随头像亮度（暗头像→白色图标，亮头像→深色图标），
-    // 折叠过半后恢复主题默认；离开账户页时同样恢复。账户页原来完全没接管状态栏，
-    // 暗头像上一律深色图标，几乎看不清。
+    // 状态栏图标绑定刷新按钮的 actionColor（它本身按头像亮度起手、随折叠插值）：
+    // 按钮白 → 图标白，按钮深 → 图标深，同帧翻转。文字仍恒用系统 onSurface，不参与。
+    // 离开账户页时恢复主题默认。
     val context = LocalContext.current
     val themeIsDark = MiuixTheme.colorScheme.background.luminance() < 0.5f
     val themeDefaultLightBars = !themeIsDark
-    val coverLightBars = coverColor != Color.White
     val activity = remember { (context as? ContextWrapper).findMeActivity() }
-    LaunchedEffect(activity, systemAppearance, coverLightBars, themeDefaultLightBars) {
+    LaunchedEffect(activity, lightStatusBars) {
         val controller = activity?.window?.let { WindowCompat.getInsetsController(it, it.decorView) }
             ?: return@LaunchedEffect
-        controller.isAppearanceLightStatusBars =
-            if (systemAppearance) themeDefaultLightBars else coverLightBars
+        controller.isAppearanceLightStatusBars = lightStatusBars
     }
     DisposableEffect(activity) {
         onDispose {
