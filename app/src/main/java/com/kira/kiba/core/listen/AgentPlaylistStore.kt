@@ -93,10 +93,16 @@ object AgentPlaylistStore {
 
     fun get(id: String): Item? = load().firstOrNull { it.id == id }
 
-    /** 新歌单入档（头插，超上限丢最旧）。 */
+    /** 新歌单入档（头插，超上限丢最旧 —— 被挤掉的连封面一起删）。 */
     fun add(item: Item) {
-        val next = (listOf(item) + load().filterNot { it.id == item.id }).take(MAX_ITEMS)
-        save(next)
+        val existing = load().filterNot { it.id == item.id }
+        val merged = listOf(item) + existing
+        // 超出上限被挤掉的老歌单：存档条目一没，它的封面就再没人引用，
+        // 当场回收，别留到下一次自动清理（用户可能很久不再生成新歌单）。
+        merged.drop(MAX_ITEMS).forEach { dropped ->
+            runCatching { dropped.coverFile?.takeIf { it.exists() }?.delete() }
+        }
+        save(merged.take(MAX_ITEMS))
     }
 
     /** 替换已有条目（重新设计封面用）。 */
@@ -117,6 +123,34 @@ object AgentPlaylistStore {
             runCatching { item.coverFile?.takeIf { it.exists() }?.delete() }
         }
         save(emptyList())
+    }
+
+    /**
+     * 现存歌单引用的封面路径白名单 —— 顺手把旧键「最近一份」的封面也算进去。
+     *
+     * 旧键（`AgentPlaylist.load()`）在迁移完成前仍是「畅听」以外路径的唯一数据源，
+     * 它的封面文件跟存档在同一个目录里；漏掉它就会在迁移前把那张图清掉。
+     */
+    fun liveCoverPaths(): Set<String> {
+        val out = mutableSetOf<String>()
+        load().forEach { item -> item.coverPath.takeIf { it.isNotBlank() }?.let { out.add(it) } }
+        AgentPlaylist.load()?.coverPath?.takeIf { it.isNotBlank() }?.let { out.add(it) }
+        return out
+    }
+
+    /**
+     * 清理「没有对应歌单」的历史封面，返回释放的字节数。
+     *
+     * 调用点只有两处，都确保此刻没有正在生成的歌单：
+     * 1. 自动生成歌单跑完之后（每次自动生成顺带打扫一次）；
+     * 2. 设置页「清理图片缓存」。
+     *
+     * 单条删除 / 清空全部走 [delete] / [clear] 自己删，不需要经过这里。
+     */
+    suspend fun cleanupCovers(context: Context): Long = withContext(Dispatchers.IO) {
+        val freed = PlaylistCover.pruneOrphans(context, liveCoverPaths())
+        if (freed > 0) Log.i("AgentPlaylistStore", "pruned orphan covers, freed $freed bytes")
+        freed
     }
 
     /**

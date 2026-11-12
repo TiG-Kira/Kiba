@@ -105,7 +105,7 @@ fun SettingsScreen(
     // 页面返回时本组合会重建，remember 重新读一次 SpUtil，分数变化自动反映到开关可用性上。
     val passes = remember { SpUtil.getDeviceScore() >= DeviceGrade.PASS_SCORE }
 
-    // ── 封面缓存手动清理 ──
+    // ── 图片缓存手动清理（Coil 缓存 + Agent 歌单未使用的历史封面）──
     var coverCacheMsg by remember { mutableStateOf<String?>(null) }
     var clearingCovers by remember { mutableStateOf(false) }
     var showCoverClearConfirm by remember { mutableStateOf(false) }
@@ -382,11 +382,11 @@ fun SettingsScreen(
                     },
                 )
                 ArrowPreference(
-                    title = "清理封面缓存",
+                    title = "清理图片缓存",
                     summary = when {
                         clearingCovers -> "正在清理…"
                         coverCacheMsg != null -> coverCacheMsg
-                        else -> "自动清理不会清除封面缓存；清理后离线封面需重新联网加载"
+                        else -> "清空歌曲封面与分享图缓存，并删除 Agent 歌单已不再引用的历史封面；清理后离线封面需重新联网加载"
                     },
                     startAction = { PrefIcon(MiuixGlassIcons.Clear) },
                     onClick = {
@@ -418,9 +418,10 @@ fun SettingsScreen(
     if (showCoverClearConfirm) {
         KibaGlassDialog(
             show = true,
-            title = "清理封面缓存",
-            summary = "将清空已缓存的封面图片（内存 + 磁盘）。" +
-                "自动清理永远不会清除封面缓存；手动清理后，离线时封面需重新联网加载。",
+            title = "清理图片缓存",
+            summary = "将清空已缓存的歌曲封面与分享图（内存 + 磁盘），" +
+                "并删除 Agent 歌单里已不再被引用的历史封面（正在使用的歌单封面不受影响）。" +
+                "自动清理永远不会清除图片缓存；手动清理后，离线时封面需重新联网加载。",
             onDismissRequest = { showCoverClearConfirm = false },
         ) {
             Row(
@@ -434,12 +435,12 @@ fun SettingsScreen(
                         showCoverClearConfirm = false
                         clearingCovers = true
                         scope.launch(Dispatchers.IO) {
-                            val freed = CacheCleaner.clearCoverCache(context)
+                            val freed = CacheCleaner.clearImageCache(context)
                             withContext(Dispatchers.Main) {
                                 clearingCovers = false
                                 coverCacheMsg = if (freed > 0) {
-                                    if (freed >= 1 shl 20) "已清理 ${freed shr 20} MB（重新联网可恢复）"
-                                    else "已清理 ${(freed shr 10).coerceAtLeast(1)} KB（重新联网可恢复）"
+                                    if (freed >= 1 shl 20) "已清理 ${freed shr 20} MB（离线封面需重新联网加载）"
+                                    else "已清理 ${(freed shr 10).coerceAtLeast(1)} KB（离线封面需重新联网加载）"
                                 } else {
                                     "缓存为空，无需清理"
                                 }

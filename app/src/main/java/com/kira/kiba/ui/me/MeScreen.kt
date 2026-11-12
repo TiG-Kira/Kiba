@@ -74,8 +74,8 @@ private fun PrefIcon(icon: androidx.compose.ui.graphics.vector.ImageVector) {
  * 「账户」页面（原「我」页；miuix preference 规范 + miuix Card 分组包裹）：
  * - 置顶 [ArrowPreference]：已登录展示昵称 + DX Rating 段位徽章（官方色表），
  *   点击进 Best 50；未登录展示引导，点击进登录页；
- * - 查分器组：水鱼 / 落雪账户、机台更新、二维码导入、成绩查询，以及**合并后的退出登录**
- *   （弹层里按查分器多选，不再为每个源各挂一行）；
+ * - 查分器组：水鱼 / 落雪账户、机台更新、二维码导入（**仅舞萌**，中二不显示）、成绩查询，
+ *   以及**合并后的退出登录**（弹层里按查分器多选，不再为每个源各挂一行）；
  * - 我的曲库：收藏；
  * - 工具箱：**单入口**，站外网站与本地小工具全部收进 [com.kira.kiba.ui.tools.ToolboxScreen]。
  *
@@ -285,12 +285,18 @@ fun MeScreen(
                         startAction = { PrefIcon(MiuixGlassIcons.Regular.Update) },
                         onClick = onOpenMachineUpdate,
                     )
-                    ArrowPreference(
-                        title = "二维码导入成绩",
-                        summary = "免 VPN：先到工具箱「接入 Easymai 账号」，再用官方登录二维码同步成绩",
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Scan) },
-                        onClick = onOpenQrImport,
-                    )
+                    // 二维码导入是**舞萌专用**通道（官方登录二维码 + 水鱼导入令牌），
+                    // 中二节奏既没有对应二维码体系、也没有水鱼导入通道，切到中二时整行隐藏，
+                    // 免得用户点进去看到一条走不通的路。
+                    if (!isChunithm) {
+                        ArrowPreference(
+                            title = "二维码导入成绩",
+                            summary = "仅舞萌 DX：免 VPN —— 先在「工具箱 → 接入 Easymai 账号」登录，" +
+                                "再粘贴官方登录二维码（公众号「舞萌 DX」生成），全难度成绩会同步进查分器账号后上传水鱼",
+                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Scan) },
+                            onClick = onOpenQrImport,
+                        )
+                    }
                     if (maimaiSource == ScoreSource.LXNS || chuniSource == ScoreSource.LXNS) {
                         // 落雪官方的同步方式是「代理同步」：把 WLAN 代理指向他们的服务器，
                         // 由落雪代抓。它和本 App 的本地 VPN 抢同一块网络接管，只能二选一，

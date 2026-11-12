@@ -183,6 +183,10 @@ fun ListenScreen(
             agentRefreshing = true
             runCatching { AgentPlaylist.refreshWithProfile(context, songs, records, favoriteIds) }
                 .onFailure { android.util.Log.w("Listen", "agent playlist refresh failed: ${it.message}") }
+            // 自动生成事件 = 一次天然的打扫时机：此刻不会有人在画封面，
+            // 顺手把「没有任何歌单引用」的历史封面（含上次生成失败留下的半成品）全清掉。
+            runCatching { AgentPlaylistStore.cleanupCovers(context) }
+                .onFailure { android.util.Log.w("Listen", "cover cleanup failed: ${it.message}") }
             agentHistory = AgentPlaylistStore.load()
             agentRefreshing = false
         }

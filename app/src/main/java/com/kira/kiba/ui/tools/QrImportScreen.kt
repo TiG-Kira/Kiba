@@ -54,9 +54,13 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 /**
  * 二维码导入成绩（免 VPN，独立二级页——与机台 VPN 抓包页分开）。
  *
+ * **仅舞萌 DX**：中二节奏没有官方登录二维码也没有水鱼导入通道，
+ * 「账户」页在切到中二时会隐藏入口；本页的文案也要写明这一点（见页首提示卡）。
+ *
  * 两个凭据，缺一不可：
  * 1. 官方登录二维码：微信公众号「舞萌 DX」内生成的 SGWCMAID 串，用于拉取官方成绩；
- * 2. 水鱼成绩导入令牌：水鱼网页版「个人资料」页查看/设置，用于向水鱼上传。
+ * 2. 水鱼成绩导入令牌：水鱼网页版「个人资料」页查看/设置，用于向水鱼上传
+ *    （已用 OAuth 登录水鱼的可留空）。
  *
  * 隐私铁律：二维码只存在于本页临时状态里，导入完成（无论成败）立即清空，
  * 不写 SP / 不落盘 / 日志只出现二维码尾部 4 字符。
@@ -155,10 +159,12 @@ fun QrImportScreen(scrollBehavior: ScrollBehavior) {
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
                             Text(
-                                text = "⚠ 使用前请先到「我」页「接入 Easymai 账号」完成登录或注册" +
-                                    "（第三方解析服务的自有账号，与水鱼账号无关，登录一次即可长期使用）。" +
-                                    "\n本页是「水鱼专用」通道；成绩源选的是落雪时，请改用「机台成绩更新（VPN）」页" +
-                                    "——落雪由官方服务端解析机台页面，不需要导入令牌。",
+                                text = "⚠ 本页只适用于舞萌 DX —— 中二节奏没有对应的官方登录二维码，" +
+                                    "也没有水鱼导入通道，切到中二时「账户」页的入口会直接隐藏。\n" +
+                                    "使用前请先到「工具箱 → 接入 Easymai 账号」完成登录或注册" +
+                                    "（第三方解析服务的自有账号，与水鱼账号无关，登录一次即可长期使用）。\n" +
+                                    "本页负责「拉成绩 + 上传水鱼」；成绩源选的是落雪时，请改用" +
+                                    "「机台成绩更新（VPN）」页 —— 落雪由官方服务端解析机台页面，不需要导入令牌。",
                                 style = MiuixTheme.textStyles.footnote1,
                                 color = MiuixTheme.colorScheme.error,
                             )
@@ -195,9 +201,9 @@ fun QrImportScreen(scrollBehavior: ScrollBehavior) {
                             )
                             Spacer(Modifier.height(10.dp))
                             Text(
-                                text = "使用流程：接入账号 → 粘贴二维码 → 点「开始导入」。导入会把二维码交给解析服务同步到账号云端，" +
-                                    "再从云端拉取全量成绩上传水鱼，无需 VPN / 机台网络 / 微信。" +
-                                    "之后也可在「接入 Easymai 账号」页手动同步，无需重新扫码。",
+                                text = "使用流程：接入账号 → 粘贴二维码 → 点「开始导入」。导入会把二维码交给解析服务" +
+                                    "同步到账号云端，再从云端拉取全难度成绩上传水鱼，无需 VPN / 机台网络 / 微信。" +
+                                    "之后在「工具箱 → 接入 Easymai 账号」页也能手动同步，无需重新扫码。",
                                 style = MiuixTheme.textStyles.footnote1,
                                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                             )

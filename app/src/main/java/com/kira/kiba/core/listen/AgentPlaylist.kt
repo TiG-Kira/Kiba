@@ -242,19 +242,26 @@ object AgentPlaylist {
         }
         val withCover = saved.copy(coverPath = cover?.absolutePath.orEmpty())
 
-        // 落两份：旧键只留「最近一份」兼容旧版本读取；历史存档供「畅听」页展示
-        SpUtil.setAgentPlaylistJson(gson.toJson(withCover), generatedAt)
-        AgentPlaylistStore.add(
-            AgentPlaylistStore.Item(
-                id = generatedAt.toString(),
-                name = coverSpec.title,
-                summary = withCover.summary,
-                ids = withCover.ids,
-                reasons = withCover.reasons,
-                coverPath = withCover.coverPath,
-                createdAt = generatedAt,
-            ),
-        )
+        // 落两份：旧键只留「最近一份」兼容旧版本读取；历史存档供「畅听」页展示。
+        // 这一步若失败，刚画好的封面就成了**没有任何歌单引用**的孤儿文件 ——
+        // 立刻删掉再抛，别把它留在磁盘上等下一次清理（用户会看到一张找不到的歌单封面）。
+        try {
+            SpUtil.setAgentPlaylistJson(gson.toJson(withCover), generatedAt)
+            AgentPlaylistStore.add(
+                AgentPlaylistStore.Item(
+                    id = generatedAt.toString(),
+                    name = coverSpec.title,
+                    summary = withCover.summary,
+                    ids = withCover.ids,
+                    reasons = withCover.reasons,
+                    coverPath = withCover.coverPath,
+                    createdAt = generatedAt,
+                ),
+            )
+        } catch (t: Throwable) {
+            PlaylistCover.delete(cover)
+            throw t
+        }
         withCover
     }
 

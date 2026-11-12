@@ -10,6 +10,7 @@ import android.graphics.RadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
+import android.util.Log
 import java.io.File
 import java.io.FileOutputStream
 import java.util.Locale
@@ -48,6 +49,15 @@ object PlaylistCover {
 
     /** 生成的封面落盘目录（filestore，不占媒体库）。 */
     private const val DIR = "playlist_covers"
+
+    /**
+     * 孤儿清理时跳过的「太新」文件窗口。
+     *
+     * 生成链路是「先渲染落盘 → 再入库」，两步之间有一个极短窗口：这时的 PNG 在磁盘上
+     * 但还没有任何歌单引用它。清理如果恰好插进来就会把刚画好的封面删掉，
+     * 表现为「生成成功但列表里没图」。所以清理一律放过近期写过的文件。
+     */
+    private const val PRUNE_FRESH_MS = 2 * 60 * 1000L
 
     /** 模板名（写进歌单元数据，便于以后换模板时区分）。 */
     const val TEMPLATE = "kiba-nocturne"
@@ -118,16 +128,73 @@ object PlaylistCover {
      * @param id 唯一标识（歌单 id），用作文件名；同名会覆盖（重新设计封面即覆盖）
      * @return 生成的 PNG 文件；任何异常返回 null（调用方回落首曲封面）
      */
-    fun render(context: Context, spec: Spec, id: String): File? = runCatching {
-        val dir = File(context.filesDir, DIR).apply { mkdirs() }
-        val file = File(dir, "$id.png")
-        val bmp = draw(spec)
-        FileOutputStream(file).use { out ->
-            bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
+    fun render(context: Context, spec: Spec, id: String): File? {
+        val file = File(coverDir(context).apply { mkdirs() }, "$id.png")
+        return runCatching {
+            val bmp = draw(spec)
+            try {
+                FileOutputStream(file).use { out ->
+                    bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
+                }
+            } finally {
+                bmp.recycle()
+            }
+            file
+        }.onFailure {
+            // 画到一半失败会留下半截 PNG（读出来是破图，UI 还会当成有效封面）。
+            // 「生成失败直接清除生成的封面」——这里就是第一道闸。
+            delete(file)
+            Log.w("PlaylistCover", "render failed, cover discarded: ${it.message}")
+        }.getOrNull()
+    }
+
+    /** 封面落盘目录（`filesDir/playlist_covers`）。 */
+    fun coverDir(context: Context): File = File(context.filesDir, DIR)
+
+    /**
+     * 删除单张封面文件（**必须按文件删，不能按 id 拼**）。
+     *
+     * 调用场景：歌单生成链路后半程失败 —— 封面已经画好落盘，但入库那一步炸了，
+     * 这张图从此没有任何歌单引用，留着只是白占磁盘。所以拿到 [File] 立刻删。
+     */
+    fun delete(file: File?): Boolean {
+        if (file == null || !file.exists()) return false
+        return runCatching { file.delete() }.getOrDefault(false)
+    }
+
+    /**
+     * 清理「没有对应歌单」的历史封面。
+     *
+     * 封面文件名就是歌单 id（`<id>.png`），但 id 只有存档层知道，所以这里不做任何猜测：
+     * 直接拿现存歌单引用的**绝对路径**当白名单，目录里其余的 PNG 一律视为孤儿。
+     *
+     * 跳过两类文件：
+     * - 非 PNG（不是本模板产物，可能是用户/系统放进去的东西，不碰）；
+     * - [PRUNE_FRESH_MS] 内刚写过的（见该常量注释，保护「已落盘、还没入库」的中间态）。
+     *
+     * @param keepPaths 仍需保留的封面绝对路径
+     * @return 释放的字节数
+     */
+    fun pruneOrphans(context: Context, keepPaths: Collection<String>): Long {
+        val dir = coverDir(context)
+        if (!dir.exists() || !dir.isDirectory) return 0L
+        val keep = keepPaths.filter { it.isNotBlank() }.mapTo(HashSet()) { canonical(it) }
+        val now = System.currentTimeMillis()
+        var freed = 0L
+        dir.listFiles()?.forEach { f ->
+            if (!f.isFile) return@forEach
+            if (!f.name.endsWith(".png", ignoreCase = true)) return@forEach
+            if (now - f.lastModified() < PRUNE_FRESH_MS) return@forEach
+            if (canonical(f.absolutePath) in keep) return@forEach
+            val size = f.length()
+            if (runCatching { f.delete() }.getOrDefault(false)) freed += size
         }
-        bmp.recycle()
-        file
-    }.getOrNull()
+        return freed
+    }
+
+    /** 路径归一化：白名单与实际文件名必须走同一套标准，否则永远对不上。 */
+    private fun canonical(path: String): String =
+        runCatching { File(path).canonicalPath }.getOrDefault(File(path).absolutePath)
 
     /** 纯绘制（不落盘，单测/预览可用）。 */
     fun draw(spec: Spec): Bitmap {

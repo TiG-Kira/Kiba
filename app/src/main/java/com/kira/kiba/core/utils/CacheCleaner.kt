@@ -3,6 +3,7 @@ package com.kira.kiba.core.utils
 import android.content.Context
 import android.util.Log
 import coil.imageLoader
+import com.kira.kiba.core.listen.AgentPlaylistStore
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -25,9 +26,9 @@ import java.util.concurrent.TimeUnit
  * - [markGenerationActive] 在分享 / Best50 生成 / 梗图生成开始时打点；
  * - 距最近一次打点不足 [ACTIVE_GRACE_MS] 视为"正在使用"，跳过本次清理，避免误删用户手头文件。
  *
- * ⚠️ 封面缓存（Coil image_cache）【永不】被自动清理：离线查分依赖已缓存的封面，
- * 清掉会导致离线状态下歌曲/谱面无图。封面缓存只经 [clearCoverCache] 由用户显式清理
- * （设置页「数据 → 清理封面缓存」入口）。因此本类的清理范围严格限定在
+ * ⚠️ 图片缓存（Coil image_cache + Agent 歌单封面）【永不】被自动清理：离线查分依赖已缓存的封面，
+ * 清掉会导致离线状态下歌曲/谱面无图。图片缓存只经 [clearImageCache] 由用户显式清理
+ * （设置页「数据 → 清理图片缓存」入口）。因此本类的自动清理范围严格限定在
  * [transientDirs] 白名单内，后续新增自动清理目标必须先确认不影响封面可用性。
  */
 object CacheCleaner {
@@ -86,7 +87,7 @@ object CacheCleaner {
 
     /**
      * 自动清理白名单：只允许清这些 transient 目录。
-     * 封面缓存（Coil image_cache）刻意不在名单内——见类注释，保离线封面。
+     * 图片缓存（Coil image_cache / Agent 歌单封面）刻意不在名单内——见类注释，保离线封面。
      */
     private fun transientDirs(context: Context): List<Pair<File, Long>> = listOf(
         CacheDirs.share(context) to TRANSIENT_MAX_AGE_MS,
@@ -96,7 +97,7 @@ object CacheCleaner {
 
     /**
      * 清理 transient 缓存（share / generated / updates 白名单）。
-     * 封面缓存（Coil image_cache）永远不在这里清，见类注释。
+     * 图片缓存（Coil image_cache / Agent 歌单封面）永远不在这里清，见类注释。
      * @param force 跳过"用户正在使用"的空闲判断（手动清理入口用）
      * @return 是否删除过任何文件
      */
@@ -112,21 +113,32 @@ object CacheCleaner {
     }
 
     /**
-     * 手动清理封面缓存（设置页「数据 → 清理封面缓存」入口）：
-     * 清空 Coil 内存缓存 + 磁盘缓存。自动清理【不会】触碰封面缓存，
-     * 所以清完后离线封面需要重新联网加载一次。
-     * @return 释放的字节数（按清理前磁盘缓存目录大小估算）
+     * 手动清理**图片缓存**（设置页「数据 → 清理图片缓存」入口），三块一起清：
+     *
+     * 1. Coil 内存缓存（当场生效，列表里已加载的封面立刻释放）；
+     * 2. Coil 磁盘缓存（`cacheDir/image_cache`，歌曲封面 / 分享图底图都在这里）；
+     * 3. Agent 歌单**未使用**的历史封面（`filesDir/playlist_covers` 里没有任何歌单引用的 PNG）。
+     *
+     * 第 3 项是「图片缓存」而非「数据」：正在用的歌单封面必须留着（详情页顶栏直接读文件），
+     * 所以只清孤儿 —— 判定见 [PlaylistCover.pruneOrphans]。
+     *
+     * 自动清理【不会】触碰以上任何一项，所以清完后离线封面需要重新联网加载一次。
+     *
+     * @return 释放的字节数（Coil 磁盘缓存 + 孤儿封面的实际大小）
      */
-    suspend fun clearCoverCache(context: Context): Long = withContext(Dispatchers.IO) {
+    suspend fun clearImageCache(context: Context): Long = withContext(Dispatchers.IO) {
         val loader = context.imageLoader
         // diskCache.directory 类型随 Coil 版本在 File / okio.Path 之间摇摆，统一归一化为 File
         val dir = loader.diskCache?.directory?.let { File(it.toString()) }
             ?: File(context.cacheDir, "image_cache")
-        val size = dirSize(dir)
+        val coilSize = dirSize(dir)
         loader.memoryCache?.clear()
         loader.diskCache?.clear()
-        Log.i(TAG, "cover cache cleared, freed ~${size / 1024} KB")
-        size
+        // 孤儿封面：不是「缓存」而是真占 filesDir 的垃圾，一并收掉
+        val orphanSize = runCatching { AgentPlaylistStore.cleanupCovers(context) }.getOrDefault(0L)
+        val freed = coilSize + orphanSize
+        Log.i(TAG, "image cache cleared, freed ~${freed / 1024} KB (coil $coilSize, orphan covers $orphanSize)")
+        freed
     }
 
     private fun dirSize(dir: File): Long {
