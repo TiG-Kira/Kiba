@@ -8,13 +8,12 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
@@ -26,7 +25,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
@@ -77,9 +75,8 @@ import kotlin.math.roundToInt
  * | 小标题 | 隐藏（miuix 自己的 alpha 管） | 「账户」 |
  * | 大标题 | 账户昵称（没昵称才退回「账户」） | 隐藏 |
  * | 副标题 | 当前登录的查分器 | 同一行继续显示（miuix 的小副标题槽） |
- * | 右上角头像 | 显示，向左 / 向下渐隐融回顶栏底色 | 收缩 + 淡出 |
- * | 刷新按钮 | 停在左侧 | 滑到右侧 |
- * | 高度 | 比别的页多一段顶部留白（`minExpansionPx`） | 收窄成常规 56dp 一行 |
+ * | 右上角头像 | 方形大图，从状态栏上沿起画，左 / 下两侧渐隐到没有边 | 缩小 + 淡出 |
+ * | 刷新按钮 | 停在左侧 | 滑到右侧（中途整颗淡出，落地前才重新淡入） |
  *
  * ## 为什么头像挂在顶栏之外
  *
@@ -148,9 +145,6 @@ fun MeTopBarSlot(
     // 「头像已经淡没了」用布尔量表达：只在跨过阈值时重组一次，避免每帧读进度。
     val avatarGone = remember(collapse) { derivedStateOf { collapse.value >= AVATAR_FADE_END } }
 
-    val density = LocalDensity.current
-    val extraPx = with(density) { ME_EXTRA_EXPANSION.roundToPx() }
-
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
         val barWidth = maxWidth
         KibaTopBar(
@@ -160,11 +154,12 @@ fun MeTopBarSlot(
             largeTitle = largeTitle,
             subtitle = subtitle,
             scrollBehavior = scrollBehavior,
-            // 只在本页撑高：头像与副标题都需要呼吸空间，其余页面的顶栏高度一点不变。
-            minExpansionPx = extraPx,
+            // 大标题行尾留出头像位：昵称过长时在头像左边就截断，别让文字钻进被图片
+            // 压住的那一块（图片右上方是实的，字压上去会变脏）。折叠态标题走 miuix
+            // 自己的居中排版，不受这个插槽影响。
+            titleTrailing = { Spacer(Modifier.width(AVATAR_TITLE_INSET)) },
             actions = {
-                // 刷新按钮：展开态在左、折叠态在右 —— 用 offset 一路平移过去。
-                // 两颗按钮交叉淡入淡出看起来像「跳」，位移才是用户说的「迁移」。
+                // 刷新按钮：展开态在左、折叠态在右 —— 边右移边淡出，快落地时再淡回来。
                 MeRefreshAction(
                     collapse = collapse,
                     travel = barWidth - REFRESH_TRAVEL_INSET,
@@ -183,25 +178,65 @@ fun MeTopBarSlot(
     }
 }
 
-/** 头像直径。比折叠后的 56dp 标题栏略大，贴右上角时有一点「溢出感」。 */
-private val AVATAR_SIZE = 72.dp
-
-/** 头像淡到看不见时的折叠进度：再往后收就只剩一个半透明的影子挂在角上。 */
-private const val AVATAR_FADE_END = 0.58f
+/**
+ * 头像边长：从状态栏上沿一路盖到副标题一带，是全页最大的一块装饰。
+ *
+ * 尺寸上限由**展开态顶栏高度**约束（> 这个值的部分会被下面的内容盖住，出现一条硬边）：
+ * 顶栏 = 状态栏 + 56dp 折叠行 + 大标题块（约 62dp）+ 底距，合计 150dp 上下。
+ * 132dp 配合下面「90% 处已经淡到 0」的蒙版，实际可见高度约 118dp，留了近 30dp 余量。
+ */
+private val AVATAR_SIZE = 132.dp
 
 /**
- * 账户页展开态比常规顶栏多出来的高度。
- *
- * 传的是 `minExpansionPx`（展开高度的**下限**），不是「额外叠加量」：miuix 取
- * `max(大标题自然高度, minExpansionPx)`。昵称 + 副标题两行约 60dp，这里给到 72dp，
- * 多出来的约 12dp 就是副标题与首张卡片之间那段落白量（再加上顶栏自身 16dp 底距）。
- *
- * 只给到 72dp 而不是更大：再高就让「副标题 → 首卡」之间空成一片，反而看不出是同一个头部。
+ * 头像向右溢出的量：右竖边落到屏幕外，配合左 / 下两侧的渐隐，图片的四条边一条都不露。
+ * （上边贴着屏幕顶，也不需要额外处理。）
  */
-private val ME_EXTRA_EXPANSION = 72.dp
+private val AVATAR_BLEED_RIGHT = 12.dp
+
+/**
+ * 大标题行尾给头像让出的宽度。
+ *
+ * 头像虽然整体是渐隐的，但右上那一块接近不透明；昵称过长时会一直排到屏幕右缘，
+ * 末几个字正好落在图片上，看起来像被弄脏了。让出 84dp 后文字在自己的安全区里省略，
+ * 视觉上「标题止于头像之前」。
+ */
+private val AVATAR_TITLE_INSET = 84.dp
+
+/**
+ * 头像收完时的折叠进度。
+ *
+ * 不只是「淡出看着舒服」：顶栏的可见高度随折叠线性缩，头像底部一旦越过顶栏下沿，
+ * 就会被下面的卡片硬切掉一条。按 132dp 的尺寸和 48% 收起（同时缩到 82%）算，
+ * 收完时头像底边约 108dp，而顶栏此时还有 110dp 以上，留得住。
+ */
+private const val AVATAR_FADE_END = 0.48f
 
 /** 刷新按钮在两个位置之间的行程余量：右侧圆钮中心距顶栏右缘 40dp，左侧同理。 */
 private val REFRESH_TRAVEL_INSET = 80.dp
+
+/**
+ * 刷新按钮的迁移曲线（入参都是 0..1 的归一位移 t）：
+ *
+ * ```
+ * alpha 1 ┤╮
+ *         │ ╰╮             ← 边右移边淡出（前 36% 行程）
+ *       0 ┤   ╰──────────╮  ← 中间一大段完全看不见（不在两个落点上抢注意力）
+ *         │             ╰─╮ ← 落地前 38% 行程重新淡入
+ *       1 ┤               ╰
+ *         └──┬──────┬──────┬──▶ t
+ *            0.36   0.62   1
+ * ```
+ *
+ * 之前是「一路平移 + 全程可见」，横穿整条标题会跟大标题抢视线；淡出再淡入之后，
+ * 视觉上只有一个「从左边消失、在右边出现」的迁移，而不是一颗按钮横穿屏幕。
+ */
+private const val REFRESH_FADE_OUT_END = 0.36f
+private const val REFRESH_FADE_IN_START = 0.62f
+
+private fun easeInOut(x: Float): Float {
+    val v = x.coerceIn(0f, 1f)
+    return v * v * (3f - 2f * v)
+}
 
 /**
  * 顶栏上的刷新按钮。
@@ -209,6 +244,7 @@ private val REFRESH_TRAVEL_INSET = 80.dp
  * 位置由折叠进度驱动：`0` → 停在左侧，`1` → 回到 `actions` 槽的自然位置（右侧）。
  * 用 `Modifier.offset { }` 而不是 `graphicsLayer.translationX`：前者走布局阶段，
  * 命中区跟着一起走；后者只挪绘制，按钮会「看得见点不着」。
+ * 透明度另走 `graphicsLayer`（绘制阶段），两者都只读 [collapse]，滚动时不触发重组。
  *
  * @param travel 从右侧自然位到左侧目标位的水平距离（含按钮自身宽度与两侧内边距）
  */
@@ -221,11 +257,13 @@ private fun MeRefreshAction(
     val density = LocalDensity.current
     val travelPx = with(density) { travel.toPx() }
     Box(
-        modifier = Modifier.offset {
-            // 前 12% 的折叠先让头像退场，按钮再起步 —— 两者不在同一片区域抢注意力。
-            val t = ((collapse.value - 0.12f) / 0.88f).coerceIn(0f, 1f)
-            IntOffset(x = (-travelPx * (1f - t)).roundToInt(), y = 0)
-        },
+        modifier = Modifier
+            .offset {
+                // 前 12% 的折叠先让头像退场，按钮再起步 —— 两者不在同一片区域抢注意力。
+                val t = refreshTravelFraction(collapse.value)
+                IntOffset(x = (-travelPx * (1f - t)).roundToInt(), y = 0)
+            }
+            .graphicsLayer { alpha = refreshAlpha(collapse.value) },
     ) {
         KibaActionButton(onClick = onClick) {
             Icon(
@@ -238,18 +276,35 @@ private fun MeRefreshAction(
     }
 }
 
+/** 归一位移：0 = 左侧起点（展开态），1 = 右侧落点（折叠态）。 */
+private fun refreshTravelFraction(collapse: Float): Float =
+    ((collapse - 0.12f) / 0.88f).coerceIn(0f, 1f)
+
+/** 与 [refreshTravelFraction] 同步的透明度：先淡出、中间全隐、落地前淡回。 */
+private fun refreshAlpha(collapse: Float): Float {
+    val t = refreshTravelFraction(collapse)
+    return when {
+        t <= 0f -> 1f
+        t < REFRESH_FADE_OUT_END -> 1f - easeInOut(t / REFRESH_FADE_OUT_END)
+        t < REFRESH_FADE_IN_START -> 0f
+        else -> easeInOut((t - REFRESH_FADE_IN_START) / (1f - REFRESH_FADE_IN_START))
+    }
+}
+
 /**
- * 顶栏右上角的账户头像。
+ * 顶栏右上角的账户头像 —— **方形**，左上角对齐屏幕顶（状态栏上沿）。
  *
- * 三层叠出来的「融进顶栏」：
- * 1. 头像本体（圆形裁切）；
- * 2. 一张从**右上角到左下角**的线性蒙版（DstIn）：右上满不透明，往左下越来越透 ——
- *    这就是「右上最清楚，向左侧和下侧渐变回原本顶栏颜色」。注意方向是斜的而不是纯横 / 纯竖：
- *    顶栏底色在展开态本来就透明，往左下淡出等于让底下的页面色接管，比再糊一层 surface
- *    更稳（滚动到内容下面时也不会突兀）。
- * 3. 不做外圈描边 / 内阴影：任何一圈硬边都会让人看成「贴了个圆片」，而不是画面的一部分。
+ * 位置与形状：
+ * - 纵向从 `y = 0` 开始画，也就是压在状态栏那一层（系统图标由 SystemUI 画在我们之上，
+ *   不会被盖掉，只是底色变复杂 —— 所以图片最「实」的一角留给右上，那里本来就只有一条边）；
+ * - 横向往右溢出 [AVATAR_BLEED_RIGHT]：右竖边落到屏幕外，看不见；
+ * - 不做圆角、不描边、不裁圆：一条弧线或一条直边都会让人看出「贴了一块图」。
  *
- * 折叠时整块向右上收缩并淡出；[collapse] 直接来自滚动量，所以是跟手的（只在绘制阶段读）。
+ * 四条边全部不露的做法是「三条边交给屏幕边界，剩下两条交给蒙版」：
+ * 左边与下边各一张 DstIn 线性渐变，两次相乘 —— 左边从 26% 处开始化、下边从 34% 处开始化，
+ * 到各自边缘时 alpha 已经精确归零，所以既没有硬边也没有半透明的「残影框」。
+ *
+ * 折叠时整块以右上角为锚点缩小并淡出；[collapse] 直接来自滚动量，跟手（只在绘制阶段读）。
  */
 @Composable
 private fun MeTopBarAvatar(
@@ -258,20 +313,16 @@ private fun MeTopBarAvatar(
     collapse: State<Float>,
     modifier: Modifier = Modifier,
 ) {
-    val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-
     Box(
         modifier = modifier
-            // 往右偏一点：像从屏幕角上「长出来」，而不是规规矩矩摆在安全区里。
-            // 纵向从状态栏下沿起步 —— 压到状态栏会把 WiFi / 电量图标糊住，那是系统的地方。
-            .offset(x = 10.dp, y = statusBarTop + 2.dp)
+            .offset(x = AVATAR_BLEED_RIGHT, y = 0.dp)
             .size(AVATAR_SIZE)
             .graphicsLayer {
-                val c = collapse.value.coerceIn(0f, AVATAR_FADE_END)
-                alpha = (1f - c / AVATAR_FADE_END).coerceIn(0f, 1f)
-                // 以右上角为锚点收缩：视觉上是「缩回角落」，而不是整体飘走
+                val c = (collapse.value / AVATAR_FADE_END).coerceIn(0f, 1f)
+                alpha = 1f - c
+                // 以右上角为锚点收缩：视觉上是「缩回屏幕角」，而不是整体飘走
                 transformOrigin = TransformOrigin(1f, 0f)
-                val s = 1f - 0.16f * (c / AVATAR_FADE_END)
+                val s = 1f - 0.18f * c
                 scaleX = s
                 scaleY = s
             },
@@ -293,22 +344,39 @@ private fun AvatarPicture(url: String, nickname: String, modifier: Modifier = Mo
             .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
             .drawWithContent {
                 drawContent()
-                // 右上一角满不透明 → 左下化进底色的斜向渐隐
+                // ① 右 → 左：越靠左越透（36% 之后开始化，到左边缘精确归零）
                 drawRect(
                     brush = Brush.linearGradient(
                         colorStops = arrayOf(
                             0.00f to Color.White,
-                            0.30f to Color.White,
-                            0.75f to Color.White.copy(alpha = 0.55f),
+                            0.36f to Color.White,
+                            0.58f to Color.White.copy(alpha = 0.92f),
+                            0.78f to Color.White.copy(alpha = 0.62f),
+                            0.92f to Color.White.copy(alpha = 0.20f),
                             1.00f to Color.Transparent,
                         ),
                         start = Offset(size.width, 0f),
+                        end = Offset(0f, 0f),
+                    ),
+                    blendMode = BlendMode.DstIn,
+                )
+                // ② 上 → 下：越靠下越透。与①相乘后，左下角彻底化进页面底色。
+                drawRect(
+                    brush = Brush.linearGradient(
+                        colorStops = arrayOf(
+                            0.00f to Color.White,
+                            0.40f to Color.White,
+                            0.62f to Color.White.copy(alpha = 0.90f),
+                            0.80f to Color.White.copy(alpha = 0.58f),
+                            0.93f to Color.White.copy(alpha = 0.18f),
+                            1.00f to Color.Transparent,
+                        ),
+                        start = Offset(0f, 0f),
                         end = Offset(0f, size.height),
                     ),
                     blendMode = BlendMode.DstIn,
                 )
             },
-        contentAlignment = Alignment.Center,
     ) {
         val bmp = bitmap
         if (bmp != null) {
@@ -316,9 +384,7 @@ private fun AvatarPicture(url: String, nickname: String, modifier: Modifier = Mo
                 bitmap = bmp.asImageBitmap(),
                 contentDescription = "账户头像",
                 contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .matchParentSize()
-                    .clip(CircleShape),
+                modifier = Modifier.matchParentSize(),
             )
         } else {
             DefaultAvatar(nickname = nickname, modifier = Modifier.matchParentSize())
@@ -327,9 +393,10 @@ private fun AvatarPicture(url: String, nickname: String, modifier: Modifier = Mo
 }
 
 /**
- * 默认头像：主题色渐变圆 + 昵称首字。
+ * 默认头像：主题色的方形色块 + 昵称首字，字摆在右上（唯一不被蒙版削掉的那一块）。
  *
  * 没有头像时不能留一个灰洞 —— 账户页顶栏右上角空着，看起来像整页没加载完。
+ * 形状跟真头像一致（方形、贴角、左下渐隐由外层蒙版统一处理），只是没有照片内容。
  * 取昵称首字符（中文取第一个字，英文取首个字母并转大写），没有昵称就用「K」。
  */
 @Composable
@@ -339,20 +406,19 @@ private fun DefaultAvatar(nickname: String, modifier: Modifier = Modifier) {
         ?: 'K'
     val primary = MiuixTheme.colorScheme.primary
     Box(
-        modifier = modifier
-            .clip(CircleShape)
-            .background(
-                Brush.linearGradient(
-                    listOf(primary.copy(alpha = 0.92f), primary.copy(alpha = 0.52f)),
-                ),
+        modifier = modifier.background(
+            Brush.verticalGradient(
+                listOf(primary.copy(alpha = 0.95f), primary.copy(alpha = 0.55f)),
             ),
-        contentAlignment = Alignment.Center,
+        ),
+        contentAlignment = Alignment.TopEnd,
     ) {
         Text(
             text = initial.toString(),
             color = Color.White,
-            fontSize = 30.sp,
+            fontSize = (AVATAR_SIZE.value * 0.30f).sp,
             fontWeight = FontWeight.Medium,
+            modifier = Modifier.padding(top = 34.dp, end = 26.dp),
         )
     }
 }
@@ -365,7 +431,8 @@ private fun DefaultAvatar(nickname: String, modifier: Modifier = Modifier) {
  *   的支持程度不一致，解失败只会得到一张裂图，而这里解失败退默认头像，行为确定；
  * - 机台抓包给的是官网图片 URL：走 Coil（与全 App 共享磁盘缓存）。
  *
- * 解码按最长边 256px 取样：头像槽只有 76dp，原图动辄 512px，没必要吃满内存。
+ * 解码按最长边 384px 取样：头像槽 132dp，3x 屏也就 396px，原图动辄 512px 以上，
+ * 没必要吃满内存；再小就会在这种大尺寸下看出糊。
  */
 @Composable
 private fun rememberAvatarBitmap(url: String): Bitmap? {
@@ -401,4 +468,4 @@ private suspend fun loadAvatarBitmap(context: android.content.Context, url: Stri
     ).drawable?.let { (it as? BitmapDrawable)?.bitmap }
 }
 
-private const val AVATAR_DECODE_PX = 256
+private const val AVATAR_DECODE_PX = 384

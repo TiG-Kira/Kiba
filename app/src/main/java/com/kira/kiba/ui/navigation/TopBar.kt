@@ -89,9 +89,15 @@ fun KibaTopBar(
     /**
      * 展开态最小额外高度（px）。0 = 只按大标题自然高度展开（默认，所有页面）。
      *
-     * 账户页用它把「昵称 + 副标题 + 头像」这一块撑得更松（见 `MeTopBar`）；只在那一页传值，
-     * 其余页面高度完全不变。注意它同时会推高 [scrollBehavior] 的折叠行程
-     * （`heightOffsetLimit = -展开高度 - minExpansionPx`），折叠比例仍按真实高度归一化。
+     * ⚠️ 它会把**折叠行程**推得比**可见展开量**更长，两者不等价：
+     * `heightOffsetLimit = -(大标题块 + minExpansionPx)`，而可见展开量是
+     * `max(大标题块, minExpansionPx)`。所以调用方不能用
+     * `heightOffset / heightOffsetLimit` 当折叠进度 —— 撑过高的页面会停在 0.5 上下就
+     * 再也推不动（实测：账户页传 72dp 时，完整折叠只对应 0.54）。
+     * 需要「跟手进度」的页面要么别传值，要么自己按真实展开高度归一化。
+     *
+     * 当前没有页面传值：账户页曾用它撑高顶部留白，现在改成让右上角的方形头像
+     * 吃满自然展开高度，不再额外加空白。
      */
     minExpansionPx: Int = 0,
     actions: @Composable RowScope.() -> Unit = {},
