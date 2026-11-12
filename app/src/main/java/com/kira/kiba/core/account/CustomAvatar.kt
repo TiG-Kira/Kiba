@@ -14,7 +14,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import java.io.File
 
 /**
- * 账户页顶栏头像的**用户自定义**那份（3.4.0）。
+ * 账户页顶栏头像的**用户自定义**那份（3.3.1）。
  *
  * ## 取图优先级
  *

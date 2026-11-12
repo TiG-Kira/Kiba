@@ -73,7 +73,7 @@ import kotlin.math.roundToInt
 private const val MAX_SOURCE_PX = 1440
 
 /**
- * 自定义头像页（3.4.0）：选图 → 1:1 裁切 → 落盘。
+ * 自定义头像页（3.3.1）：选图 → 1:1 裁切 → 落盘。
  *
  * ## 两种状态
  *

@@ -429,21 +429,27 @@ private fun AvatarPicture(
             .drawWithContent {
                 drawContent()
                 // ① 右 → 左：越靠左越透。
-                // 色标走的是**近似余弦**的平滑衰减（不是分段直线）：直线段在拐点处会留一条
-                // 能看出来的「分界线」，照片内容一花，那条线就变成可见的方框边。
-                // 只在最右 10% 保持全实，之后一路平滑收，末端 5% 压到 0。
+                //
+                // 曲线 = **平台 + 余弦收尾**：前 34% 保持全实（右上那一块是主体，
+                // 淡太早整张图会糊成一层白雾），之后 alpha = 0.5·(1+cos)，在平台边缘
+                // 和左边缘两处的斜率都是 0 —— 既没有拐点留下的「分界线」，也没有
+                // 「到边才归零」的硬切。分段直线两头都有折角，靠得越近越像方框边。
+                //
+                // 注意：右端 16dp 溢到屏幕外，所以「全实区」里有一截是看不见的，
+                // 平台不能压太窄，否则屏幕上几乎找不到不透明的像素。
                 drawRect(
                     brush = Brush.linearGradient(
                         colorStops = arrayOf(
                             0.00f to Color.White,
                             0.10f to Color.White,
-                            0.24f to Color.White.copy(alpha = 0.97f),
-                            0.38f to Color.White.copy(alpha = 0.90f),
-                            0.52f to Color.White.copy(alpha = 0.78f),
-                            0.65f to Color.White.copy(alpha = 0.62f),
-                            0.78f to Color.White.copy(alpha = 0.42f),
-                            0.88f to Color.White.copy(alpha = 0.22f),
-                            0.95f to Color.White.copy(alpha = 0.08f),
+                            0.20f to Color.White,
+                            0.34f to Color.White,
+                            0.44f to Color.White.copy(alpha = 0.94f),
+                            0.54f to Color.White.copy(alpha = 0.79f),
+                            0.64f to Color.White.copy(alpha = 0.57f),
+                            0.74f to Color.White.copy(alpha = 0.34f),
+                            0.84f to Color.White.copy(alpha = 0.14f),
+                            0.92f to Color.White.copy(alpha = 0.04f),
                             1.00f to Color.Transparent,
                         ),
                         start = Offset(size.width, 0f),
@@ -451,19 +457,23 @@ private fun AvatarPicture(
                     ),
                     blendMode = BlendMode.DstIn,
                 )
-                // ② 上 → 下：越靠下越透，同样是平滑曲线。与①相乘后，左下角彻底化进页面底色。
+                // ② 上 → 下：越靠下越透，同一条「平台 + 余弦」曲线（平台略窄一点，
+                // 因为上边贴着屏幕顶、没有溢出的部分，可见面积本来就更少）。
+                // 与①相乘后，左下角彻底化进页面底色。
                 drawRect(
                     brush = Brush.linearGradient(
                         colorStops = arrayOf(
                             0.00f to Color.White,
-                            0.14f to Color.White,
-                            0.28f to Color.White.copy(alpha = 0.96f),
-                            0.42f to Color.White.copy(alpha = 0.88f),
-                            0.55f to Color.White.copy(alpha = 0.74f),
-                            0.67f to Color.White.copy(alpha = 0.56f),
-                            0.78f to Color.White.copy(alpha = 0.36f),
-                            0.88f to Color.White.copy(alpha = 0.17f),
-                            0.95f to Color.White.copy(alpha = 0.05f),
+                            0.10f to Color.White,
+                            0.20f to Color.White,
+                            0.26f to Color.White,
+                            0.36f to Color.White.copy(alpha = 0.96f),
+                            0.46f to Color.White.copy(alpha = 0.83f),
+                            0.56f to Color.White.copy(alpha = 0.65f),
+                            0.66f to Color.White.copy(alpha = 0.44f),
+                            0.76f to Color.White.copy(alpha = 0.24f),
+                            0.86f to Color.White.copy(alpha = 0.09f),
+                            0.94f to Color.White.copy(alpha = 0.02f),
                             1.00f to Color.Transparent,
                         ),
                         start = Offset(0f, 0f),
