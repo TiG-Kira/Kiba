@@ -603,6 +603,25 @@ object SpUtil {
         userInfoPrefs.edit { putString(avatarKey(game, source), url) }
     }
 
+    // ================= 账户页头像：用户自定义（全局一份） =================
+    //
+    // 图本身写在 filesDir/avatar/custom_avatar.png，这里只存一个**版本号**：
+    // - 0 / 缺失 = 从未设置过（回落自动抓取 → 默认头像）；
+    // - 每次「保存」「移除」都 +1，UI 侧把它当 remember key 用，改完立刻重新解码，
+    //   不需要重启 Activity 或切换查分器。
+    //
+    // 只存数字不存路径：目录和文件名是契约（见 CustomAvatar），路径一旦进 SP，
+    // 改目录就成了迁移问题。
+
+    private const val KEY_CUSTOM_AVATAR_VERSION = "me_avatar_custom_version"
+
+    fun getCustomAvatarVersion(): Long =
+        userInfoPrefs.getLong(KEY_CUSTOM_AVATAR_VERSION, 0L)
+
+    fun setCustomAvatarVersion(version: Long) {
+        userInfoPrefs.edit { putLong(KEY_CUSTOM_AVATAR_VERSION, version) }
+    }
+
     // ================= 中二节奏成绩（chunithmprober） =================
 
     /**

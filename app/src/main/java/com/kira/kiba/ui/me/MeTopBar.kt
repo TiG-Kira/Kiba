@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.sp
 import coil.imageLoader
 import coil.request.ImageRequest
 import com.kira.kiba.core.account.AccountAvatar
+import com.kira.kiba.core.account.CustomAvatar
 import com.kira.kiba.core.account.DivingFishAccount
 import com.kira.kiba.core.account.LxnsAccount
 import com.kira.kiba.core.data.ChuniRecordSync
@@ -114,6 +115,9 @@ fun MeTopBarSlot(
     val dfAccount by DivingFishAccount.state.collectAsState()
     val lxns by LxnsAccount.state.collectAsState()
     val avatars by AccountAvatar.state.collectAsState()
+    // 用户自定义头像（全局一份）：保存后 StateFlow 立刻推新版本号，顶栏下一帧就换图，
+    // 不需要切查分器、也不需要重启 Activity。
+    val customAvatar by CustomAvatar.state.collectAsState()
     val maimaiSource by SpUtil.maimaiSourceFlow.collectAsState()
     val chuniSource by SpUtil.chuniSourceFlow.collectAsState()
     // 中二没有 account 层，昵称与就绪状态都存在 ChuniRecordSync 的本地缓存里；
@@ -180,6 +184,7 @@ fun MeTopBarSlot(
         if (!avatarGone.value) {
             MeTopBarAvatar(
                 url = avatarUrl,
+                customVersion = if (customAvatar.hasImage) customAvatar.version else 0L,
                 nickname = nickname,
                 isChuni = isChuni,
                 collapse = collapse,
@@ -240,33 +245,35 @@ private val COLLAPSED_FILL_TAIL = 18.dp
  *
  * 尺寸上限由**展开态顶栏高度**约束（> 这个值的部分会被下面的内容盖住，出现一条硬边）：
  * 顶栏 = 状态栏 + 56dp 折叠行 + 大标题块（约 62dp）+ 底距，合计 150dp 上下。
- * 132dp 配合下面「90% 处已经淡到 0」的蒙版，实际可见高度约 118dp，留了近 30dp 余量。
+ * 168dp 的图靠「下侧很早就开始羽化」+ 折叠时同步缩到 76% 才站得住：
+ * 视觉上真正还能看清内容的只有上面 3/4（约 126dp），底部那 1/4 已经化进页面底色了。
  */
-private val AVATAR_SIZE = 132.dp
+private val AVATAR_SIZE = 168.dp
 
 /**
  * 头像向右溢出的量：右竖边落到屏幕外，配合左 / 下两侧的渐隐，图片的四条边一条都不露。
  * （上边贴着屏幕顶，也不需要额外处理。）
  */
-private val AVATAR_BLEED_RIGHT = 12.dp
+private val AVATAR_BLEED_RIGHT = 16.dp
 
 /**
  * 大标题行尾给头像让出的宽度。
  *
  * 头像虽然整体是渐隐的，但右上那一块接近不透明；昵称过长时会一直排到屏幕右缘，
- * 末几个字正好落在图片上，看起来像被弄脏了。让出 84dp 后文字在自己的安全区里省略，
+ * 末几个字正好落在图片上，看起来像被弄脏了。让出 108dp 后文字在自己的安全区里省略，
  * 视觉上「标题止于头像之前」。
  */
-private val AVATAR_TITLE_INSET = 84.dp
+private val AVATAR_TITLE_INSET = 108.dp
 
 /**
  * 头像收完时的折叠进度。
  *
  * 不只是「淡出看着舒服」：顶栏的可见高度随折叠线性缩，头像底部一旦越过顶栏下沿，
- * 就会被下面的卡片硬切掉一条。按 132dp 的尺寸和 48% 收起（同时缩到 82%）算，
- * 收完时头像底边约 108dp，而顶栏此时还有 110dp 以上，留得住。
+ * 就会被下面的卡片硬切掉一条。168dp 的图按 36% 收起（同时缩到 91%）算，
+ * 收完时缩后高约 153dp、肉眼还能分辨内容的部分到 78% 处约 119dp，
+ * 而顶栏此时还有 128dp 上下，留得住。再拖晚就会被切。
  */
-private const val AVATAR_FADE_END = 0.48f
+private const val AVATAR_FADE_END = 0.36f
 
 /** 刷新按钮在两个位置之间的行程余量：右侧圆钮中心距顶栏右缘 40dp，左侧同理。 */
 private val REFRESH_TRAVEL_INSET = 80.dp
@@ -366,6 +373,7 @@ private fun refreshAlpha(collapse: Float): Float {
 @Composable
 private fun MeTopBarAvatar(
     url: String,
+    customVersion: Long,
     nickname: String,
     isChuni: Boolean,
     collapse: State<Float>,
@@ -380,13 +388,16 @@ private fun MeTopBarAvatar(
                 alpha = 1f - c
                 // 以右上角为锚点收缩：视觉上是「缩回屏幕角」，而不是整体飘走
                 transformOrigin = TransformOrigin(1f, 0f)
-                val s = 1f - 0.18f * c
+                // 收缩比例给到 0.24：图本身变大到 168dp 后，光靠淡出已经赶不上顶栏缩高的速度，
+                // 得让它同时变小，才不会被下方卡片硬切出一条直边。
+                val s = 1f - 0.24f * c
                 scaleX = s
                 scaleY = s
             },
     ) {
         AvatarPicture(
             url = url,
+            customVersion = customVersion,
             nickname = nickname,
             isChuni = isChuni,
             modifier = Modifier.matchParentSize(),
@@ -394,29 +405,45 @@ private fun MeTopBarAvatar(
     }
 }
 
-/** 头像本体：有图走 Bitmap，没图（或图炸了）走 [DefaultAvatar]。 */
+/**
+ * 头像本体，取图优先级：**自定义 > 自动抓取 > 默认**。
+ *
+ * 自动抓取那条（机台抓包 / 落雪 icon）常常抓不到（水鱼中二根本没有头像接口），
+ * 所以它只是第二顺位；用户自己在设置页裁的图永远优先。
+ * `customVersion` 非 0 时不再去请求 [url] —— 传空串让 [rememberAvatarBitmap] 直接返回 null，
+ * 免得白白走一次 Coil 网络请求。
+ */
 @Composable
 private fun AvatarPicture(
     url: String,
+    customVersion: Long,
     nickname: String,
     isChuni: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    val bitmap = rememberAvatarBitmap(url)
+    val custom = rememberCustomAvatarBitmap(customVersion)
+    val bitmap = custom ?: rememberAvatarBitmap(if (custom == null) url else "")
     Box(
         modifier = modifier
             .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
             .drawWithContent {
                 drawContent()
-                // ① 右 → 左：越靠左越透（36% 之后开始化，到左边缘精确归零）
+                // ① 右 → 左：越靠左越透。
+                // 色标走的是**近似余弦**的平滑衰减（不是分段直线）：直线段在拐点处会留一条
+                // 能看出来的「分界线」，照片内容一花，那条线就变成可见的方框边。
+                // 只在最右 10% 保持全实，之后一路平滑收，末端 5% 压到 0。
                 drawRect(
                     brush = Brush.linearGradient(
                         colorStops = arrayOf(
                             0.00f to Color.White,
-                            0.36f to Color.White,
-                            0.58f to Color.White.copy(alpha = 0.92f),
-                            0.78f to Color.White.copy(alpha = 0.62f),
-                            0.92f to Color.White.copy(alpha = 0.20f),
+                            0.10f to Color.White,
+                            0.24f to Color.White.copy(alpha = 0.97f),
+                            0.38f to Color.White.copy(alpha = 0.90f),
+                            0.52f to Color.White.copy(alpha = 0.78f),
+                            0.65f to Color.White.copy(alpha = 0.62f),
+                            0.78f to Color.White.copy(alpha = 0.42f),
+                            0.88f to Color.White.copy(alpha = 0.22f),
+                            0.95f to Color.White.copy(alpha = 0.08f),
                             1.00f to Color.Transparent,
                         ),
                         start = Offset(size.width, 0f),
@@ -424,15 +451,19 @@ private fun AvatarPicture(
                     ),
                     blendMode = BlendMode.DstIn,
                 )
-                // ② 上 → 下：越靠下越透。与①相乘后，左下角彻底化进页面底色。
+                // ② 上 → 下：越靠下越透，同样是平滑曲线。与①相乘后，左下角彻底化进页面底色。
                 drawRect(
                     brush = Brush.linearGradient(
                         colorStops = arrayOf(
                             0.00f to Color.White,
-                            0.40f to Color.White,
-                            0.62f to Color.White.copy(alpha = 0.90f),
-                            0.80f to Color.White.copy(alpha = 0.58f),
-                            0.93f to Color.White.copy(alpha = 0.18f),
+                            0.14f to Color.White,
+                            0.28f to Color.White.copy(alpha = 0.96f),
+                            0.42f to Color.White.copy(alpha = 0.88f),
+                            0.55f to Color.White.copy(alpha = 0.74f),
+                            0.67f to Color.White.copy(alpha = 0.56f),
+                            0.78f to Color.White.copy(alpha = 0.36f),
+                            0.88f to Color.White.copy(alpha = 0.17f),
+                            0.95f to Color.White.copy(alpha = 0.05f),
                             1.00f to Color.Transparent,
                         ),
                         start = Offset(0f, 0f),
@@ -498,6 +529,20 @@ private fun DefaultAvatar(nickname: String, isChuni: Boolean, modifier: Modifier
 /** 默认头像的暖色（舞萌）与冷色（中二）双色渐变。 */
 private val MAIMAI_TINT = Color(0xFFFF9A48) to Color(0xFFFF3E78)
 private val CHUNI_TINT = Color(0xFF4DE2E6) to Color(0xFF7C5CFF)
+
+/**
+ * 自定义头像（本地文件）。
+ *
+ * **同步读**：图是 512² 的 PNG，且 [CustomAvatar.loadBitmap] 内部有进程级内存缓存，
+ * 命中时就是取个引用；没命中时解一次约 5~10ms，只在进页面 / 换头像那一帧发生。
+ * 走异步反而会让顶栏先闪一下默认头像再换图，比这点开销难看得多。
+ *
+ * `version` 是 key：设置页保存后版本号 +1，这里立刻重算 —— 这就是「不用切查分器
+ * 也能马上看到新头像」的实现点。
+ */
+@Composable
+private fun rememberCustomAvatarBitmap(version: Long): Bitmap? =
+    remember(version) { if (version <= 0L) null else CustomAvatar.loadBitmap() }
 
 /**
  * 取头像位图。

@@ -4,6 +4,7 @@ import android.app.Application
 import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.disk.DiskCache
+import com.kira.kiba.core.account.CustomAvatar
 import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.network.MaimaiDataClient
 import com.kira.kiba.core.state.KibaState
@@ -16,6 +17,8 @@ class KibaApplication : Application(), ImageLoaderFactory {
         super.onCreate()
         SpUtil.init(this)
         AppDataBase.init(this)
+        // 用户自定义头像：只读一次文件存在性，版本号进 StateFlow 供顶栏订阅
+        CustomAvatar.init(this)
         MaimaiDataClient.instance.init()
         // 设备性能评分：只读一次硬件信息并进程内缓存，结果同时落盘，
         // 设置页首帧就能展示上次分数（真·高级材质的启用门槛看这个分）

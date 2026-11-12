@@ -70,6 +70,7 @@ import com.kira.kiba.ui.me.MeScreen
 import com.kira.kiba.ui.me.MeTopBarSlot
 import com.kira.kiba.ui.me.ScoreQueryScreen
 import com.kira.kiba.ui.settings.AboutScreen
+import com.kira.kiba.ui.settings.AvatarCropScreen
 import com.kira.kiba.ui.settings.DeviceScoreScreen
 import com.kira.kiba.ui.settings.SettingsScreen
 import com.kira.kiba.ui.share.ShareImageAction
@@ -341,6 +342,11 @@ sealed interface KibaSubPage {
     /** 设备性能评分（设置页点击评分行进入；2.6.0 从摘要行独立成页）。 */
     data object DeviceScore : KibaSubPage {
         override val title: String = "设备性能评分"
+    }
+
+    /** 自定义头像（设置页点击进入）：选图 → 1:1 裁切 → 落盘，账户页顶栏立刻生效。 */
+    data object AvatarCrop : KibaSubPage {
+        override val title: String = "自定义头像"
     }
 
     /** 关于。 */
@@ -1208,6 +1214,7 @@ fun KibaMainScreen() {
                                   onOpenPlayer = { pushPage(KibaSubPage.SongPlayer) },
                               )
                               is KibaSubPage.DeviceScore -> DeviceScoreScreen(scrollBehavior = scrollBehavior)
+                              is KibaSubPage.AvatarCrop -> AvatarCropScreen(onDone = { popPage() })
                               is KibaSubPage.About -> AboutScreen(scrollBehavior = scrollBehavior)
                               is KibaSubPage.ListenPlaylist -> PlaylistDetailScreen(
                                   playlistId = target.playlistId,
@@ -1284,6 +1291,7 @@ fun KibaMainScreen() {
                                   onOpenAgentMemory = { pushPage(KibaSubPage.AgentMemory) },
                                   onOpenAbout = { pushPage(KibaSubPage.About) },
                                   onOpenDeviceScore = { pushPage(KibaSubPage.DeviceScore) },
+                                  onOpenAvatarCrop = { pushPage(KibaSubPage.AvatarCrop) },
                               )
                           }
                       }

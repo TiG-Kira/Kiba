@@ -27,6 +27,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.kira.kiba.BuildConfig
+import com.kira.kiba.core.account.CustomAvatar
 import com.kira.kiba.core.account.DivingFishAccount
 import com.kira.kiba.core.account.LxnsAccount
 import com.kira.kiba.core.data.ChuniRecordSync
@@ -85,6 +86,7 @@ fun SettingsScreen(
     onOpenAgentMemory: () -> Unit,
     onOpenAbout: () -> Unit,
     onOpenDeviceScore: () -> Unit,
+    onOpenAvatarCrop: () -> Unit,
 ) {
     val context = LocalContext.current
     val themeMode by KibaState.themeMode.collectAsState()
@@ -114,6 +116,9 @@ fun SettingsScreen(
     var maimaiSource by remember { mutableStateOf(SpUtil.getScoreSource(GameType.MAIMAI)) }
     var chuniSource by remember { mutableStateOf(SpUtil.getScoreSource(GameType.CHUNITHM)) }
     val lxnsState by LxnsAccount.state.collectAsState()
+
+    // 自定义头像状态：保存 / 移除后摘要要跟着变（StateFlow，无需重进页面）
+    val customAvatar by CustomAvatar.state.collectAsState()
 
     Scaffold(
         modifier = Modifier
@@ -157,6 +162,17 @@ fun SettingsScreen(
                         title = "动态取色",
                         summary = if (dynamicColor) "已开启（跟随壁纸取色）" else "已关闭",
                         startAction = { PrefIcon(MiuixGlassIcons.Regular.Tune) },
+                    )
+                    // 账户页右上角那张方形大图：自定义优先，没设就回落到自动抓取 / 默认头像。
+                    ArrowPreference(
+                        title = "自定义头像",
+                        summary = if (customAvatar.hasImage) {
+                            "已设置 · 账户页右上角显示自定义图（点击更换或恢复默认）"
+                        } else {
+                            "当前为默认头像 · 点击上传并裁切（1:1）"
+                        },
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Image) },
+                        onClick = onOpenAvatarCrop,
                     )
                 }
             }
