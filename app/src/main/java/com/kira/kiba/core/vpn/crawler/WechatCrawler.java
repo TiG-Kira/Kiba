@@ -385,6 +385,18 @@ public class WechatCrawler {
                     writeLog(label + " 玩家资料页内容异常，已跳过（不影响成绩上传）");
                     return;
                 }
+                // 顺手捞头像（账户页顶栏右上角那张）：官方资料页里玩家头像是一张 <img>，
+                // 抓不到就算了 —— best-effort，绝不因为头像解析失败动成绩上传。
+                // 只有舞萌有这条通道；中二的头像只从落雪 player.icon 来，且两者分格存，
+                // 谁也不覆盖谁（见 AccountAvatar）。
+                if (game.equals("maimai")) {
+                    String avatar = com.kira.kiba.core.account.AccountAvatar.INSTANCE
+                            .extractFromProfileHtml(data);
+                    if (avatar != null) {
+                        com.kira.kiba.core.account.AccountAvatar.INSTANCE
+                                .saveFromMachine(com.kira.kiba.core.model.GameType.MAIMAI, avatar);
+                    }
+                }
                 writeLog(label + " 玩家资料页已获取，正在上传至落雪");
                 writeLog(label + " " + com.kira.kiba.core.network.LxnsUploader
                         .uploadPlayerPageBlocking(game, data));

@@ -457,6 +457,8 @@ object DivingFishAccount {
         SpUtil.setDivingFishImportToken("")
         // 一并清除原版登录凭据，保证「我」页与机台更新页状态同步
         SpUtil.putLoginInfo("", "", "")
+        // 账户页顶栏那张机台头像属于这个账号，解绑后不该继续露在别人眼前
+        AccountAvatar.clearFor(ScoreSource.WATER_FISH)
         _state.value = AccountState()
     }
 

@@ -3,6 +3,7 @@ package com.kira.kiba.core.data
 import android.util.Log
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
+import com.kira.kiba.core.account.AccountAvatar
 import com.kira.kiba.core.account.LxnsAccount
 import com.kira.kiba.core.best50.Best50ImageBuilder
 import com.kira.kiba.core.utils.Constants
@@ -10,6 +11,7 @@ import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.db.entity.ChartEntity
 import com.kira.kiba.core.db.entity.RecordEntity
 import com.kira.kiba.core.db.entity.SongDataEntity
+import com.kira.kiba.core.model.GameType
 import com.kira.kiba.core.network.LxnsApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -66,6 +68,10 @@ object MaimaiLxnsSync {
             .getOrNull()
         val nickname = player?.str("name").orEmpty()
         val serverRating = player?.int("rating") ?: 0
+        // 顺路把落雪账户头像存下来（账户页顶栏右上角那张）：icon.data 就是图片本体，
+        // 转成 data URI 后本地直读，不必再猜 CDN 地址。拿不到就留着旧图 / 走默认头像。
+        // 注意按**游戏**分格存：中二有另一张（ChuniLxnsSync 里写），不能互相覆盖。
+        AccountAvatar.fromLxnsPlayer(player)?.let { AccountAvatar.saveFromLxns(GameType.MAIMAI, it) }
 
         // 兼容两种成功形态：顶层数组，或 {scores:[...]} 包裹
         val raw = LxnsApi.get(PATH_SCORES)

@@ -574,6 +574,35 @@ object SpUtil {
         }
     }
 
+    // ================= 账户页头像（按「游戏 × 数据源」四格各自缓存） =================
+    //
+    // 舞萌与中二是**两套玩家**：同一份落雪凭据下，`/user/maimai/player` 与
+    // `/user/chunithm/player` 返回的是各自的 icon（舞萌机台头像也来自另一条抓包路径）。
+    // 因此不能只按源存一张 —— 那样切到中二会把舞萌的脸挂在中二账户上。
+    //
+    // 只存「图片来源」：机台侧是抓包 HTML 里捞到的头像 URL，落雪侧是 icon 的 data URI。
+    // 四格都可能为空（没抓过包 / 落雪没回 icon / 水鱼中二没有头像接口），
+    // UI 用默认头像兜底，见 AccountAvatar。
+
+    private const val KEY_AVATAR_MAIMAI_MACHINE = "me_avatar_maimai_machine"
+    private const val KEY_AVATAR_MAIMAI_LXNS = "me_avatar_maimai_lxns"
+    private const val KEY_AVATAR_CHUNI_MACHINE = "me_avatar_chuni_machine"
+    private const val KEY_AVATAR_CHUNI_LXNS = "me_avatar_chuni_lxns"
+
+    private fun avatarKey(game: GameType, source: ScoreSource): String = when (game) {
+        GameType.MAIMAI ->
+            if (source == ScoreSource.LXNS) KEY_AVATAR_MAIMAI_LXNS else KEY_AVATAR_MAIMAI_MACHINE
+        GameType.CHUNITHM ->
+            if (source == ScoreSource.LXNS) KEY_AVATAR_CHUNI_LXNS else KEY_AVATAR_CHUNI_MACHINE
+    }
+
+    fun getAccountAvatar(game: GameType, source: ScoreSource): String =
+        userInfoPrefs.getString(avatarKey(game, source), "") ?: ""
+
+    fun saveAccountAvatar(game: GameType, source: ScoreSource, url: String) {
+        userInfoPrefs.edit { putString(avatarKey(game, source), url) }
+    }
+
     // ================= 中二节奏成绩（chunithmprober） =================
 
     /**

@@ -3,11 +3,13 @@ package com.kira.kiba.core.data
 import android.util.Log
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
+import com.kira.kiba.core.account.AccountAvatar
 import com.kira.kiba.core.account.LxnsAccount
 import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.db.entity.ChuniRecordEntity
 import com.kira.kiba.core.db.entity.ChuniSongEntity
 import com.kira.kiba.core.model.ChuniDiffType
+import com.kira.kiba.core.model.GameType
 import com.kira.kiba.core.network.LxnsApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -78,6 +80,9 @@ object ChuniLxnsSync {
         val player = runCatching { LxnsApi.getObject(PATH_PLAYER) }.getOrNull()
         val nickname = player?.str("name").orEmpty()
         val serverRating = player?.dbl("rating") ?: 0.0
+        // 账户页顶栏右上角那张头像：中二的 icon 与舞萌是**两张不同的图**，按游戏分格存。
+        // 拿不到就保留旧图 / 走默认头像，绝不影响成绩同步。
+        AccountAvatar.fromLxnsPlayer(player)?.let { AccountAvatar.saveFromLxns(GameType.CHUNITHM, it) }
 
         // 2) 官方分池：bests + new_bests（个人 API）。
         //    1.8.4 去掉了原来「退回开发者 API /chunithm/player/{fc}/bests」的兜底：

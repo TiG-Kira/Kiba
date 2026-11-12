@@ -3,6 +3,7 @@ package com.kira.kiba.core.account
 import android.util.Log
 import com.google.gson.JsonObject
 import com.kira.kiba.core.model.GameType
+import com.kira.kiba.core.model.ScoreSource
 import com.kira.kiba.core.network.LxnsApi
 import com.kira.kiba.core.network.LxnsOAuth
 import com.kira.kiba.core.utils.SpUtil
@@ -180,6 +181,8 @@ object LxnsAccount {
         SpUtil.saveLxnsName("")
         SpUtil.clearLxnsFriendCodes()
         SpUtil.setLxnsPlayerFound(true)
+        // 落雪账户头像随凭据一起清，避免退出后顶栏还挂着前一个账号的图
+        AccountAvatar.clearFor(ScoreSource.LXNS)
         _state.value = State()
     }
 

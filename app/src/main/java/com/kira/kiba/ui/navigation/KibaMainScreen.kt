@@ -67,6 +67,7 @@ import com.kira.kiba.ui.me.LoginScreen
 import com.kira.kiba.ui.me.LxnsLoginScreen
 import com.kira.kiba.ui.me.EasyMaiAccountScreen
 import com.kira.kiba.ui.me.MeScreen
+import com.kira.kiba.ui.me.MeTopBarSlot
 import com.kira.kiba.ui.me.ScoreQueryScreen
 import com.kira.kiba.ui.settings.AboutScreen
 import com.kira.kiba.ui.settings.DeviceScoreScreen
@@ -645,10 +646,38 @@ fun KibaMainScreen() {
                               it is KibaSubPage.SongDetail ||
                               it is KibaSubPage.ChuniSongDetail
                       }
+                      val initialTab = initialState as? KibaTab
+                      val targetTab = targetState as? KibaTab
                       when {
                           // 收窄态出发：直接切换不做下沉（大标题从收窄态强行展开会残影跳变）
                           topBarWasCollapsed ->
                               fadeIn(tween(1)).togetherWith(fadeOut(tween(1)))
+                          // 与账户页互换：那是唯一一块「更高」的顶栏（昵称 + 副标题 + 头像留白），
+                          // 纯淡切会让高度差看起来像抖一下。改成与页面推屏同向、同时长的横向切换，
+                          // 高度差由 SizeTransform 一路插值过去。其余 Tab 之间仍保持原来的淡切，
+                          // 不把这条动画蔓延到所有顶栏（既有口径）。
+                          initialTab != null && targetTab != null &&
+                              (initialTab == KibaTab.Me || targetTab == KibaTab.Me) -> {
+                              // +1 = 目标在右侧（顶栏向左推），-1 = 目标在左侧
+                              val direction = if (targetTab.ordinal > initialTab.ordinal) 1 else -1
+                              (slideInHorizontally(
+                                  animationSpec = tween(
+                                      KibaMotion.millis(380),
+                                      easing = TabSwitchEasing,
+                                  ),
+                                  initialOffsetX = { full -> full * direction },
+                              ) + fadeIn(tween(KibaMotion.millis(220), delayMillis = 40)))
+                                  .togetherWith(
+                                      slideOutHorizontally(
+                                          animationSpec = tween(
+                                              KibaMotion.millis(340),
+                                              easing = TabSwitchEasing,
+                                          ),
+                                          targetOffsetX = { full -> -full * direction },
+                                      ) + fadeOut(tween(KibaMotion.millis(200))),
+                                  )
+                                  .using(SizeTransform(clip = false))
+                          }
                           // 转场时长走 KibaMotion：设备评分 < 15 分时归零 = 直接切换
                           sinkPage(initialState) || sinkPage(targetState) ->
                               (slideInVertically(tween(KibaMotion.millis(260))) { -it } +
@@ -676,6 +705,24 @@ fun KibaMainScreen() {
                       // 空占位：外层 padding 顶距归零，谱面预览页满屏自管顶栏
                       Spacer(Modifier.height(0.dp))
                   } else if (sub == null) {
+                      // 账户页顶栏是同一套 miuix 顶栏的「换脸」版：昵称 / 副标题 / 右上角头像 /
+                      // 刷新按钮迁移，全部压在 KibaTopBar 之上，折叠机制与其余页完全共用。
+                      if (topTab == KibaTab.Me) {
+                          MeTopBarSlot(
+                              gameType = gameType,
+                              scrollBehavior = scrollBehavior,
+                              topAppBarState = topAppBarState,
+                              onRefresh = {
+                                  // 顶栏刷新按当前游戏分流：中二走 ChuniRecordSync，
+                                  // 舞萌走原 KibaState.refreshRecords
+                                  if (gameType == GameType.CHUNITHM) {
+                                      frameScope.launch { runCatching { ChuniRecordSync.refresh() } }
+                                  } else {
+                                      KibaState.refreshRecords()
+                                  }
+                              },
+                          )
+                      } else {
                       KibaTopBar(
                           title = topTab?.title.orEmpty(),
                           scrollBehavior = scrollBehavior,
@@ -722,19 +769,13 @@ fun KibaMainScreen() {
                                       // 技能菜单入口与曲目页的排序 / 搜索按钮同处顶栏动作区
                                       agentShowFunctionPopup = true
                                   }
-                                  KibaTab.Me -> KibaRefreshAction {
-                                      // 顶栏刷新按当前游戏分流：中二走 ChuniRecordSync，
-                                      // 舞萌走原 KibaState.refreshRecords
-                                      if (gameType == GameType.CHUNITHM) {
-                                          frameScope.launch { runCatching { ChuniRecordSync.refresh() } }
-                                      } else {
-                                          KibaState.refreshRecords()
-                                      }
-                                  }
+                                  // 账户页不走这里（上面已分流到 MeTopBarSlot：刷新按钮要跟着折叠
+                                  // 从左侧迁到右侧，塞不进固定的 actions 槽）
                                   else -> Unit
                               }
                           },
                       )
+                      }
                   } else if (sub is KibaSubPage.SongPlayer) {
                       // 播放页复用歌曲详情页魔改顶栏（封面背景 + 歌名/艺术家 + 收藏/分享）。
                       // 播放页内容不挂 nestedScroll，contentOffset 恒 0 → 顶栏永不折叠收窄；

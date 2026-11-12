@@ -122,7 +122,7 @@ fun MeScreen(
         if (chuniSource == ScoreSource.LXNS) LxnsAccount.isBound() else chuniJwtPresent
     }
     val chuniRating = remember(chuniSyncState) { ChuniRecordSync.getLocalRating() }
-    val chuniNickname = remember(chuniSyncState) { ChuniRecordSync.getLocalNickname() }
+    // 昵称搬到顶栏大标题了（MeTopBarSlot 自己读），本页不再需要
     val chuniRecordCount = remember(chuniSyncState) { ChuniRecordSync.getLocalRecordCount() }
 
     // 进中二「账户」页自动同步一次（本进程内仅一次；顶栏手动刷新不受限）
@@ -151,16 +151,18 @@ fun MeScreen(
             contentPadding = pageContentPadding(),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // ── 置顶：Rating 徽章入口（按游戏切换；中二走账号密码通道同步成绩）──
+            // ── 置顶：Best 50 入口（按游戏切换；中二走账号密码通道同步成绩）──
+            // 昵称与登录态已经搬到顶栏（大标题 / 副标题），这张卡只负责「Best 50 本身」：
+            // 标题固定 Best 50，副标题给出两个分池的得分，点进去看逐条明细。
             item(key = "rating") {
                 if (isChunithm) {
+                    // 中二 Rating = (非当前版本 TOP30 + 当前版本 TOP20) / 50，
+                    // 所以两个分池展示的是**平均 ra**（总和除下去才是 rating，直接报总和会让人误读）。
+                    val b30 = remember(chuniSyncState) { SpUtil.getChuniNonCurrentAvg() }
+                    val b20 = remember(chuniSyncState) { SpUtil.getChuniCurrentAvg() }
                     Card(modifier = (Modifier.fillMaxWidth())) {
                         ArrowPreference(
-                            title = if (chuniReady) {
-                                chuniNickname.ifBlank { account.nickname.ifBlank { "查分器用户" } }
-                            } else {
-                                "未绑定查分器"
-                            },
+                            title = "Best 50",
                             summary = when {
                                 !chuniReady && chuniSource == ScoreSource.LXNS ->
                                     "落雪源需要先登录落雪账号：点击进入落雪账户登录"
@@ -169,8 +171,8 @@ fun MeScreen(
                                 chuniSyncing -> "正在同步中二成绩…"
                                 chuniError != null -> "$chuniError（点击重试）"
                                 chuniRecordCount > 0 ->
-                                    "${chuniSource.shortLabel}源 · 成绩 $chuniRecordCount 条" +
-                                        " · 点击查看中二节奏 Best 50"
+                                    "Best 30 均 ra ${formatRatingValue(GameType.CHUNITHM, b30)}" +
+                                        " · Best 20 均 ra ${formatRatingValue(GameType.CHUNITHM, b20)}"
                                 chuniNoData -> "该账号暂无中二节奏成绩数据（点击重试）"
                                 else -> "点击同步中二成绩"
                             },
@@ -189,13 +191,14 @@ fun MeScreen(
                         )
                     }
                 } else {
+                    // 舞萌 Best 50 = 旧曲 35 + 新曲 15，Rating 就是两段 ra 之和 ——
+                    // 直接摊开这两个数，用户一眼能看出「新曲池还有多少空间」。
+                    val best = remember(account.bound, account.recordCount, account.rating) {
+                        if (account.bound) DivingFishAccount.best50() else DivingFishAccount.Best50()
+                    }
                     Card(modifier = (Modifier.fillMaxWidth())) {
                         ArrowPreference(
-                            title = if (account.bound) {
-                                account.nickname.ifBlank { "查分器用户" }
-                            } else {
-                                "未绑定查分器"
-                            },
+                            title = "Best 50",
                             summary = when {
                                 // 舞萌侧选了落雪但没登录：别再把人往水鱼登录页带
                                 !account.bound && maimaiSource == ScoreSource.LXNS ->
@@ -204,8 +207,7 @@ fun MeScreen(
                                 account.loading -> "正在获取成绩…"
                                 account.error != null -> "${account.error}（点击查看 Best 50）"
                                 else ->
-                                    "${maimaiSource.shortLabel}源 · 成绩 ${account.recordCount} 条" +
-                                        " · 点击查看 Best 50"
+                                    "Best 35 ${best.oldRa} 分 · Best 15 ${best.newRa} 分"
                             },
                             onClick = {
                                 when {

@@ -75,6 +75,8 @@ fun KibaTopBar(
     scrollBehavior: ScrollBehavior,
     modifier: Modifier = Modifier,
     largeTitle: String = title,
+    /** 展开态副标题（大标题下方一行）。折叠时随大标题一起淡出，位置由 miuix 自己管。 */
+    subtitle: String = "",
     navigationIcon: @Composable () -> Unit = {},
     /**
      * 展开态大标题行尾插槽（曲目页的「舞萌 / 中二」开关）。
@@ -84,6 +86,14 @@ fun KibaTopBar(
      * 传 null（默认）时大标题行与原生 miuix 完全一致。
      */
     titleTrailing: (@Composable () -> Unit)? = null,
+    /**
+     * 展开态最小额外高度（px）。0 = 只按大标题自然高度展开（默认，所有页面）。
+     *
+     * 账户页用它把「昵称 + 副标题 + 头像」这一块撑得更松（见 `MeTopBar`）；只在那一页传值，
+     * 其余页面高度完全不变。注意它同时会推高 [scrollBehavior] 的折叠行程
+     * （`heightOffsetLimit = -展开高度 - minExpansionPx`），折叠比例仍按真实高度归一化。
+     */
+    minExpansionPx: Int = 0,
     actions: @Composable RowScope.() -> Unit = {},
 ) {
     if (useLiquidBar()) {
@@ -114,11 +124,13 @@ fun KibaTopBar(
                 GlassTopAppBar(
                     title = title,
                     largeTitle = largeTitle,
+                    subtitle = subtitle,
                     backdrop = null,
                     scrollBehavior = scrollBehavior,
                     navigationIcon = navigationIcon,
                     largeTitleTrailing = titleTrailing,
                     actions = actions,
+                    minExpansionPx = minExpansionPx,
                     bandBrush = Brush.verticalGradient(
                         listOf(Color.Transparent, Color.Transparent),
                     ),
@@ -129,12 +141,14 @@ fun KibaTopBar(
         GlassTopAppBar(
             title = title,
             largeTitle = largeTitle,
+            subtitle = subtitle,
             modifier = modifier,
             backdrop = LocalGlassTopAppBarBackdrop.current,
             scrollBehavior = scrollBehavior,
             navigationIcon = navigationIcon,
             largeTitleTrailing = titleTrailing,
             actions = actions,
+            minExpansionPx = minExpansionPx,
         )
     }
 }
