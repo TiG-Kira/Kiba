@@ -7,12 +7,16 @@ import android.util.Base64
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -74,7 +78,7 @@ import kotlin.math.roundToInt
  * |---|---|---|
  * | 小标题 | 隐藏（miuix 自己的 alpha 管） | 账户昵称（与展开态同名，只是字号变小） |
  * | 大标题 | 账户昵称（没昵称才退回「账户」） | 隐藏 |
- * | 副标题 | 当前登录的查分器 | 随大标题一起淡出 |
+ * | 副标题 | 当前登录的查分器 | 隐藏（折叠行只有 56dp，装不下第二行） |
  * | 右上角头像 | 方形大图，从状态栏上沿起画，左 / 下两侧渐隐到没有边 | 缩小 + 淡出 |
  * | 刷新按钮 | 停在左侧 | 滑到右侧（中途整颗淡出，落地前才重新淡入） |
  *
@@ -147,12 +151,18 @@ fun MeTopBarSlot(
 
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
         val barWidth = maxWidth
+        // 折叠态的下沿填充（见 [CollapsedBottomFill]）：必须画在顶栏**之下**、内容**之上**，
+        // 所以放在 KibaTopBar 之前。
+        CollapsedBottomFill(collapse = collapse)
         KibaTopBar(
             // 折叠后的那一行仍旧是昵称：前后同名，滚上去只是「大字缩成小字」，
             // 不会有半路换标题的跳感（miuix 用 alpha 做大标题↔小标题的交叉淡出，换值即硬切）。
             title = largeTitle,
             largeTitle = largeTitle,
             subtitle = subtitle,
+            // 折叠态不显示副标题：56dp 的折叠行装不下它，它会排到玻璃底板下沿之外，
+            // 内容滚上来时和它叠成一团（真机实测，材质开着也一样）。
+            collapsedSubtitle = "",
             scrollBehavior = scrollBehavior,
             // 大标题行尾留出头像位：昵称过长时在头像左边就截断，别让文字钻进被图片
             // 压住的那一块（图片右上方是实的，字压上去会变脏）。折叠态标题走 miuix
@@ -171,12 +181,59 @@ fun MeTopBarSlot(
             MeTopBarAvatar(
                 url = avatarUrl,
                 nickname = nickname,
+                isChuni = isChuni,
                 collapse = collapse,
                 modifier = Modifier.align(Alignment.TopEnd),
             )
         }
     }
 }
+
+/**
+ * 折叠态顶栏下沿的填充带。
+ *
+ * ## 为什么需要它
+ *
+ * miuix 的玻璃底板在竖直方向是一条**淡出**的渐变（0.55 之后开始掉、底边归零），这是为了
+ * 让玻璃和内容之间没有硬边。曲目 / 畅听这些页面底下是彩色封面，淡出带看起来就是「玻璃变薄」；
+ * 但账户页底下是白底灰字的设置列表，淡出带里那几行字会被半透明地透出来，正好和折叠行的
+ * 小标题挤在一起，读起来像「字叠字」。
+ *
+ * 所以这一页自己在顶栏下沿垫一层页面底色：从顶栏顶一路铺到折叠行下沿再多 [COLLAPSED_FILL_TAIL]，
+ * 最后一小段再淡出。折叠进度为 0 时整体透明（展开态顶栏本来就是纯底色，不需要它）。
+ *
+ * 画在 [KibaTopBar] **之前**：玻璃底板与标题都在它上面，它只负责把下沿垫实。
+ * alpha 只在 `graphicsLayer` 里读折叠进度，滚动时不触发重组。
+ */
+@Composable
+private fun BoxScope.CollapsedBottomFill(collapse: State<Float>) {
+    val density = LocalDensity.current
+    val statusBarTop = WindowInsets.statusBars.getTop(density)
+    val fillHeight = with(density) { statusBarTop.toDp() } + COLLAPSED_ROW + COLLAPSED_FILL_TAIL
+    val bg = MiuixTheme.colorScheme.background
+    Box(
+        modifier = Modifier
+            .align(Alignment.TopStart)
+            .fillMaxWidth()
+            .height(fillHeight)
+            // 折叠到 20% 就完全实了：再往后内容已经滚到顶栏底下，晚一点就露字。
+            .graphicsLayer { alpha = (collapse.value * 5f).coerceIn(0f, 1f) }
+            .background(
+                Brush.verticalGradient(
+                    0.00f to bg,
+                    0.74f to bg,
+                    0.90f to bg.copy(alpha = 0.55f),
+                    1.00f to Color.Transparent,
+                ),
+            ),
+    )
+}
+
+/** miuix 折叠行高度（与 `TopAppBarDefaults.CollapsedHeight` 一致）。 */
+private val COLLAPSED_ROW = 56.dp
+
+/** 折叠态下沿填充带在折叠行之外多铺的一段，供最后 26% 的淡出用。 */
+private val COLLAPSED_FILL_TAIL = 18.dp
 
 /**
  * 头像边长：从状态栏上沿一路盖到副标题一带，是全页最大的一块装饰。
@@ -310,6 +367,7 @@ private fun refreshAlpha(collapse: Float): Float {
 private fun MeTopBarAvatar(
     url: String,
     nickname: String,
+    isChuni: Boolean,
     collapse: State<Float>,
     modifier: Modifier = Modifier,
 ) {
@@ -330,6 +388,7 @@ private fun MeTopBarAvatar(
         AvatarPicture(
             url = url,
             nickname = nickname,
+            isChuni = isChuni,
             modifier = Modifier.matchParentSize(),
         )
     }
@@ -337,7 +396,12 @@ private fun MeTopBarAvatar(
 
 /** 头像本体：有图走 Bitmap，没图（或图炸了）走 [DefaultAvatar]。 */
 @Composable
-private fun AvatarPicture(url: String, nickname: String, modifier: Modifier = Modifier) {
+private fun AvatarPicture(
+    url: String,
+    nickname: String,
+    isChuni: Boolean,
+    modifier: Modifier = Modifier,
+) {
     val bitmap = rememberAvatarBitmap(url)
     Box(
         modifier = modifier
@@ -387,28 +451,36 @@ private fun AvatarPicture(url: String, nickname: String, modifier: Modifier = Mo
                 modifier = Modifier.matchParentSize(),
             )
         } else {
-            DefaultAvatar(nickname = nickname, modifier = Modifier.matchParentSize())
+            DefaultAvatar(
+                nickname = nickname,
+                isChuni = isChuni,
+                modifier = Modifier.matchParentSize(),
+            )
         }
     }
 }
 
 /**
- * 默认头像：主题色的方形色块 + 昵称首字，字摆在右上（唯一不被蒙版削掉的那一块）。
+ * 默认头像：方形色块 + 昵称首字，字摆在右上（唯一不被蒙版削掉的那一块）。
  *
  * 没有头像时不能留一个灰洞 —— 账户页顶栏右上角空着，看起来像整页没加载完。
  * 形状跟真头像一致（方形、贴角、左下渐隐由外层蒙版统一处理），只是没有照片内容。
  * 取昵称首字符（中文取第一个字，英文取首个字母并转大写），没有昵称就用「K」。
+ *
+ * 底色按**游戏**分暖 / 冷两套（与分享图的曲目色一致）：舞萌暖橙、中二青蓝。
+ * 中二 + 水鱼永远没有真实头像，如果默认头像两游戏长得一模一样，切游戏时右上角
+ * 毫无变化，用户会以为「头像没跟着游戏走」。
  */
 @Composable
-private fun DefaultAvatar(nickname: String, modifier: Modifier = Modifier) {
+private fun DefaultAvatar(nickname: String, isChuni: Boolean, modifier: Modifier = Modifier) {
     val initial = nickname.trim().firstOrNull()
         ?.let { if (it.isLetter() && it.code < 128) it.uppercaseChar() else it }
         ?: 'K'
-    val primary = MiuixTheme.colorScheme.primary
+    val tint = if (isChuni) CHUNI_TINT else MAIMAI_TINT
     Box(
         modifier = modifier.background(
             Brush.verticalGradient(
-                listOf(primary.copy(alpha = 0.95f), primary.copy(alpha = 0.55f)),
+                listOf(tint.first.copy(alpha = 0.96f), tint.second.copy(alpha = 0.62f)),
             ),
         ),
         contentAlignment = Alignment.TopEnd,
@@ -422,6 +494,10 @@ private fun DefaultAvatar(nickname: String, modifier: Modifier = Modifier) {
         )
     }
 }
+
+/** 默认头像的暖色（舞萌）与冷色（中二）双色渐变。 */
+private val MAIMAI_TINT = Color(0xFFFF9A48) to Color(0xFFFF3E78)
+private val CHUNI_TINT = Color(0xFF4DE2E6) to Color(0xFF7C5CFF)
 
 /**
  * 取头像位图。

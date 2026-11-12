@@ -115,6 +115,14 @@ fun BlurTopAppBar(
     largeTitleColor: Color = MiuixTheme.colorScheme.onSurface,
     subtitle: String = "",
     subtitleColor: Color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+    /**
+     * 折叠态（小标题下方）那一行副标题，默认跟随 [subtitle]。
+     *
+     * 传空串即「展开态有副标题、折叠态没有」。折叠行的可见高度只有
+     * [TopAppBarDefaults.CollapsedHeight]，副标题会被排在玻璃底板下沿之外：
+     * 内容滚上来时直接和它叠字（账户页实测）。需要折叠态干净的页面用空串关掉。
+     */
+    smallSubtitle: String = subtitle,
     navigationIcon: @Composable () -> Unit = {},
     actions: @Composable RowScope.() -> Unit = {},
     scrollBehavior: ScrollBehavior? = null,
@@ -166,6 +174,7 @@ fun BlurTopAppBar(
         largeTitleBlurRadius = largeTitleBlurRadius,
         subtitle = subtitle,
         subtitleColor = subtitleColor,
+        smallSubtitle = smallSubtitle,
         navigationIcon = navigationIcon,
         actions = actionsRow,
         titlePadding = titlePadding,
@@ -191,6 +200,7 @@ private fun TopAppBarLayout(
     largeTitleColor: Color,
     subtitle: String,
     subtitleColor: Color,
+    smallSubtitle: String = subtitle,
     navigationIcon: @Composable () -> Unit,
     actions: @Composable () -> Unit,
     titlePadding: Dp,
@@ -415,7 +425,7 @@ private fun TopAppBarLayout(
                     }
                 }
             }
-            if (subtitle.isNotEmpty()) {
+            if (smallSubtitle.isNotEmpty()) {
                 Box(
                     Modifier
                         .layoutId("smallSubtitle")
@@ -425,7 +435,7 @@ private fun TopAppBarLayout(
                         },
                 ) {
                     Text(
-                        text = subtitle,
+                        text = smallSubtitle,
                         color = animatedSubtitleColor,
                         style = MiuixTheme.textStyles.body2,
                         maxLines = 1,

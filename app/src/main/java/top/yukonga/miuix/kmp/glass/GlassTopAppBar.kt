@@ -257,6 +257,8 @@ fun GlassTopAppBar(
     backdrop: Backdrop? = null,
     largeTitle: String = title,
     subtitle: String = "",
+    /** 折叠态小标题下方那行副标题；默认跟随 [subtitle]，传空串让折叠态不带副标题。 */
+    smallSubtitle: String = subtitle,
     titleColor: Color = MiuixTheme.colorScheme.onSurface,
     largeTitleColor: Color = MiuixTheme.colorScheme.onSurface,
     subtitleColor: Color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
@@ -301,6 +303,7 @@ fun GlassTopAppBar(
         backdrop = backdrop,
         largeTitle = largeTitle,
         subtitle = subtitle,
+        smallSubtitle = smallSubtitle,
         titleColor = titleColor,
         largeTitleColor = largeTitleColor,
         subtitleColor = subtitleColor,
@@ -357,6 +360,8 @@ fun GlassTopAppBar(
     backdrop: Backdrop? = null,
     largeTitle: String = title,
     subtitle: String = "",
+    /** 折叠态小标题下方那行副标题；默认跟随 [subtitle]，传空串让折叠态不带副标题。 */
+    smallSubtitle: String = subtitle,
     titleColor: Color = MiuixTheme.colorScheme.onSurface,
     largeTitleColor: Color = MiuixTheme.colorScheme.onSurface,
     subtitleColor: Color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
@@ -552,6 +557,7 @@ fun GlassTopAppBar(
                 largeTitleBlurRadius = largeTitleBlurRadius,
                 subtitle = subtitle,
                 subtitleColor = subtitleColor,
+                smallSubtitle = smallSubtitle,
                 color = Color.Transparent,
                 scrollBehavior = scrollBehavior,
                 defaultWindowInsetsPadding = defaultWindowInsetsPadding,

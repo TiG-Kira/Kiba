@@ -77,6 +77,13 @@ fun KibaTopBar(
     largeTitle: String = title,
     /** 展开态副标题（大标题下方一行）。折叠时随大标题一起淡出，位置由 miuix 自己管。 */
     subtitle: String = "",
+    /**
+     * 折叠态（小标题下方）那一行副标题，默认跟随 [subtitle]。
+     *
+     * ⚠️ 折叠行可见高度只有 56dp，副标题会被排在玻璃底板下沿之外 —— 内容滚上来时直接
+     * 和它叠字（账户页实测，材质开着也救不了）。折叠态不想带副标题就传空串。
+     */
+    collapsedSubtitle: String = subtitle,
     navigationIcon: @Composable () -> Unit = {},
     /**
      * 展开态大标题行尾插槽（曲目页的「舞萌 / 中二」开关）。
@@ -131,6 +138,7 @@ fun KibaTopBar(
                     title = title,
                     largeTitle = largeTitle,
                     subtitle = subtitle,
+                    smallSubtitle = collapsedSubtitle,
                     backdrop = null,
                     scrollBehavior = scrollBehavior,
                     navigationIcon = navigationIcon,
@@ -148,6 +156,7 @@ fun KibaTopBar(
             title = title,
             largeTitle = largeTitle,
             subtitle = subtitle,
+            smallSubtitle = collapsedSubtitle,
             modifier = modifier,
             backdrop = LocalGlassTopAppBarBackdrop.current,
             scrollBehavior = scrollBehavior,
