@@ -75,7 +75,6 @@ fun MarqueeText(
     }
 
     LaunchedEffect(text, textWidthPx, viewportWidthPx) {
-        // 几何变化导致 effect 重启时，先回到起点：杜绝沿用中途 offset 继续滚。
         offset.snapTo(0f)
         while (true) {
             // 每轮滚动前重读最新几何。宽度不足时保持起点并退出。
@@ -85,6 +84,9 @@ fun MarqueeText(
                 return@LaunchedEffect
             }
             val speedPx = SCROLL_SPEED_DP_PER_SEC * density.density
+            // 时长按真实距离计算：小溢出量（如尾部几个像素）也能在短时间里
+            // 明显滚完，而不是被下限钳制成肉眼不可见的蠕动。仅设很低的下限
+            // 防止闪帧。
             val durationMs = (distance / speedPx * 1000f).roundToInt()
                 .coerceIn(MIN_SCROLL_MS, MAX_SCROLL_MS)
             val backMs = (durationMs * BACK_SPEED_FACTOR).roundToInt()
@@ -106,10 +108,15 @@ fun MarqueeText(
                 // 溢出判定 = 文本理想宽 > 视口宽（两个尺寸都来自真实测量）。
                 val w = viewportWidthPx.toFloat()
                 if (w > 0f && textWidthPx > viewportWidthPx) {
-                    val fade = minOf(
-                        FADE_WIDTH.toPx() * density.density,
-                        w / 2f,
-                    )
+                    val overflowPx = (textWidthPx - viewportWidthPx).toFloat()
+                    // 淡出带自适应：静止态淡出只吃掉溢出区域本身。若溢出量小于
+                    // 标准 [FADE_WIDTH]，淡出带缩窄到溢出量——否则超宽的淡出带
+                    // 会把可见文字也吃掉，观感像「被硬截断且永不滚动」。
+                    val fade = if (isScrolling.value) {
+                        minOf(FADE_WIDTH.toPx() * density.density, w / 2f)
+                    } else {
+                        minOf(FADE_WIDTH.toPx() * density.density, overflowPx, w / 2f)
+                    }
                     val brush = if (isScrolling.value) {
                         Brush.horizontalGradient(
                             0f to Color.Transparent,
@@ -118,9 +125,11 @@ fun MarqueeText(
                             1f to Color.Transparent,
                         )
                     } else {
+                        // 静止：渐变从「文本尾对齐视口右缘」处开始向右淡出
+                        val tailStart = ((w - overflowPx) / w).coerceIn(0f, 1f)
                         Brush.horizontalGradient(
                             0f to Color.White,
-                            ((w - fade) / w) to Color.White,
+                            tailStart to Color.White,
                             1f to Color.Transparent,
                         )
                     }
@@ -191,8 +200,8 @@ private val END_HOLD = 600L
 /** 滚动速度（dp/s）。 */
 private const val SCROLL_SPEED_DP_PER_SEC = 45f
 
-/** 单次滚动时长上下限（毫秒）。 */
-private const val MIN_SCROLL_MS = 1_000
+/** 单次滚动时长上下限（毫秒）。下限仅防闪帧，小溢出量也如实快滚。 */
+private const val MIN_SCROLL_MS = 350
 private const val MAX_SCROLL_MS = 12_000
 
 /** 滚回开头的速度倍率（回程略快）。 */
