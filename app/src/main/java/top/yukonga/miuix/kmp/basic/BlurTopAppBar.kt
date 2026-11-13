@@ -63,7 +63,7 @@ import androidx.compose.ui.layout.layoutId
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
+import com.kira.kiba.ui.common.MarqueeText
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -334,13 +334,12 @@ private fun TopAppBarLayout(
                         translationY = smallTitleTranslationY.value
                     },
             ) {
-                Text(
+                // 折叠态小标题：单行，超宽跑马灯滚动（MarqueeText）
+                MarqueeText(
                     text = title,
                     color = animatedTitleColor,
                     fontSize = MiuixTheme.textStyles.title3.fontSize,
                     fontWeight = FontWeight.Medium,
-                    overflow = TextOverflow.Ellipsis,
-                    softWrap = false,
                 )
             }
             Box(
@@ -397,14 +396,12 @@ private fun TopAppBarLayout(
                     // 大标题行：标题文字 +（可选）行尾插槽。插槽与大标题同一行、垂直居中，
                     // 共用外层 graphicsLayer 的折叠淡出 / 位移，天然与大标题同频。
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
+                        // 扩展态大标题：单行，超宽跑马灯滚动（MarqueeText）
+                        MarqueeText(
                             text = largeTitle,
                             color = animatedLargeTitleColor,
                             fontSize = MiuixTheme.textStyles.title1.fontSize,
                             fontWeight = largeTitleFontWeight,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            softWrap = false,
                             modifier = if (largeTitleTrailing != null) {
                                 Modifier.weight(1f)
                             } else {
@@ -434,13 +431,12 @@ private fun TopAppBarLayout(
                             translationY = smallTitleTranslationY.value
                         },
                 ) {
-                    Text(
+                    // 折叠态副标题：单行，超宽跑马灯滚动（MarqueeText）；
+                    // 扩展态副标题（上方 Column 内）保持原样不滚动
+                    MarqueeText(
                         text = smallSubtitle,
                         color = animatedSubtitleColor,
                         style = MiuixTheme.textStyles.body2,
-                        maxLines = 1,
-                        softWrap = false,
-                        overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
