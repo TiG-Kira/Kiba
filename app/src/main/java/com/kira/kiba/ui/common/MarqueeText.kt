@@ -74,19 +74,22 @@ fun MarqueeText(
         derivedStateOf { offset.value > 0.5f }
     }
 
-    LaunchedEffect(text, textWidthPx, viewportWidthPx) {
+    LaunchedEffect(text) {
+        // 只按 text 重启：几何变化绝不重启（否则几何/组合抖动时每次都
+        // snapTo(0)，滚动画永远起不来，观感就是「永远截断在起点」）。
+        // 几何未就绪或不溢出时轮询等待，几何到达后自动开始滚动。
         offset.snapTo(0f)
         while (true) {
-            // 每轮滚动前重读最新几何。宽度不足时保持起点并退出。
-            val distance = (textWidthPx - viewportWidthPx).toFloat()
-            if (textWidthPx <= 0 || viewportWidthPx <= 0 || distance <= 0f) {
+            val tw = textWidthPx
+            val vw = viewportWidthPx
+            val distance = (tw - vw).toFloat()
+            if (tw <= 0 || vw <= 0 || distance <= 0f) {
                 offset.snapTo(0f)
-                return@LaunchedEffect
+                delay(GEOMETRY_POLL_MS)
+                continue
             }
             val speedPx = SCROLL_SPEED_DP_PER_SEC * density.density
-            // 时长按真实距离计算：小溢出量（如尾部几个像素）也能在短时间里
-            // 明显滚完，而不是被下限钳制成肉眼不可见的蠕动。仅设很低的下限
-            // 防止闪帧。
+            // 时长按真实距离计算：小溢出量也能明显滚完，仅设很低下限防闪帧。
             val durationMs = (distance / speedPx * 1000f).roundToInt()
                 .coerceIn(MIN_SCROLL_MS, MAX_SCROLL_MS)
             val backMs = (durationMs * BACK_SPEED_FACTOR).roundToInt()
@@ -109,14 +112,12 @@ fun MarqueeText(
                 val w = viewportWidthPx.toFloat()
                 if (w > 0f && textWidthPx > viewportWidthPx) {
                     val overflowPx = (textWidthPx - viewportWidthPx).toFloat()
-                    // 淡出带自适应：静止态淡出只吃掉溢出区域本身。若溢出量小于
-                    // 标准 [FADE_WIDTH]，淡出带缩窄到溢出量——否则超宽的淡出带
-                    // 会把可见文字也吃掉，观感像「被硬截断且永不滚动」。
-                    val fade = if (isScrolling.value) {
-                        minOf(FADE_WIDTH.toPx() * density.density, w / 2f)
-                    } else {
-                        minOf(FADE_WIDTH.toPx() * density.density, overflowPx, w / 2f)
-                    }
+                    // 淡出带统一自适应：取「标准宽度 / 溢出量 / 半视口」的最小值。
+                    // - 小溢出量：淡出带缩到溢出量，只隐住超出部分，不吞可见文字；
+                    // - 大溢出量：淡出带就是标准宽度，贴视口右缘——绝不是随
+                    //   文本尾移动（文本尾在视口外时按尾定位会让整行线性淡出）。
+                    // 注意 .toPx() 已含 density，不再另乘。
+                    val fade = minOf(FADE_WIDTH.toPx(), overflowPx, w / 2f)
                     val brush = if (isScrolling.value) {
                         Brush.horizontalGradient(
                             0f to Color.Transparent,
@@ -125,11 +126,9 @@ fun MarqueeText(
                             1f to Color.Transparent,
                         )
                     } else {
-                        // 静止：渐变从「文本尾对齐视口右缘」处开始向右淡出
-                        val tailStart = ((w - overflowPx) / w).coerceIn(0f, 1f)
                         Brush.horizontalGradient(
                             0f to Color.White,
-                            tailStart to Color.White,
+                            ((w - fade) / w) to Color.White,
                             1f to Color.Transparent,
                         )
                     }
@@ -190,6 +189,9 @@ fun MarqueeText(
         )
     }
 }
+
+/** 几何未就绪/暂不溢出时的轮询间隔。 */
+private const val GEOMETRY_POLL_MS = 200L
 
 /** 滚回开头后的停留时长。 */
 private val RESTART_DELAY = 5_000L
