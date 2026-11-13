@@ -10,6 +10,7 @@ import com.kira.kiba.core.db.entity.ChuniRecordEntity
 import com.kira.kiba.core.model.GameType
 import com.kira.kiba.core.model.ScoreSource
 import com.kira.kiba.core.utils.SpUtil
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -87,10 +88,17 @@ object ChuniRecordSync {
      */
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
+    /** 当前这轮 Syncing 的开始时刻（看门狗判卡死用）。 */
+    @Volatile
+    private var syncStartedAtMs = 0L
+
     /** 应用级作用域触发刷新（见 [appScope] 注释）。 */
     fun refreshAsync() {
         appScope.launch { runCatching { refresh() } }
     }
+
+    /** Syncing 超过此时长视为卡死，看门狗放行重入。 */
+    private const val SYNC_STALE_MS = 3 * 60_000L
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
@@ -128,40 +136,60 @@ object ChuniRecordSync {
      * 落库（Room）与网络请求**必须整体待在 Dispatchers.IO**（本项目已知坑：主线程访问数据库闪退）。
      */
     suspend fun refresh() {
-        if (_state.value is SyncState.Syncing) return
-        _state.value = SyncState.Syncing
-        val source = SpUtil.getScoreSource(GameType.CHUNITHM)
-        val outcome: Result<Parsed> = withContext(Dispatchers.IO) {
-            runCatching {
-                val parsed = when (source) {
-                    ScoreSource.LXNS -> fetchFromLxns()
-                    ScoreSource.WATER_FISH -> fetchFromDivingFish()
-                }
-                commit(parsed)
-            }
+        // 看门狗：Syncing 超过 [SYNC_STALE_MS] 视为上次同步异常遗留在半路
+        // （如 UI 作用域被取消、回调异常被外层 runCatching 吞掉），放行重入自愈，
+        // 不再让用户只能重启 APP。
+        val current = _state.value
+        if (current is SyncState.Syncing) {
+            val stale = System.currentTimeMillis() - syncStartedAtMs > SYNC_STALE_MS
+            if (!stale) return
         }
-        outcome.onSuccess { parsed ->
-            fetchedThisSession = true
-            // Rating 历史曲线：中二自成一桶（公式与水鱼/落雪的舞萌口径完全不同，
-            // 圆整后能对上的概率极低，混画只会变成两条互不相干的折线）
-            RatingHistory.record(GameType.CHUNITHM, source, SpUtil.getChuniRating())
-            Log.i(
-                TAG,
-                "chuni records synced (${source.key}): ${parsed.records.size}, " +
-                    "rating=${parsed.rating}, recent=${parsed.recentCount}",
-            )
-            _state.value = SyncState.Done(
-                count = parsed.records.size,
-                rating = SpUtil.getChuniRating(),
-                empty = parsed.records.isEmpty(),
-                recentCount = parsed.recentCount,
-            )
-        }.onFailure { e ->
-            Log.w(TAG, "chuni records refresh failed", e)
-            val msg = e.message?.takeIf { it.isNotBlank() } ?: "成绩同步失败"
-            _state.value = SyncState.Failed(
-                if (msg.length > 200) msg.take(200) + "…" else msg,
-            )
+        syncStartedAtMs = System.currentTimeMillis()
+        _state.value = SyncState.Syncing
+        try {
+            val source = SpUtil.getScoreSource(GameType.CHUNITHM)
+            val outcome: Result<Parsed> = withContext(Dispatchers.IO) {
+                runCatching {
+                    val parsed = when (source) {
+                        ScoreSource.LXNS -> fetchFromLxns()
+                        ScoreSource.WATER_FISH -> fetchFromDivingFish()
+                    }
+                    commit(parsed)
+                }
+            }
+            outcome.onSuccess { parsed ->
+                fetchedThisSession = true
+                // Rating 历史曲线：中二自成一桶（公式与水鱼/落雪的舞萌口径完全不同，
+                // 圆整后能对上的概率极低，混画只会变成两条互不相干的折线）
+                RatingHistory.record(GameType.CHUNITHM, source, SpUtil.getChuniRating())
+                Log.i(
+                    TAG,
+                    "chuni records synced (${source.key}): ${parsed.records.size}, " +
+                        "rating=${parsed.rating}, recent=${parsed.recentCount}",
+                )
+                _state.value = SyncState.Done(
+                    count = parsed.records.size,
+                    rating = SpUtil.getChuniRating(),
+                    empty = parsed.records.isEmpty(),
+                    recentCount = parsed.recentCount,
+                )
+            }.onFailure { e ->
+                Log.w(TAG, "chuni records refresh failed", e)
+                val msg = e.message?.takeIf { it.isNotBlank() } ?: "成绩同步失败"
+                _state.value = SyncState.Failed(
+                    if (msg.length > 200) msg.take(200) + "…" else msg,
+                )
+            }
+        } catch (e: CancellationException) {
+            // 同步协程被取消（历史上 UI 作用域调用点会这样死）：先落终态再抛，
+            // 杜绝 Syncing 永卡「正在同步中二成绩…」只能重启。
+            _state.value = SyncState.Failed("同步被中断，点击重试")
+            throw e
+        } catch (e: Exception) {
+            // onSuccess/onFailure 回调体内逃逸的任何异常：同样落终态，
+            // 否则外层 runCatching 静默吞掉后 Syncing 永卡。
+            Log.w(TAG, "chuni records refresh crashed", e)
+            _state.value = SyncState.Failed("同步异常：${e.message ?: e.javaClass.simpleName}")
         }
     }
 

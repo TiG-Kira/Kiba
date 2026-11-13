@@ -11,6 +11,7 @@ import com.kira.kiba.core.model.GameType
 import com.kira.kiba.core.model.ScoreSource
 import com.kira.kiba.core.repository.RecordRepository
 import com.kira.kiba.core.utils.SpUtil
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -472,6 +473,25 @@ object DivingFishAccount {
      * 双通道：原版 jwt 走 www.diving-fish.com + Cookie；OAuth 走 maimai.diving-fish.com + Bearer。
      */
     suspend fun refreshRecords() {
+        try {
+            refreshRecordsBody()
+        } catch (e: CancellationException) {
+            // 协程被取消（调用方在 UI 作用域时会发生）：先落终态再抛，
+            // 杜绝 loading 卡 true、Best 50 卡在「正在获取成绩…」只能重启。
+            _state.value = _state.value.copy(loading = false)
+            throw e
+        } catch (e: Exception) {
+            // onSuccess/onFailure 回调体内逃逸的任何异常（落库 / SP 写入等）
+            // 若不兜住会被外层 runCatching 静默吞掉，loading 永停 true。
+            Log.w(TAG, "refresh records crashed", e)
+            _state.value = _state.value.copy(
+                loading = false,
+                error = "成绩刷新异常：${e.message ?: e.javaClass.simpleName}（将展示本地缓存）",
+            )
+        }
+    }
+
+    private suspend fun refreshRecordsBody() {
         // 数据源分发：舞萌侧选的是落雪就直接走落雪（与本类的水鱼凭据无关），
         // 两游戏的数据源各自独立，互不影响。
         if (SpUtil.getScoreSource(GameType.MAIMAI) == ScoreSource.LXNS) {

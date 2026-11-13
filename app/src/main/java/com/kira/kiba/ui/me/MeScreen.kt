@@ -128,8 +128,9 @@ fun MeScreen(
     // 进中二「账户」页自动同步一次（本进程内仅一次；顶栏手动刷新不受限）
     LaunchedEffect(isChunithm, account.bound, chuniReady) {
         if (isChunithm && chuniReady && ChuniRecordSync.shouldAutoRefresh()) {
-            // 兜底：刷新内部已自捕获，这里再包一层，确保任何漏网异常都不会打死 UI 协程
-            runCatching { ChuniRecordSync.refresh() }
+            // 应用级作用域触发：LaunchedEffect 是 UI 作用域，离开页面即取消，
+            // 会把同步掐死在半路（Syncing 永卡「正在同步中二成绩…」）
+            ChuniRecordSync.refreshAsync()
         }
     }
 
@@ -181,7 +182,7 @@ fun MeScreen(
                                     !chuniReady && chuniSource == ScoreSource.LXNS -> onOpenLxnsLogin()
                                     !chuniReady -> onOpenLogin()
                                     chuniRecordCount > 0 -> onOpenChuniBest()
-                                    else -> scope.launch { runCatching { ChuniRecordSync.refresh() } }
+                                    else -> ChuniRecordSync.refreshAsync()
                                 }
                             },
                             endActions = {

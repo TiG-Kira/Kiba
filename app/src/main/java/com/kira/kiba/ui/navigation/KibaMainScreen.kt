@@ -701,7 +701,9 @@ fun KibaMainScreen() {
                                   // 顶栏刷新按当前游戏分流：中二走 ChuniRecordSync，
                                   // 舞萌走原 KibaState.refreshRecords
                                   if (gameType == GameType.CHUNITHM) {
-                                      frameScope.launch { runCatching { ChuniRecordSync.refresh() } }
+                                      // 必须走应用级作用域：frameScope 是 UI 作用域，
+                                      // 离开页面/重组被取消会把同步掐死在半路
+                                      ChuniRecordSync.refreshAsync()
                                   } else {
                                       KibaState.refreshRecords()
                                   }
