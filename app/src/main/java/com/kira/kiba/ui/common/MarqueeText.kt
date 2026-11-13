@@ -20,12 +20,13 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
@@ -43,8 +44,13 @@ import kotlin.math.roundToInt
  *   滚动时左右两侧均淡出，遮罩宽 [FADE_WIDTH]；
  * - 不溢出时不绘制任何遮罩，观感与普通 Text 一致。
  *
- * 滚动位移走 draw 阶段（graphicsLayer lambda 读 Animatable），不触发重组；
- * 遮罩刷子按需要重建，同样只在 draw 阶段读状态。
+ * 布局结构（防「滚进空白区」的关键）：
+ * - 外层 Box = 视口，唯一裁切点（clipToBounds），宽度 = 组件被给到的宽度；
+ * - 内层 Text 用 **无限宽度约束** 测量，尺寸 = 文本理想宽度 → 整行字符
+ *   全部布局、全部绘制。若让 Text 直接继承视口约束，`overflow=Clip` 会把
+ *   绘制裁在其布局宽度处，后半段字符根本不画，滚动却按全文距离进行 →
+ *   滚出绘制区后只剩空白；
+ * - 裁切只发生在视口，滚动位移在 draw 阶段钳制为不越过文本尾部。
  */
 @Composable
 fun MarqueeText(
@@ -57,11 +63,10 @@ fun MarqueeText(
 ) {
     val density = LocalDensity.current
 
-    // 文本理想宽度（px，来自 multiParagraph，不受布局约束截断）
+    // 文本理想宽度（px）——来自无限宽度测量下的 Text 自身尺寸
     var textWidthPx by remember { mutableIntStateOf(0) }
-    // 视口宽度（本组件被给到的宽度）
+    // 视口宽度（px）——外层 Box 被给到的宽度
     var viewportWidthPx by remember { mutableIntStateOf(0) }
-    var overflow by remember { mutableStateOf(false) }
 
     val offset = remember { Animatable(0f) }
     // 是否处于「滚动中」（决定遮罩形态）；用 derivedStateOf 让 draw 阶段按需读取
@@ -69,14 +74,13 @@ fun MarqueeText(
         derivedStateOf { offset.value > 0.5f }
     }
 
-    LaunchedEffect(text, overflow, textWidthPx, viewportWidthPx) {
+    LaunchedEffect(text, textWidthPx, viewportWidthPx) {
         // 几何变化导致 effect 重启时，先回到起点：杜绝沿用中途 offset 继续滚。
         offset.snapTo(0f)
         while (true) {
-            // 每轮滚动前重读最新几何（textWidth/viewport 成对更新）。万一状态晚到，
-            // 下一轮自动用上正确值，不会带着失真距离一路滚到底。
+            // 每轮滚动前重读最新几何。宽度不足时保持起点并退出。
             val distance = (textWidthPx - viewportWidthPx).toFloat()
-            if (!overflow || textWidthPx <= 0 || viewportWidthPx <= 0 || distance <= 0f) {
+            if (textWidthPx <= 0 || viewportWidthPx <= 0 || distance <= 0f) {
                 offset.snapTo(0f)
                 return@LaunchedEffect
             }
@@ -94,12 +98,14 @@ fun MarqueeText(
     Box(
         modifier = modifier
             .clipToBounds()
+            .onSizeChanged { viewportWidthPx = it.width }
             .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
             .drawWithContent {
                 drawContent()
-                // 仅在溢出时加淡出遮罩：静止 = 右缘；滚动 = 两侧
-                if (overflow && textWidthPx > 0 && viewportWidthPx > 0) {
-                    val w = viewportWidthPx.toFloat()
+                // 仅在溢出时加淡出遮罩：静止 = 右缘；滚动 = 两侧。
+                // 溢出判定 = 文本理想宽 > 视口宽（两个尺寸都来自真实测量）。
+                val w = viewportWidthPx.toFloat()
+                if (w > 0f && textWidthPx > viewportWidthPx) {
                     val fade = minOf(
                         FADE_WIDTH.toPx() * density.density,
                         w / 2f,
@@ -122,30 +128,56 @@ fun MarqueeText(
                 }
             },
     ) {
-        androidx.compose.material3.Text(
-            text = text,
-            color = color,
-            fontSize = fontSize,
-            fontWeight = fontWeight,
-            style = style ?: TextStyle.Default,
-            maxLines = 1,
-            softWrap = false,
-            overflow = TextOverflow.Clip,
-            onTextLayout = { layout: TextLayoutResult ->
-                textWidthPx = layout.multiParagraph.width.roundToInt()
-                overflow = layout.hasVisualOverflow
+        // 自定义 measure：给 Text 无限宽度约束测量，保证整行完整布局与绘制；
+        // 组件自身尺寸仍跟随外部约束（固定宽 = 视口宽，wrap 内容 = 文本宽）。
+        Layout(
+            content = {
+                androidx.compose.material3.Text(
+                    text = text,
+                    color = color,
+                    fontSize = fontSize,
+                    fontWeight = fontWeight,
+                    style = style ?: TextStyle.Default,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Clip,
+                    modifier = Modifier
+                        // Text 以无限宽测量，其尺寸即文本理想宽度（全部字符）
+                        .onSizeChanged { textWidthPx = it.width }
+                        .graphicsLayer {
+                            // 兜底钳制：位移永不越过「文本尾对齐视口右缘」的位置，
+                            // 即使动画目标短暂失真也不会滚出文本尾部进空白区。
+                            val maxScroll =
+                                (textWidthPx - viewportWidthPx).coerceAtLeast(0).toFloat()
+                            translationX = -offset.value.coerceIn(0f, maxScroll)
+                        },
+                )
             },
-            modifier = Modifier
-                // 视口宽度取自 Text 自身（与 onTextLayout 同一元素、同一次布局成对触发）：
-                // textWidth/viewport 永远来自同一批布局结果，不会出现一个新一个旧的
-                // 失配对——失配会让滚动距离超长，滚出文本尾部进空白区。
-                .onSizeChanged { viewportWidthPx = it.width }
-                .graphicsLayer {
-                    // 兜底钳制：位移永不越过「文本尾对齐视口右缘」的位置，
-                    // 即使动画目标短暂失真也不会滚出文本尾部进空白区。
-                    val maxScroll = (textWidthPx - viewportWidthPx).coerceAtLeast(0).toFloat()
-                    translationX = -offset.value.coerceIn(0f, maxScroll)
-                },
+            measurePolicy = { measurables, constraints ->
+                val placeable = measurables[0].measure(
+                    // 关键：无限宽度。文本永不折行也不被约束截断，完整绘制。
+                    Constraints(
+                        minWidth = 0,
+                        maxWidth = Constraints.Infinity,
+                        minHeight = 0,
+                        maxHeight = constraints.maxHeight,
+                    )
+                )
+                val w = when {
+                    constraints.hasFixedWidth -> constraints.maxWidth
+                    constraints.hasBoundedWidth ->
+                        minOf(placeable.width, constraints.maxWidth)
+                    else -> placeable.width
+                }
+                val h = if (constraints.hasFixedHeight) {
+                    constraints.maxHeight
+                } else {
+                    placeable.height
+                }
+                layout(w, h) {
+                    placeable.place(0, (h - placeable.height) / 2)
+                }
+            },
         )
     }
 }
