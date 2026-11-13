@@ -70,16 +70,20 @@ fun MarqueeText(
     }
 
     LaunchedEffect(text, overflow, textWidthPx, viewportWidthPx) {
-        val distance = (textWidthPx - viewportWidthPx).toFloat()
-        if (!overflow || distance <= 0f || viewportWidthPx <= 0) {
-            offset.snapTo(0f)
-            return@LaunchedEffect
-        }
-        val speedPx = SCROLL_SPEED_DP_PER_SEC * density.density
-        val durationMs = (distance / speedPx * 1000f).roundToInt()
-            .coerceIn(MIN_SCROLL_MS, MAX_SCROLL_MS)
-        val backMs = (durationMs * BACK_SPEED_FACTOR).roundToInt()
+        // 几何变化导致 effect 重启时，先回到起点：杜绝沿用中途 offset 继续滚。
+        offset.snapTo(0f)
         while (true) {
+            // 每轮滚动前重读最新几何（textWidth/viewport 成对更新）。万一状态晚到，
+            // 下一轮自动用上正确值，不会带着失真距离一路滚到底。
+            val distance = (textWidthPx - viewportWidthPx).toFloat()
+            if (!overflow || textWidthPx <= 0 || viewportWidthPx <= 0 || distance <= 0f) {
+                offset.snapTo(0f)
+                return@LaunchedEffect
+            }
+            val speedPx = SCROLL_SPEED_DP_PER_SEC * density.density
+            val durationMs = (distance / speedPx * 1000f).roundToInt()
+                .coerceIn(MIN_SCROLL_MS, MAX_SCROLL_MS)
+            val backMs = (durationMs * BACK_SPEED_FACTOR).roundToInt()
             delay(RESTART_DELAY)
             offset.animateTo(distance, tween(durationMs, easing = LinearEasing))
             delay(END_HOLD)
@@ -89,7 +93,6 @@ fun MarqueeText(
 
     Box(
         modifier = modifier
-            .onSizeChanged { viewportWidthPx = it.width }
             .clipToBounds()
             .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
             .drawWithContent {
@@ -132,7 +135,17 @@ fun MarqueeText(
                 textWidthPx = layout.multiParagraph.width.roundToInt()
                 overflow = layout.hasVisualOverflow
             },
-            modifier = Modifier.graphicsLayer { translationX = -offset.value },
+            modifier = Modifier
+                // 视口宽度取自 Text 自身（与 onTextLayout 同一元素、同一次布局成对触发）：
+                // textWidth/viewport 永远来自同一批布局结果，不会出现一个新一个旧的
+                // 失配对——失配会让滚动距离超长，滚出文本尾部进空白区。
+                .onSizeChanged { viewportWidthPx = it.width }
+                .graphicsLayer {
+                    // 兜底钳制：位移永不越过「文本尾对齐视口右缘」的位置，
+                    // 即使动画目标短暂失真也不会滚出文本尾部进空白区。
+                    val maxScroll = (textWidthPx - viewportWidthPx).coerceAtLeast(0).toFloat()
+                    translationX = -offset.value.coerceIn(0f, maxScroll)
+                },
         )
     }
 }
