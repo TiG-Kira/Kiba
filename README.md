@@ -11,6 +11,7 @@ UI 采用 [miuix](https://github.com/miuix-kotlin-multiplatform/miuix) 玻璃拟
 [![CI](https://github.com/TiG-Kira/Kiba/actions/workflows/ci.yml/badge.svg)](https://github.com/TiG-Kira/Kiba/actions/workflows/ci.yml)
 ![minSdk](https://img.shields.io/badge/minSdk-33-3DDC84?logo=android)
 ![Kotlin](https://img.shields.io/badge/Kotlin-2.4-7F52FF?logo=kotlin)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 </div>
 
@@ -86,3 +87,12 @@ Room · Coil（256MB 磁盘缓存）· OkHttp · Coroutines · DataStore/SpUtil�
 - [KibaBot](https://github.com/KilluaSakata/Kiba) —— Agent 技能与 B50 图片逻辑来源
 - [miuix](https://github.com/miuix-kotlin-multiplatform/miuix) —— UI 组件库
 - [水鱼查分器](https://www.diving-fish.com/maimaidx/prober/) / [落雪 API](https://maimai.lxns.net/) —— 成绩与音源数据
+
+## 许可证
+
+本项目基于 [Apache License 2.0](LICENSE) 开源发布。
+
+- 你可以自由使用、复制、修改、合并、分发本项目代码及其衍生作品，商业与非商业用途均可；
+- 分发时需保留原始版权声明与许可证文本，并显著标注对源码的修改；
+- 本软件按「现状」提供，不含任何明示或默示的担保，详见 [LICENSE](LICENSE) 全文；
+- 第三方依赖与数据来源各自遵循其原始许可证（见上文「数据来源与免责声明」「致谢」）。

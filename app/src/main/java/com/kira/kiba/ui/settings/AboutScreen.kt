@@ -488,6 +488,11 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
                         summary = "问题反馈与功能建议欢迎提 issue",
                         onClick = { openUrl(context, "https://github.com/TiG-Kira/Kiba") },
                     )
+                    ArrowPreference(
+                        title = "开源许可证",
+                        summary = "本项目基于 Apache License 2.0 开源",
+                        onClick = { openUrl(context, "https://github.com/TiG-Kira/Kiba/blob/main/LICENSE") },
+                    )
                 }
             }
         }

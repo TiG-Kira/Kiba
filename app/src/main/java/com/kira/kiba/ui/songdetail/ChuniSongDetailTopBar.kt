@@ -38,6 +38,7 @@ import com.kira.kiba.R
 import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.db.entity.ChuniSongEntity
 import com.kira.kiba.core.model.GameType
+import com.kira.kiba.ui.common.CopyTitleAction
 import com.kira.kiba.core.utils.CoverSources
 import com.kira.kiba.core.utils.SpUtil
 import com.kira.kiba.ui.common.COVER_DARK_FOREGROUND
@@ -197,7 +198,11 @@ fun ChuniSongDetailTopBarSlot(
                         tint = onCoverColor,
                     )
                 }
-                // 中二节奏不支持分享，不提供分享入口
+                // 复制歌名到剪贴板（中二节奏不支持分享，不提供分享入口）
+                CopyTitleAction(
+                    title = current?.title ?: "",
+                    tint = onCoverColor,
+                )
             },
             onCollapsedHeightPx = { liquidSkinCollapsedPx = it },
             background = {

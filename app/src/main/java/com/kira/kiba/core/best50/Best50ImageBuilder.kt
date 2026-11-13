@@ -11,6 +11,7 @@ import android.graphics.Path
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.graphics.Rect
+import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
 import android.util.Log
@@ -124,6 +125,7 @@ object Best50ImageBuilder {
         nickname: String,
         rating: Int,
         charts: List<ChartEntity> = emptyList(),
+        avatar: Bitmap? = null,
     ): ByteArray? = withContext(Dispatchers.IO) {
         chartCache.clear()
         charts.forEach { chartCache[it.songId to it.difficultyType.ordinal] = it }
@@ -147,7 +149,7 @@ object Best50ImageBuilder {
             val totalSd = old.take(35).sumOf { computeRa(it.ds, it.achievements, true) }
             val totalDx = new.take(15).sumOf { computeRa(it.ds, it.achievements, true) }
             runCatching {
-                drawHeader(context, canvas, nickname, ratingForHeader, totalSd, totalDx)
+                drawHeader(context, canvas, nickname, ratingForHeader, totalSd, totalDx, avatar)
             }
 
             // ── 旧曲（35）──
@@ -213,8 +215,12 @@ object Best50ImageBuilder {
      * 表头（参考稿 111.png 定稿）：极简深色条，不要 KIBA 大字标，也不再贴
      * 名牌框 / Rating 框 / 段位牌 / 称号条那套 2019 年原生素材。
      *
-     * 左：菱形 + PLAYER 标签 + 玩家名；右：DX RATING 标签 + 大数字 + OLD/NEW 两行；
-     * 左下「BEST 35 / 旧曲」由底板 kiba_b50 印，代码不重复写。
+     * 左：头像占表头带左角（边长 = 带内高，右缘渐隐）+ 菱形 + PLAYER 标签 + 玩家名；
+     * 右：DX RATING 标签 + 官方贴图徽章 + OLD/NEW 两行。底板不再印「BEST 35 / 旧曲」提示。
+     *
+     * 全线垂直居中：表头带 y=10..138，公共中线 CY=74 —— 头像、菱形+PLAYER+昵称、
+     * DXNET 标识、Rating 徽章、OLD/NEW 两行全部以 CY 为中心排布；OLD/NEW 与
+     * Rating 框互为中心对齐（两行块的中心 = 框中心）。
      *
      * 大数字按 maimai 官方 Rating 段位代表色上色（见 ratingColorArgb），
      * 15000+ 虹段走 LinearGradient 彩虹，色值与 ui/common/DxRatingTag.kt 的
@@ -227,6 +233,7 @@ object Best50ImageBuilder {
         rating: Int,
         totalSd: Int,
         totalDx: Int,
+        avatar: Bitmap?,
     ) {
         val med = font(context, "HOS_Med.ttf")
         val andrea = font(context, "Andrea.otf")
@@ -238,34 +245,209 @@ object Best50ImageBuilder {
         val cyan = rgb(77, 226, 230)
         val magenta = rgb(255, 95, 162)
 
-        // 左上：菱形 + PLAYER + 玩家名
+        // 表头带 y=10..138，公共中线 74：所有元素以它为中心排一线。
+        val cy = 74f
+
+        // 头像占左侧一角：边长 = 带内高（128），与带内缘齐平（x 12..140 / y 10..138），
+        // 圆角 16 与玻璃带同款，右缘向右渐隐。有头像时文字块整体右移让位。
+        val hasAvatar = avatar != null
+        if (hasAvatar) {
+            drawHeaderAvatar(canvas, avatar, left = 12f, top = 10f, size = 128f)
+        }
+        val dx = if (hasAvatar) 104f else 0f  // 文字 x 54 → 158
+        drawText(canvas, "PLAYER", 54f + dx, cy - 26.5f, 13f, faint, med)
+        drawText(canvas, toHalfWidth(nickname), 54f + dx, cy - 5.5f, 32f, ink, simHei)
         val mark = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = cyan }
+        // 菱形与 PLAYER 行同一排（行 47.5..60.5，中心 54）
+        val dcy = cy - 20f
         val diamond = Path().apply {
-            moveTo(39f, 19f); lineTo(46f, 26f); lineTo(39f, 33f); lineTo(32f, 26f); close()
+            moveTo(39f + dx, dcy - 7f); lineTo(46f + dx, dcy); lineTo(39f + dx, dcy + 7f); lineTo(32f + dx, dcy); close()
         }
         canvas.drawPath(diamond, mark)
-        drawText(canvas, "PLAYER", 54f, 14f, 13f, faint, med)
-        drawText(canvas, toHalfWidth(nickname), 54f, 36f, 32f, ink, simHei)
 
         // DXNET 标识：原版 B50 左上角那颗「maimai でらっくす / DX NET」，原素材里就有
         // （kiba_ui_cmn_tabtitle_maimaititle_ver214.png，326×99，自带透明通道），
         // 直接按高度等比缩到 54（≈0.545×），不做任何抠图 / 重绘。
-        // 位置：右缘 884（与 DX RATING 的 x=900 留 16px），**上下居中于「标签 + 大数字」
-        // 这块墨迹** —— 标签 ink ≈21..30、数字 ink ≈60..112（Andrea 68px 起于 y=36），
-        // 整块 21..112 中心 66.5，54 高的一半 27 → y ≈ 39.5，取 40。
-        // 贴标签顶（y=18）会明显偏高（用户当场指出）。
+        // 位置：右缘 884（与 DX RATING 的 x=900 留 16px），54 高以中线 cy 居中 → y=47。
         decode(context, "kiba_ui_cmn_tabtitle_maimaititle_ver214")?.let { logo ->
             val scaled = scale(logo, 54f / logo.height)
-            canvas.drawBitmap(scaled, 884f - scaled.width, 40f, null)
+            canvas.drawBitmap(scaled, 884f - scaled.width, cy - 27f, null)
         }
 
-        // 右上：DX RATING + 官方段位色大数字
-        drawText(canvas, "DX RATING", 900f, 18f, 15f, faint, med)
-        drawRatingValue(canvas, "$rating", 896f, 36f, 68f, rating, andrea)
+        // 右上：官方贴图徽章（段位底板 + 逐位数字，同账户页 DxRatingTag）。
+        // 徽章居中于 cy（y = 48.5）。先烘发光再画标签，避免光晕盖住「DX RATING」。
+        drawRatingPlate(context, canvas, 896f, cy - 25.5f, rating, andrea)
+        drawText(canvas, "DX RATING", 900f, cy - 46.5f, 15f, faint, med)
 
-        // 数字右侧两行合计（参考稿是上下两行，不是并排）
-        drawText(canvas, "OLD  $totalSd", 1105f, 38f, 17f, dim, exo)
-        drawText(canvas, "NEW  $totalDx", 1105f, 68f, 17f, magenta, exo)
+        // 数字右侧两行合计（17 + 13 + 17 = 47 的块，中心 = cy = 徽章中心）
+        val oldNewTop = cy - 23.5f
+        drawText(canvas, "OLD  $totalSd", 1105f, oldNewTop, 17f, dim, exo)
+        drawText(canvas, "NEW  $totalDx", 1105f, oldNewTop + 30f, 17f, magenta, exo)
+    }
+
+    /**
+     * 表头头像：占表头带左侧一角，边长 = 带内高（128），与带内缘齐平
+     * （1298 宽图内即 x 12..140 / y 10..138）。四角 16px 圆角与玻璃带同款，
+     * 右缘 55% 后向右渐隐，让姓名区没有硬边。
+     */
+    private fun drawHeaderAvatar(canvas: Canvas, src: Bitmap, left: Float, top: Float, size: Float) {
+        val side = minOf(src.width, src.height)
+        val crop = Bitmap.createBitmap(
+            src,
+            (src.width - side) / 2,
+            (src.height - side) / 2,
+            side,
+            side,
+        )
+        val scaled = scaleToWidth(crop, size.roundToInt())
+        val layer = newBitmap(size.roundToInt(), size.roundToInt())
+        val c = Canvas(layer)
+        val path = Path().apply {
+            addRoundRect(RectF(0f, 0f, size, size), 16f, 16f, Path.Direction.CW)
+        }
+        c.save()
+        c.clipPath(path)
+        c.drawBitmap(scaled, 0f, 0f, null)
+        c.restore()
+        // 右缘渐隐：DST_IN 横向 alpha 渐变，40% 后开始淡出、85% 处降到全透
+        // （尾部留全透段，右缘圆角完全不可见）
+        val fade = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            shader = LinearGradient(
+                0f, 0f, size, 0f,
+                intArrayOf(rgbAlpha(255, 255, 255, 255), rgbAlpha(255, 255, 255, 255), rgbAlpha(0, 255, 255, 255)),
+                floatArrayOf(0f, 0.40f, 0.85f),
+                Shader.TileMode.CLAMP,
+            )
+            xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
+        }
+        c.drawRect(0f, 0f, size, size, fade)
+        canvas.drawBitmap(layer, left, top, null)
+    }
+
+    // ---------- 表头 Rating 贴图徽章 + 框体发光 ----------
+
+    /** 框体发光阈值：高于 15500 白金光（原底板）；≥16000 换极 Rainbow 底框 + 彩虹光。 */
+    private const val GLOW_GOLD_MIN = 15500
+
+    /** 极 Rainbow 新底框门槛（用户指定口径：大于等于 16000）。 */
+    private const val KIWAMI_MIN = 16000
+
+    /** 发光贴图四周边距（1× 素材坐标，与 build_glow_textures.py 的 MARGIN 同源）。 */
+    private const val GLOW_TEX_MARGIN = 30
+
+    /** 极 Rainbow 底框（296×86）的数字槽位中心 x 与槽位纵向中心（1× 素材坐标）。 */
+    private val KIWAMI_DIGIT_CENTERS = floatArrayOf(139f, 171f, 202f, 233f, 264.5f)
+    private const val KIWAMI_DIGIT_CY = 41f
+
+    /** 上游 _drawRating 的五个数字列位（0.7 倍贴在 (col-2, 14)，右对齐）。 */
+    private val RATING_DIGIT_COLUMNS = intArrayOf(74, 92, 110, 129, 147)
+
+    /**
+     * 段位 → Bot 的 DX Rating 底板名，与 `ui/common/DxRatingTag.kt` 的
+     * [com.kira.kiba.ui.common.dxRatingPlateRes] 同源，**改动需两处同步**。
+     */
+    private fun dxRatingPlateName(rating: Int): String = when {
+        rating < 1000 -> "kiba_ui_cmn_dxrating_s_01"
+        rating < 2000 -> "kiba_ui_cmn_dxrating_s_02"
+        rating < 4000 -> "kiba_ui_cmn_dxrating_s_03"
+        rating < 7000 -> "kiba_ui_cmn_dxrating_s_04"
+        rating < 10000 -> "kiba_ui_cmn_dxrating_s_05"
+        rating < 12000 -> "kiba_ui_cmn_dxrating_s_06"
+        rating < 13000 -> "kiba_ui_cmn_dxrating_s_07"
+        rating < 14500 -> "kiba_ui_cmn_dxrating_s_08"
+        rating < 15000 -> "kiba_ui_cmn_dxrating_s_09"
+        else -> "kiba_ui_cmn_dxrating_s_10"
+    }
+
+    /**
+     * 表头 Rating：官方贴图徽章 + 逐位数字。≥16000 换**极 Rainbow 新底框**
+     * （296×86，等比缩到 51 高贴进表头槽位，数字按槽位中心填）；15501..15999
+     * 用原底板 + 白金光贴图；≤15500 无发光。素材缺失时兜底退回文字大数字。
+     */
+    private fun drawRatingPlate(
+        context: Context,
+        canvas: Canvas,
+        x: Float,
+        y: Float,
+        rating: Int,
+        andrea: Typeface?,
+    ) {
+        if (rating >= KIWAMI_MIN) {
+            drawKiwamiPlate(context, canvas, x, y, rating, andrea)
+            return
+        }
+        val plate = decode(context, dxRatingPlateName(rating))
+        if (plate == null) {
+            drawRatingValue(canvas, "$rating", x, y + 2f, 68f, rating, andrea)
+            return
+        }
+        if (rating > GLOW_GOLD_MIN) {
+            drawGlowTexture(context, canvas, "kiba_ui_glow_gold", x, y, 1f)
+        }
+        canvas.drawBitmap(plate, x, y, null)
+        // 逐位数字：从最右列往左填（右对齐），与上游 _drawRating / DxRatingTag 一致
+        var value = rating
+        var i = RATING_DIGIT_COLUMNS.size - 1
+        while (value > 0 && i >= 0) {
+            val digit = decode(context, "kiba_ui_num_drating_${value % 10}") ?: break
+            val scaled = scale(digit, 0.7f)
+            canvas.drawBitmap(scaled, x + RATING_DIGIT_COLUMNS[i] - 2f, y + 14f, null)
+            value /= 10
+            i--
+        }
+    }
+
+    /**
+     * 极 Rainbow 底框（≥16000）：296×86 素材等比缩到与原底板同高（51），
+     * 几何上仍占表头同一槽位（宽 ≈175 vs 标准 174）；彩虹光贴图垫底。
+     * 数字 16000+ 恒五位，**绝对 0.7× 缩放**（与标准底板的数字逐像素同大，
+     * 不跟着框缩——框素材 296 宽里槽位只占一半，跟缩会把数字压小一圈），
+     * 按槽位中心落位、从右往左填。
+     */
+    private fun drawKiwamiPlate(
+        context: Context,
+        canvas: Canvas,
+        x: Float,
+        y: Float,
+        rating: Int,
+        andrea: Typeface?,
+    ) {
+        val base = decode(context, "kiba_ui_cmn_dxrating_kiwami")
+        if (base == null) {
+            // 兜底：退回虹段原底板
+            drawRatingValue(canvas, "$rating", x, y + 2f, 68f, rating, andrea)
+            return
+        }
+        val s = 51f / base.height
+        val scaled = scale(base, s)
+        drawGlowTexture(context, canvas, "kiba_ui_glow_rainbow_kiwami", x, y, s)
+        canvas.drawBitmap(scaled, x, y, null)
+        var value = rating
+        var cell = KIWAMI_DIGIT_CENTERS.size - 1
+        while (value > 0 && cell >= 0) {
+            val digit = decode(context, "kiba_ui_num_drating_${value % 10}") ?: break
+            val scaledDigit = scale(digit, 0.7f)
+            canvas.drawBitmap(
+                scaledDigit,
+                x + KIWAMI_DIGIT_CENTERS[cell] * s - scaledDigit.width / 2f,
+                y + KIWAMI_DIGIT_CY * s - scaledDigit.height / 2f,
+                null,
+            )
+            value /= 10
+            cell--
+        }
+    }
+
+    /**
+     * 框体发光 = **预渲染贴图**（build_glow_textures.py 生成，4× 超采样 +
+     * LANCZOS 降采样，胶囊形多层递亮）：Android 端 BlurMaskFilter 两轮被否
+     * （细描边不可见 / 实心矩形有方形感且有仪器色带），贴图过渡平滑无边界。
+     * 贴图按 [scale] 等比缩放后居中贴到底板后面（margin 同源）。
+     */
+    private fun drawGlowTexture(context: Context, canvas: Canvas, name: String, x: Float, y: Float, scale: Float) {
+        val tex = decode(context, name) ?: return
+        val scaled = if (scale == 1f) tex else scale(tex, scale)
+        canvas.drawBitmap(scaled, x - GLOW_TEX_MARGIN * scale, y - GLOW_TEX_MARGIN * scale, null)
     }
 
     /**

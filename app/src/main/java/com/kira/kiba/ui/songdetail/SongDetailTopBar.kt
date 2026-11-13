@@ -54,6 +54,7 @@ import com.kira.kiba.ui.navigation.LocalGlassTopAppBarBackdrop
 import com.kira.kiba.ui.material.liquid.LiquidTopBarSkin
 import com.kira.kiba.ui.material.liquid.LocalLiquidBackdrop
 import com.kira.kiba.ui.navigation.useLiquidBar
+import com.kira.kiba.ui.common.CopyTitleAction
 import com.kira.kiba.ui.share.ShareImageAction
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.TopAppBarState
@@ -267,6 +268,11 @@ fun SongDetailTopBarSlot(
                         tint = onCoverColor,
                     )
                 }
+                // 复制歌名到剪贴板
+                CopyTitleAction(
+                    title = current?.title ?: "",
+                    tint = onCoverColor,
+                )
                 // 分享歌曲详情图（生成后可选保存相册 / 分享给好友）
                 ShareImageAction(
                     fileName = ShareService.defaultName("song_$songId"),

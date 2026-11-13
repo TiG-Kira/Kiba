@@ -116,4 +116,76 @@ class AgentPlaylistParseTest {
         assertEquals(1, items.size)
         assertEquals("ok", items[0].id)
     }
+
+    // ── LLM 输出解析（parse）：失败不抛异常，带回失败原因与主题供原地重试 ──
+
+    private fun profiles(n: Int) = (1..n).map {
+        AgentPlaylist.Profile(it, "曲$it", "曲师", "流行", 13.0, false)
+    }
+
+    @Test
+    fun `正常输出解析出选曲与封面字段`() {
+        val content = """
+            {"summary":"深夜循环","cover":{"title":"夜行歌单","subtitle":"陪你到天亮",
+             "mood":"夜行","tags":["专注","低音"]},"reasons":["理由A","理由B"],"picks":[1,3]}
+        """.trimIndent()
+        val parsed = AgentPlaylist.parse(content, profiles(5))
+        assertNotNull(parsed.saved)
+        assertEquals(listOf(1, 3), parsed.saved!!.ids)
+        assertEquals("夜行", parsed.saved.mood)
+        assertEquals("夜行歌单", parsed.saved.name)
+        assertEquals(listOf("理由A", "理由B"), parsed.saved.reasons)
+        assertEquals("夜行", parsed.theme)
+        assertEquals("", parsed.failReason)
+    }
+
+    @Test
+    fun `散文包裹的 JSON 也能抠出来`() {
+        // 模型最常见失败形态：JSON 前后带解释文字
+        val content = """
+            好的，这是为你挑选的歌单：
+            {"summary":"午后轻快","cover":{"title":"清晨散步","mood":"清晨"},"reasons":[],"picks":[2]}
+            希望你喜欢！
+        """.trimIndent()
+        val parsed = AgentPlaylist.parse(content, profiles(5))
+        assertNotNull(parsed.saved)
+        assertEquals(listOf(2), parsed.saved!!.ids)
+        assertEquals("清晨", parsed.saved.mood)
+    }
+
+    @Test
+    fun `围栏代码块照常处理`() {
+        val content = "```json\n{\"summary\":\"s\",\"picks\":[1]}\n```"
+        val parsed = AgentPlaylist.parse(content, profiles(5))
+        assertNotNull(parsed.saved)
+        assertEquals(listOf(1), parsed.saved!!.ids)
+    }
+
+    @Test
+    fun `不是合法 JSON 时返回失败 带原因与兜底主题`() {
+        val parsed = AgentPlaylist.parse("这是一段纯文本输出，没有任何 JSON。", profiles(5))
+        assertNull(parsed.saved)
+        assertEquals("输出不是合法 JSON", parsed.failReason)
+        // 兜底主题：输出里提到「夜行」就带回它，重试指令可以点名保持
+        val themed = AgentPlaylist.parse("我想做一张夜行气质的歌单，但格式忘了。", profiles(5))
+        assertNull(themed.saved)
+        assertEquals("夜行", themed.theme)
+    }
+
+    @Test
+    fun `缺少 picks 或 picks 全越界都视为失败`() {
+        val missing = AgentPlaylist.parse("""{"summary":"s","reasons":[]}""", profiles(5))
+        assertNull(missing.saved)
+        assertEquals("缺少 picks 数组", missing.failReason)
+
+        val outOfRange = AgentPlaylist.parse("""{"summary":"s","picks":[90,99]}""", profiles(5))
+        assertNull(outOfRange.saved)
+        assertEquals("picks 全部越界", outOfRange.failReason)
+    }
+
+    @Test
+    fun `重复序号去重保序`() {
+        val parsed = AgentPlaylist.parse("""{"summary":"s","picks":[1,1,2]}""", profiles(5))
+        assertEquals(listOf(1, 2), parsed.saved!!.ids)
+    }
 }

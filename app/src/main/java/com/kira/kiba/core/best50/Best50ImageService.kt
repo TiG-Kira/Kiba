@@ -1,12 +1,17 @@
 package com.kira.kiba.core.best50
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.net.Uri
+import com.kira.kiba.core.account.loadAccountAvatarBitmap
 import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.db.entity.ChartEntity
 import com.kira.kiba.core.db.entity.RecordEntity
+import com.kira.kiba.core.model.GameType
+import com.kira.kiba.core.model.ScoreSource
 import com.kira.kiba.core.utils.CacheDirs
 import com.kira.kiba.core.utils.CacheCleaner
+import com.kira.kiba.core.utils.SpUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -47,6 +52,11 @@ object Best50ImageService {
             AppDataBase.getInstance().chartDao().getAllChartsList()
         }.getOrDefault(emptyList())
 
+        // 头像：口径同账户页顶栏（自定义 > 自动抓取），拿不到不影响生成
+        val avatar = runCatching {
+            loadAccountAvatarBitmap(context, GameType.MAIMAI, SpUtil.maimaiSourceFlow.value)
+        }.getOrNull()
+
         val bytes = Best50ImageBuilder.build(
             context = context,
             old = old,
@@ -54,6 +64,7 @@ object Best50ImageService {
             nickname = nickname,
             rating = rating,
             charts = charts,
+            avatar = avatar,
         ) ?: return@withContext null
 
         val dir = CacheDirs.generated(context)

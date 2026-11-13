@@ -6,6 +6,7 @@ import com.google.gson.JsonParser
 import com.google.gson.annotations.SerializedName
 import com.kira.kiba.core.agent.AgentMemory
 import com.kira.kiba.core.agent.KibaLlm
+import com.kira.kiba.core.agent.LlmParse
 import com.kira.kiba.core.db.entity.RecordEntity
 import com.kira.kiba.core.db.entity.SongWithChartsEntity
 import com.kira.kiba.core.utils.SpUtil
@@ -28,6 +29,9 @@ import kotlinx.coroutines.withContext
 object AgentPlaylist {
 
     private const val TAG = "AgentPlaylist"
+
+    /** 解析失败后原地重试的次数（不含首次）。 */
+    private const val PARSE_RETRIES = 2
 
     private val gson = Gson()
 
@@ -219,28 +223,60 @@ object AgentPlaylist {
             append(candidateLines.joinToString("\n"))
         }
 
-        val result = KibaLlm.chat(
-            listOf(KibaLlm.Message.system(system), KibaLlm.Message.user(user)),
-            maxTokens = 1200,
-        ).getOrThrow()
-
-        val saved = parse(result.text, candidates)
+        // ── 生成 + 解析：解析失败立刻原地重新生成 ──
+        // 模型偶尔会在 JSON 前后带解释文字、输出截断或 picks 全越界；旧版直接把异常
+        // 打穿给 UI（Toast「生成失败」/自动续生成静默失败），用户只能手动再点一次。
+        // 这里收到坏输出后立刻把对话续下去：坏输出以 assistant 角色回填、追加一条
+        // 纠正指令要求严格重出 JSON（已能读出的封面主题点名保持），共 PARSE_RETRIES 次。
+        var saved: Saved? = null
+        var lastRaw = ""
+        var lastTheme: String? = null
+        var lastReason = ""
+        repeat(PARSE_RETRIES + 1) { attempt ->
+            val result = KibaLlm.chat(
+                buildList {
+                    add(KibaLlm.Message.system(system))
+                    add(KibaLlm.Message.user(user))
+                    if (attempt > 0 && lastRaw.isNotBlank()) {
+                        add(KibaLlm.Message.assistant(lastRaw))
+                        add(KibaLlm.Message.user(buildString {
+                            append("你上一次的输出无法解析（")
+                            append(lastReason)
+                            append("），已丢弃。请立刻重新生成一张专属歌单，")
+                            lastTheme?.let { append("整体气质与主题保持「$it」不变，") }
+                            append("严格只输出符合规则的 JSON，不要输出 JSON 以外的任何内容。")
+                        }))
+                    }
+                },
+                maxTokens = 1200,
+            ).getOrThrow()
+            lastRaw = result.text
+            val parsed = parse(result.text, candidates)
+            lastTheme = parsed.theme.ifBlank { lastTheme }
+            if (parsed.saved != null) {
+                saved = parsed.saved
+                return@repeat
+            }
+            lastReason = parsed.failReason
+            Log.w(TAG, "agent playlist parse failed (attempt ${attempt + 1}): $lastReason")
+        }
+        val finalSaved = saved ?: throw IllegalStateException("歌单输出无法解析：$lastReason")
         val generatedAt = System.currentTimeMillis()
 
         // ── 封面：**每次生成歌单都必须过这道模板**（PlaylistCover）──
         // 模板保证中文可读性与版式稳定；模型只负责填 title/subtitle/mood/tags。
         // 渲染是 1080×1080 位图 + PNG 编码，必须离开主线程（调用方通常在主线程 resume）。
         val coverSpec = PlaylistCover.Spec(
-            title = saved.name.ifBlank { saved.summary.take(12) }.ifBlank { "专属歌单" },
-            subtitle = saved.summary,
-            mood = saved.mood,
-            tags = saved.coverTags,
-            songCount = saved.ids.size,
+            title = finalSaved.name.ifBlank { finalSaved.summary.take(12) }.ifBlank { "专属歌单" },
+            subtitle = finalSaved.summary,
+            mood = finalSaved.mood,
+            tags = finalSaved.coverTags,
+            songCount = finalSaved.ids.size,
         )
         val cover = withContext(Dispatchers.IO) {
             PlaylistCover.render(context, coverSpec, generatedAt.toString())
         }
-        val withCover = saved.copy(coverPath = cover?.absolutePath.orEmpty())
+        val withCover = finalSaved.copy(coverPath = cover?.absolutePath.orEmpty())
 
         // 落两份：旧键只留「最近一份」兼容旧版本读取；历史存档供「畅听」页展示。
         // 这一步若失败，刚画好的封面就成了**没有任何歌单引用**的孤儿文件 ——
@@ -265,16 +301,35 @@ object AgentPlaylist {
         withCover
     }
 
-    /** 解析 LLM 输出：宽容处理围栏代码块 / 非法序号；picks 与 reasons 对齐截断。 */
-    private fun parse(content: String, candidates: List<Profile>): Saved {
+    /** 单次解析结果：[saved] 为 null 表示本轮失败（[failReason] 说明原因），[theme] 是尽力读出的封面主题。 */
+    internal data class Parsed(
+        val saved: Saved?,
+        val theme: String,
+        val failReason: String,
+    )
+
+    /**
+     * 解析 LLM 输出：宽容处理围栏代码块 / 散文包裹 / 非法序号；picks 与 reasons 对齐截断。
+     *
+     * **不抛异常**——失败以 [Parsed.saved] = null + [Parsed.failReason] 返回，由 [refresh]
+     * 的重试循环接手（立刻原地重新生成）。能读出的封面主题（mood / 封面标题）即使选曲失败
+     * 也照样带回，供重试时点名保持主题。
+     */
+    internal fun parse(content: String, candidates: List<Profile>): Parsed {
         val cleaned = content
             .replace("```json", "", ignoreCase = true)
             .replace("```", "")
             .trim()
-        val root = JsonParser.parseString(cleaned).asJsonObject
-        val summary = root.get("summary")?.asString.orEmpty()
-        val reasons = root.getAsJsonArray("reasons")?.map { it.asString } ?: emptyList()
-        val picks = root.getAsJsonArray("picks")?.map { it.asInt } ?: emptyList()
+        val root = extractJsonObject(cleaned)
+            ?: return Parsed(null, themeFromRaw(cleaned), "输出不是合法 JSON")
+
+        val summary = root.get("summary")?.takeIf { !it.isJsonNull }?.asString ?: ""
+        val reasons = root.getAsJsonArray("reasons")?.mapNotNull {
+            runCatching { it.asString }.getOrNull()
+        } ?: emptyList()
+        val picks = root.getAsJsonArray("picks")?.mapNotNull {
+            runCatching { it.asInt }.getOrNull()
+        } ?: emptyList()
 
         // 封面字段：模型偶尔漏字段/写错类型，全部按「取不到就空」处理，
         // 空值由 PlaylistCover 兜底（默认配色 + summary 当标题），不让整张歌单失败
@@ -284,19 +339,47 @@ object AgentPlaylist {
         val coverTags = cover?.getAsJsonArray("tags")?.mapNotNull {
             runCatching { it.asString }.getOrNull()
         }.orEmpty()
+        val theme = coverMood.ifBlank { coverTitle }.ifBlank { summary.take(12) }
 
-        // 序号 → 曲目 id：候选序号从 1 起；越界丢弃，去重保序
+        // 序号 → 曲目 id：候选序号从 1 起；越界丢弃，去重保序。
+        // picks 为空 / 全越界生成的空歌单没有意义（读取侧也会当 null），同样按失败处理。
         val ids = picks.mapNotNull { n ->
             candidates.getOrNull(n - 1)?.id
         }.distinct()
-        return Saved(
-            ids = ids,
-            reasons = reasons,
-            summary = summary,
-            name = coverTitle.ifBlank { summary.take(12) },
-            mood = coverMood,
-            coverTags = coverTags,
+        if (ids.isEmpty()) {
+            return Parsed(null, theme, if (picks.isEmpty()) "缺少 picks 数组" else "picks 全部越界")
+        }
+        return Parsed(
+            saved = Saved(
+                ids = ids,
+                reasons = reasons,
+                summary = summary,
+                name = coverTitle.ifBlank { summary.take(12) },
+                mood = coverMood,
+                coverTags = coverTags,
+            ),
+            theme = theme,
+            failReason = "",
         )
+    }
+
+    /** 从可能带散文的输出里抠出完整 JSON 对象；找不到返回 null。 */
+    private fun extractJsonObject(cleaned: String): com.google.gson.JsonObject? {
+        runCatching { return JsonParser.parseString(cleaned).asJsonObject }
+        // 散文包裹是模型最常见的失败形态：JSON 前后带解释文字。用括号配对把
+        // 候选块抠出来，从长到短试（完整 JSON 比嵌套片段长），第一个可解析的就用。
+        return LlmParse.findJsonBlocks(cleaned)
+            .map { (s, e) -> cleaned.substring(s, e) }
+            .sortedByDescending { it.length }
+            .firstNotNullOfOrNull { block ->
+                runCatching { JsonParser.parseString(block).asJsonObject }.getOrNull()
+            }
+    }
+
+    /** 整段输出都解析不了时的兜底主题：抓 mood 关键词或截开头，让重试指令有主题可依。 */
+    private fun themeFromRaw(cleaned: String): String {
+        val moods = listOf("夜行", "清晨", "热血", "静谧", "赛博", "复古", "海洋", "甜梦")
+        return moods.firstOrNull { it in cleaned } ?: cleaned.take(12)
     }
 
     /** 候选条目（UI 层从曲库实体 + 画像转换）。 */

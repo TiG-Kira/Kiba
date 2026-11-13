@@ -95,10 +95,17 @@ fun dxRatingPlateRes(rating: Int): String {
     return "kiba_ui_cmn_dxrating_s_$num"
 }
 
+/** 阈值与 Best50ImageBuilder 同源，改动需同步：>15500 白金光贴图；≥16000 换极 Rainbow 底框 + 彩虹光贴图。 */
+private const val RATING_GLOW_GOLD_MIN = 15500
+private const val RATING_KIWAMI_MIN = 16000
+
 /**
  * DX Rating 徽章 —— 与 Bot 生成 B50 图时完全同一套素材与版式：
- * 段位底板 `UI_CMN_DXRating_S_XX`（174×51）+ 逐位数字 `UI_NUM_Drating_N`
- * （30×34，0.7 倍后贴在 x=74/92/110/129/147、y=14 五个列位，右对齐）。
+ * - <16000：段位底板 `UI_CMN_DXRating_S_XX`（174×51）+ 逐位数字 `UI_NUM_Drating_N`
+ *   （30×34，0.7 倍后贴在 x=74/92/110/129/147、y=14 五个列位，右对齐）；
+ * - ≥16000：**极 Rainbow 新底框**（296×86，数字按槽位中心填，16000+ 恒五位）；
+ * - >15500 起框体发光 = **预渲染贴图**（build_glow_textures.py 生成，4× 超采样，
+ *   与 B50 分享图同一套；BlurMaskFilter 方案已废弃）。
  *
  * 数值为 0（未绑定）时只显示白段位底板，数字区留空。
  */
@@ -110,23 +117,93 @@ fun DxRatingTag(
 ) {
     val context = LocalContext.current
     val safeRating = rating.coerceAtLeast(0)
+    val kiwami = safeRating >= RATING_KIWAMI_MIN
+    val plateRes = if (kiwami) "kiba_ui_cmn_dxrating_kiwami" else dxRatingPlateRes(safeRating)
     val plateId = runCatching {
-        context.resources.getIdentifier(dxRatingPlateRes(safeRating), "drawable", context.packageName)
+        context.resources.getIdentifier(plateRes, "drawable", context.packageName)
     }.getOrDefault(0)
+    val glowRes = when {
+        kiwami -> "kiba_ui_glow_rainbow_kiwami"
+        safeRating > RATING_GLOW_GOLD_MIN -> "kiba_ui_glow_gold"
+        else -> null
+    }
+    val glowId = glowRes?.let {
+        runCatching { context.resources.getIdentifier(it, "drawable", context.packageName) }.getOrDefault(0)
+    } ?: 0
 
-    val boxH = width * 51f / 174f
-    // 数字图在底板内的相对位置（上游 _drawRating：0.7 倍，(col-2, 14)）
-    val digitW = width * 21f / 174f
-    val digitH = boxH * 23.8f / 51f
-    val digitY = boxH * 14f / 51f
+    // 底板尺寸（素材 px 空间）：极底框 296×86，原底板 174×51
+    val plateW = if (kiwami) 296f else 174f
+    val plateH = if (kiwami) 86f else 51f
+    val boxH = width * plateH / plateW
 
     Box(
         modifier = modifier
-            .size(width = width, height = boxH)
-            .clip(RoundedCornerShape(6.dp)),
+            .size(width = width, height = boxH),
         contentAlignment = Alignment.Center,
     ) {
-        if (plateId != 0) {
+        // 发光贴图垫底（先声明先绘制）；外层 Box 不 clip，允许溢出徽章边界
+        if (glowId != 0) {
+            val texW = if (kiwami) 356f else 234f
+            val texH = if (kiwami) 146f else 111f
+            Image(
+                painter = painterResource(glowId),
+                contentDescription = null,
+                contentScale = ContentScale.FillBounds,
+                modifier = Modifier.size(width = width * texW / plateW, height = boxH * texH / plateH),
+            )
+        }
+        Box(
+            Modifier
+                .matchParentSize()
+                .clip(RoundedCornerShape(6.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+        if (plateId != 0 && kiwami) {
+            Image(
+                painter = painterResource(plateId),
+                contentDescription = "DX Rating",
+                contentScale = ContentScale.FillBounds,
+                modifier = Modifier.size(width = width, height = boxH),
+            )
+            // 数字槽位中心（296×86 素材坐标，与 Best50ImageBuilder.KIWAMI_DIGIT_CENTERS 同源）
+            val centers = listOf(139f, 171f, 202f, 233f, 264.5f)
+            val cellCy = 41f
+            // 数字用与标准底板完全相同的绝对尺寸（width*21/174，即 0.7× 素材），
+            // 不跟着极底框缩——否则 296 宽素材压到同宽后数字会小一圈
+            val kDigitW = width * 21f / 174f
+            val kDigitH = kDigitW * 34f / 30f
+            var value = safeRating
+            val digits = mutableListOf<Int>()
+            while (value > 0) {
+                digits.add(value % 10)
+                value /= 10
+            }
+            var cell = centers.size - 1
+            for (d in digits) {
+                if (cell < 0) break
+                val digitRes = runCatching {
+                    context.resources.getIdentifier("kiba_ui_num_drating_$d", "drawable", context.packageName)
+                }.getOrDefault(0)
+                if (digitRes != 0) {
+                    Image(
+                        painter = painterResource(digitRes),
+                        contentDescription = null,
+                        contentScale = ContentScale.FillBounds,
+                        modifier = Modifier
+                            .size(width = kDigitW, height = kDigitH)
+                            .offset(
+                                x = width * centers[cell] / 296f - width / 2,
+                                y = boxH * cellCy / 86f - boxH / 2,
+                            ),
+                    )
+                }
+                cell--
+            }
+        } else if (plateId != 0) {
+            // 数字图在底板内的相对位置（上游 _drawRating：0.7 倍，(col-2, 14)）
+            val digitW = width * 21f / 174f
+            val digitH = boxH * 23.8f / 51f
+            val digitY = boxH * 14f / 51f
             Image(
                 painter = painterResource(plateId),
                 contentDescription = "DX Rating",
@@ -193,6 +270,7 @@ fun DxRatingTag(
                     color = tier.textColor(),
                 )
             }
+        }
         }
     }
 }
