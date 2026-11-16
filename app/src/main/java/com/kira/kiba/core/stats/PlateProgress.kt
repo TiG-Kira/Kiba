@@ -5,8 +5,6 @@ import com.kira.kiba.core.db.entity.ChartEntity
 import com.kira.kiba.core.db.entity.RecordEntity
 import com.kira.kiba.core.db.entity.SongDataEntity
 import com.kira.kiba.core.model.DifficultyType
-import com.kira.kiba.core.model.GameType
-import com.kira.kiba.core.model.SongVersionOrder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -23,8 +21,9 @@ import kotlinx.coroutines.withContext
  * 条件均作用于**谱面粒度**（song + difficulty 组成的每一张谱面），与 easymai
  * 「所有难度」模式一致：总进度 = 该版本下全部谱面中达成条件的比例。
  *
- * 版本分组以歌曲的 `from`（国服命名）为准，牌子代号对齐工具箱「版本对照表」
- * 与 EasyMai version-map（熊華 / 爽煌 / 宙星 / 祭祝 / 双宴…）。
+ * 版本分组完全由本对象内的 **VERSION_DEFS 配置表**驱动（牌子代号 / 覆盖版本 /
+ * 可选牌子种类 / 新旧排序均在表内声明）：**maimai 新版本上线后只需在表末尾追加
+ * 一行**，版本列表、舞代聚合、霸者口径与筛选可选项即自动生效。
  */
 object PlateProgress {
 
@@ -48,13 +47,16 @@ object PlateProgress {
     }
 
     /**
-     * 一个「牌子版本组」：舞代（旧框聚合）或单个版本。
+     * 一个「牌子版本组」：舞代（旧框聚合）、真代（maimai 与 maimai plus 合并）
+     * 或单个 DX 版本；均由 [VERSION_DEFS] 配置表推导。
      *
-     * @param key 组键（筛选回传用；舞代固定 "OLD"，其余为 from 小写原文）
-     * @param displayName 显示名（from 原文，舞代显示「舞代」）
+     * @param key 组键（筛选回传用；舞代固定 "OLD"，其余为牌子代号，如 "真" / "熊華"）
+     * @param displayName 显示名（配置表 name，舞代显示「舞代」）
      * @param plateCode 牌子代号（舞 / 真 / 熊華 / 爽煌…；无代号显示「—」）
      * @param fromValues 命中的 from 小写集合
      * @param isOldFrame 是否旧框（霸者只在旧框组可选）
+     * @param sortRank 版本时间线序号（越大越新，用于组排序；舞代恒在最前）
+     * @param availablePlates 该组可用的牌子种类（真代无将、霸者仅旧框）
      */
     data class Group(
         val key: String,
@@ -62,6 +64,9 @@ object PlateProgress {
         val plateCode: String,
         val fromValues: Set<String>,
         val isOldFrame: Boolean,
+        val sortRank: Int = 0,
+        val availablePlates: List<PlateKind> =
+            listOf(PlateKind.FC, PlateKind.SSS, PlateKind.AP, PlateKind.FSD),
     )
 
     /** 单个牌子进度。 */
@@ -90,70 +95,109 @@ object PlateProgress {
         fun isDone(plate: PlateKind): Boolean = record != null && plate.satisfies(record)
     }
 
-    // ── 牌子代号映射（from 小写 → 代号）；「—」表示该版本无独立牌子 ──
-    private val PLATE_CODES: Map<String, String> = mapOf(
-        "maimai" to "—",
-        "maimai plus" to "真",
-        "maimai green" to "超",
-        "maimai green plus" to "檄",
-        "maimai orange" to "橙",
-        "maimai orange plus" to "暁",
-        "maimai pink" to "桃",
-        "maimai pink plus" to "櫻",
-        "maimai murasaki" to "紫",
-        "maimai murasaki plus" to "菫",
-        "maimai milk" to "白",
-        "milk plus" to "雪",
-        "maimai milk plus" to "雪",
-        "maimai finale" to "輝",
-        "all finale" to "舞",
-        // ── DX：国服年度版与日版副标题共用一个代号（熊華 / 爽煌 / …）──
-        "maimai dx" to "熊華",
-        "maimai でらっくす" to "熊華",
-        "舞萌dx" to "熊華",
-        "maimai dx splash" to "爽煌",
-        "maimai dx splash plus" to "爽煌",
-        "maimai でらっくす splash" to "爽煌",
-        "maimai でらっくす splash plus" to "爽煌",
-        "舞萌dx 2021" to "爽煌",
-        "maimai dx universe" to "宙星",
-        "maimai dx universe plus" to "宙星",
-        "maimai でらっくす universe" to "宙星",
-        "maimai でらっくす universe plus" to "宙星",
-        "舞萌dx 2022" to "宙星",
-        "maimai dx festival" to "祭祝",
-        "maimai dx festival plus" to "祭祝",
-        "maimai でらっくす festival" to "祭祝",
-        "maimai でらっくす festival plus" to "祭祝",
-        "舞萌dx 2023" to "祭祝",
-        "maimai dx buddies" to "双宴",
-        "maimai dx buddies plus" to "双宴",
-        "maimai でらっくす buddies" to "双宴",
-        "maimai でらっくす buddies plus" to "双宴",
-        "舞萌dx 2024" to "双宴",
-        "maimai dx prism" to "镜",
-        "maimai dx prism plus" to "镜",
-        "maimai でらっくす prism" to "镜",
-        "maimai でらっくす prism plus" to "镜",
-        "舞萌dx 2025" to "镜",
-        "maimai dx circle" to "—",
-        "maimai でらっくす circle" to "—",
-        "舞萌dx 2026" to "—",
+    // ══════════════════════════════════════════════════════════════════
+    // 版本名牌配置表 —— **新增版本只需在 VERSION_DEFS 末尾追加一行**，
+    // 组排序、舞代聚合、霸者口径、筛选可选项全部由本表自动推导，无需改其他代码。
+    //
+    // 字段说明：
+    // - code   牌子代号（显示用；「—」= 新版本暂未公布牌子名，公布后替换即可）
+    // - name   显示名（筛选器 / 总览卡片标题）
+    // - from   归属的版本 from 值（小写；同一牌子可挂多个别名，多代合并也写在一起）
+    // - dx     是否 DX 世代；false = 旧框，自动计入「舞代」聚合与霸者口径
+    // - plates 该牌子可选的牌子种类（缺省 = 极/将/神/舞舞；特殊牌如真代无将则显式指定）
+    // ══════════════════════════════════════════════════════════════════
+
+    /** 常规可选牌子：极 / 将 / 神 / 舞舞（霸者仅旧框聚合组提供，不写在版本行里）。 */
+    private val DEFAULT_PLATES: List<PlateKind> =
+        listOf(PlateKind.FC, PlateKind.SSS, PlateKind.AP, PlateKind.FSD)
+
+    private data class PlateVersionDef(
+        val code: String,
+        val name: String,
+        val from: Set<String>,
+        val dx: Boolean,
+        val plates: List<PlateKind> = DEFAULT_PLATES,
     )
 
-    /** 旧框（舞代）覆盖的 from 集合：所有非 DX 版本。 */
-    private val OLD_FRAME_VALUES: Set<String> = PLATE_CODES.keys.filter {
-        !it.startsWith("舞萌dx") && !it.startsWith("maimai dx") && !it.startsWith("maimai でらっくす")
-    }.toSet()
+    /** 版本时间线（旧 → 新）：行号即排序依据，新版本追加到末尾即可。 */
+    private val VERSION_DEFS: List<PlateVersionDef> = listOf(
+        // ── 旧框：maimai 与 maimai plus 共用一块「真」牌（两代都完成才能拿牌），真代无将 ──
+        PlateVersionDef(
+            code = "真",
+            name = "maimai / maimai plus",
+            from = setOf("maimai", "maimai plus"),
+            dx = false,
+            plates = listOf(PlateKind.FC, PlateKind.AP, PlateKind.FSD),
+        ),
+        PlateVersionDef("超", "maimai green", setOf("maimai green"), dx = false),
+        PlateVersionDef("檄", "maimai green plus", setOf("maimai green plus"), dx = false),
+        PlateVersionDef("橙", "maimai orange", setOf("maimai orange"), dx = false),
+        PlateVersionDef("暁", "maimai orange plus", setOf("maimai orange plus"), dx = false),
+        PlateVersionDef("桃", "maimai pink", setOf("maimai pink"), dx = false),
+        PlateVersionDef("櫻", "maimai pink plus", setOf("maimai pink plus"), dx = false),
+        PlateVersionDef("紫", "maimai murasaki", setOf("maimai murasaki"), dx = false),
+        PlateVersionDef("菫", "maimai murasaki plus", setOf("maimai murasaki plus"), dx = false),
+        PlateVersionDef("白", "maimai milk", setOf("maimai milk", "milk"), dx = false),
+        PlateVersionDef("雪", "maimai milk plus", setOf("maimai milk plus", "milk plus"), dx = false),
+        PlateVersionDef("輝", "maimai finale", setOf("maimai finale"), dx = false),
+        PlateVersionDef("舞", "all finale", setOf("all finale"), dx = false),
+        // ── DX：国服年度版与日版副标题共用一个代号 ──
+        PlateVersionDef(
+            "熊華", "舞萌DX",
+            setOf("maimai dx", "maimai でらっくす", "舞萌dx"), dx = true,
+        ),
+        PlateVersionDef(
+            "爽煌", "舞萌DX 2021",
+            setOf(
+                "maimai dx splash", "maimai dx splash plus",
+                "maimai でらっくす splash", "maimai でらっくす splash plus",
+                "舞萌dx 2021",
+            ), dx = true,
+        ),
+        PlateVersionDef(
+            "宙星", "舞萌DX 2022",
+            setOf(
+                "maimai dx universe", "maimai dx universe plus",
+                "maimai でらっくす universe", "maimai でらっくす universe plus",
+                "舞萌dx 2022",
+            ), dx = true,
+        ),
+        PlateVersionDef(
+            "祭祝", "舞萌DX 2023",
+            setOf(
+                "maimai dx festival", "maimai dx festival plus",
+                "maimai でらっくす festival", "maimai でらっくす festival plus",
+                "舞萌dx 2023",
+            ), dx = true,
+        ),
+        PlateVersionDef(
+            "双宴", "舞萌DX 2024",
+            setOf(
+                "maimai dx buddies", "maimai dx buddies plus",
+                "maimai でらっくす buddies", "maimai でらっくす buddies plus",
+                "舞萌dx 2024",
+            ), dx = true,
+        ),
+        PlateVersionDef(
+            "镜", "舞萌DX 2025",
+            setOf(
+                "maimai dx prism", "maimai dx prism plus",
+                "maimai でらっくす prism", "maimai でらっくす prism plus",
+                "舞萌dx 2025",
+            ), dx = true,
+        ),
+        // ── 新版本：牌子名公布后把「—」替换为正式代号即可 ──
+        PlateVersionDef(
+            "—", "舞萌DX 2026",
+            setOf("maimai dx circle", "maimai でらっくす circle", "舞萌dx 2026"), dx = true,
+        ),
+    )
 
     /** 谱面是否参与牌子统计：排除未出难度（level 带「?」）与空等级（宴会场曲目在曲目层排除）。 */
     private fun ChartEntity.countable(): Boolean =
         level.isNotBlank() && !level.contains("?") && difficultyType != DifficultyType.UTAGE
 
     private fun normalizeFrom(from: String): String = from.trim().lowercase()
-
-    private fun rankOf(fromLower: String): Int =
-        SongVersionOrder.rank(GameType.MAIMAI, fromLower)
 
     /** 组内谱面 → 条目（含成绩）；难度过滤后的明细数据源。 */
     private fun collectItems(
@@ -174,7 +218,8 @@ object PlateProgress {
     }
 
     /**
-     * 全量版本组：舞代（旧框聚合）置顶，其余按版本新旧倒序（[SongVersionOrder] 口径）。
+     * 全量版本组（完全由 [VERSION_DEFS] 推导，新增版本无需改这里）：
+     * 舞代（旧框聚合，霸者只在此可选）置顶，其后按表中行号新版本在前；
      * 只包含曲库里实际存在的版本；曲库未同步时返回空。
      */
     suspend fun loadGroups(): List<Group> = withContext(Dispatchers.IO) {
@@ -184,33 +229,37 @@ object PlateProgress {
                 .filter { it.isNotBlank() }
                 .toSet()
             buildList {
-                if (OLD_FRAME_VALUES.any { it in present }) {
+                // ── 舞代：所有旧框版本聚合（from = 全部非 DX 行的 from 并集）──
+                val oldFroms = VERSION_DEFS.filter { !it.dx }.flatMap { it.from }.toSet()
+                if (oldFroms.any { it in present }) {
                     add(
                         Group(
                             key = "OLD",
                             displayName = "舞代",
                             plateCode = "舞",
-                            fromValues = OLD_FRAME_VALUES,
+                            fromValues = oldFroms,
                             isOldFrame = true,
+                            availablePlates = PlateKind.entries,
                         )
                     )
                 }
-                present.mapNotNull { from ->
-                    PLATE_CODES[from]?.let {
-                        Group(
-                            key = from,
-                            displayName = from,
-                            plateCode = it,
-                            fromValues = setOf(from),
-                            isOldFrame = false,
+                // ── 各版本组：倒序遍历配置表（新版本在前），行号即 sortRank ──
+                VERSION_DEFS.asReversed().forEachIndexed { i, def ->
+                    val froms = def.from.filter { it in present }.toSet()
+                    if (froms.isNotEmpty()) {
+                        add(
+                            Group(
+                                key = def.code,
+                                displayName = def.name,
+                                plateCode = def.code,
+                                fromValues = froms,
+                                isOldFrame = false,
+                                sortRank = VERSION_DEFS.size - i,
+                                availablePlates = def.plates,
+                            )
                         )
                     }
-                }.sortedWith { a, b ->
-                    // 新版本在前；同 rank（日版别名与国服年度版并排）按名字稳定排序
-                    val ra = rankOf(a.key)
-                    val rb = rankOf(b.key)
-                    if (ra != rb) rb.compareTo(ra) else a.key.compareTo(b.key)
-                }.forEach { add(it) }
+                }
             }
         }.getOrDefault(emptyList())
     }

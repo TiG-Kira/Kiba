@@ -280,6 +280,17 @@ fun LiquidNavigationBar(
         derivedStateOf { dragAnimation.value.fastRoundToInt().fastCoerceIn(0, items.size - 1) }
     }
 
+    // 玻璃是否已吸附在整数 tab 上（未按压且位置收敛到整数）。
+    // 玻璃里折射的是 Row B 导出层的彩色副本；若 Row A 那份彩色内容在胶囊尚未
+    // 对齐 tab 时也可见，玻璃凝回 / 飞行末段就会出现两份同形图标文字短暂错位叠影。
+    // 因此按压 / 飞行期间暂隐 Row A 的选中内容，玻璃里只留一份，吸附后再显回。
+    val capsuleSettled by remember {
+        derivedStateOf {
+            dragAnimation.pressProgress < 0.01f &&
+                abs(dragAnimation.value - dragAnimation.value.fastRoundToInt()) < 0.01f
+        }
+    }
+
     val interactiveHighlight = remember(scope) {
         InteractiveHighlight(
             animationScope = scope,
@@ -580,6 +591,9 @@ fun LiquidNavigationBar(
                     } else {
                         unselectedTint()
                     },
+                    // 玻璃未吸附时暂隐选中内容：玻璃内已有 Row B 的彩色副本，
+                    // 两份同形内容并存会在胶囊对齐前短暂错位叠影
+                    contentAlpha = if (i == highlightIndex && !capsuleSettled) 0f else 1f,
                     modifier = Modifier.weight(1f).fillMaxHeight(),
                     // 指针手势的抬手由上面的 Initial pass 观察器按「液滴最终落点」提交；
                     // 同一个 up 还会走到 clickable 的 onClick，但它的 i 是**按下时**的 tab
@@ -688,10 +702,12 @@ private fun TabContent(
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
     scale: (() -> Float)? = null,
+    contentAlpha: Float = 1f,
 ) {
     val iconScale = scale
     Column(
         modifier = modifier
+            .alpha(contentAlpha)
             .then(
                 if (onClick != null) {
                     Modifier.clickable(

@@ -1122,8 +1122,8 @@ fun SongCard(
     }
 }
 
-/** 曲目卡片长按菜单里的一项（文案 + 彩色图标 + 动作）。 */
-private data class SongCardMenuAction(
+/** 曲目卡片长按菜单里的一项（文案 + 彩色图标 + 动作）；舞萌 / 中二节奏曲目卡片共用。 */
+data class SongCardMenuAction(
     val text: String,
     val icon: androidx.compose.ui.graphics.vector.ImageVector,
     val tint: KibaIconTint,

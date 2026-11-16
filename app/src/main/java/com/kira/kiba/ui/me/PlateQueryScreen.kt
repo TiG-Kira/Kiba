@@ -2,21 +2,25 @@ package com.kira.kiba.ui.me
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -28,9 +32,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.kira.kiba.core.model.DifficultyType
 import com.kira.kiba.core.stats.PlateProgress
@@ -45,7 +51,10 @@ import com.kira.kiba.ui.common.SyncBadge
 import com.kira.kiba.ui.common.UnplayedPill
 import com.kira.kiba.ui.common.difficultyColor
 import com.kira.kiba.ui.common.difficultyLabel
+import com.kira.kiba.ui.common.kibaPressScale
 import com.kira.kiba.ui.common.pageContentPadding
+import top.yukonga.miuix.kmp.basic.Button
+import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.DropdownItem
 import top.yukonga.miuix.kmp.basic.Scaffold
@@ -56,15 +65,17 @@ import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
- * 名牌进度查询页（参考 EasyMai achievement-progress「牌子进度」）：
+ * 名牌进度查询页：
  *
- * - **版本总览**：舞代（旧框聚合）+ 各版本的四牌总进度（极 / 将 / 神，旧框另含霸者）；
- * - **筛选**：版本（舞代 / 各版本，新版本在前）、牌子（极 / 将 / 神 / 舞舞 / 霸者，
- *   霸者仅舞代可选）、难度（所有难度 / Basic…Re:Master，EasyMai 口径）；
+ * - **筛选器置顶**：与成绩查询页同款「展开 / 收起筛选器」开关，默认折叠；
+ *   版本（舞代 / 真代 / 各 DX 版本，新版本在前）、牌子（按所选版本给出可选项：
+ *   真代无将、霸者仅舞代）、难度、隐藏已达成，以及列表 / 网格显示方式；
+ * - **版本进度**：只展示当前选中版本的各牌总进度（大字代号 + 分牌进度条，
+ *   留白更宽敞）；真代 = maimai + maimai plus 合并口径；
  * - **明细**：当前筛选下的进度 + 歌曲（按难度降序分组，组内按定数降序），
- *   已达成显示官方贴图徽章，未达成显示「未达成」标记；可开关「隐藏已达成」。
+ *   已达成显示官方贴图徽章，未达成显示「未达成」标记；网格视图为封面格子 + 角标。
  *
- * 判定口径与 [PlateProgress]（极 = FC 及以上、将 = SSS 及以上、神 = AP、
+ * 判定口径见 [PlateProgress]（极 = FC 及以上、将 = SSS 及以上、神 = AP、
  * 舞舞 = FSD+、霸者 = 达成率 > 80% 仅旧框）。
  */
 @Composable
@@ -81,11 +92,13 @@ fun PlateQueryScreen(
     val groups = remember(summaries) { summaries.map { it.group } }
 
     // ── 筛选状态（进程级快照：返回不丢）──
-    // 默认舞萌DX 2024（双宴）：EasyMai 默认最新已有版本，取曲库里默认存在的较新年度版
     var groupKey by rememberSaveable { mutableStateOf(cache.groupKey) }
     var plateOrdinal by rememberSaveable { mutableStateOf(cache.plateOrdinal) }
     var difficultyOrdinal by rememberSaveable { mutableStateOf(cache.difficultyOrdinal) }
     var hideAchieved by rememberSaveable { mutableStateOf(cache.hideAchieved) }
+    var filtersExpanded by rememberSaveable { mutableStateOf(cache.filtersExpanded) }
+    var viewMode by rememberSaveable { mutableStateOf(cache.viewMode) }
+    var gridColumns by rememberSaveable { mutableStateOf(cache.gridColumns) }
 
     val selectedGroup = remember(groups, groupKey) {
         groups.firstOrNull { it.key == groupKey } ?: groups.firstOrNull()
@@ -106,11 +119,16 @@ fun PlateQueryScreen(
         value = if (g == null) emptyList() else PlateProgress.loadDetail(g, difficulty)
     }
 
-    // 牌子筛选跟随组切换：非舞代组不支持霸者（EasyMai 强制切舞代口径，这里改为锁定不可选）
+    // 牌子筛选跟随组切换：真代无将、霸者仅舞代（直接取组给出的可用牌集合）
     val plateOptions = remember(selectedGroup) {
-        if (selectedGroup?.isOldFrame == true) PlateKind.entries else PlateKind.entries - PlateKind.MASTER
+        selectedGroup?.availablePlates ?: PlateKind.entries.toList()
     }
-    val effectivePlate = if (plate in plateOptions) plate else PlateKind.FC
+    val effectivePlate = if (plate in plateOptions) plate else plateOptions.first()
+
+    // 当前版本的各牌总览（只展示筛选器选中的那一个版本）
+    val selectedSummary = remember(summaries, selectedGroup) {
+        summaries.firstOrNull { it.group.key == selectedGroup?.key }
+    }
 
     // 当前进度（作用于明细，与列表口径一致）
     val currentProgress = remember(detail, effectivePlate) {
@@ -135,47 +153,31 @@ fun PlateQueryScreen(
             .nestedScroll(scrollBehavior.nestedScrollConnection),
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
     ) { padding ->
-        LazyColumn(
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(if (viewMode == "grid") gridColumns else 1),
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
             contentPadding = pageContentPadding(withNavBar = false),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // ── 版本总览 ──
-            item(key = "overview_title") { SectionTitle("版本总览 · 点击行查看该版本明细") }
-            if (summaries.isEmpty()) {
-                item(key = "overview_empty") {
-                    EmptyStateCard(
-                        text = "暂无数据\n先在曲目页同步曲库、并绑定查分器拉取成绩",
-                    )
-                }
-            } else {
-                item(key = "overview_card") {
-                    Card(modifier = Modifier.fillMaxWidth()) {
-                        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                            summaries.forEachIndexed { index, summary ->
-                                OverviewRow(
-                                    summary = summary,
-                                    selected = summary.group.key == selectedGroup?.key,
-                                    onClick = {
-                                        groupKey = summary.group.key
-                                        PlateQueryStateCache.groupKey = summary.group.key
-                                    },
-                                )
-                                if (index != summaries.lastIndex) {
-                                    Spacer(Modifier.height(1.dp))
-                                }
-                            }
-                        }
-                    }
+            // ── 筛选器（置顶，与成绩查询页同款折叠开关）──
+            item(key = "filter_toggle", span = { GridItemSpan(maxLineSpan) }) {
+                Button(
+                    colors = ButtonDefaults.buttonColorsPrimary(),
+                    onClick = {
+                        filtersExpanded = !filtersExpanded
+                        cache.filtersExpanded = filtersExpanded
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(text = if (filtersExpanded) "收起筛选器" else "展开筛选器")
                 }
             }
-
-            // ── 筛选 ──
-            if (groups.isNotEmpty()) {
-                item(key = "filter_title") { SectionTitle("筛选") }
-                item(key = "filter_card") {
+            if (filtersExpanded) {
+                item(key = "filter_title", span = { GridItemSpan(maxLineSpan) }) { SectionTitle("筛选") }
+                item(key = "filter_card", span = { GridItemSpan(maxLineSpan) }) {
                     Card(modifier = Modifier.fillMaxWidth()) {
                         OverlaySpinnerPreference(
                             items = remember(groups) {
@@ -188,7 +190,7 @@ fun PlateQueryScreen(
                             onSelectedIndexChange = { index ->
                                 groups.getOrNull(index)?.let {
                                     groupKey = it.key
-                                    PlateQueryStateCache.groupKey = it.key
+                                    cache.groupKey = it.key
                                 }
                             },
                         )
@@ -199,13 +201,13 @@ fun PlateQueryScreen(
                             selectedIndex = plateOptions.indexOf(effectivePlate).coerceAtLeast(0),
                             title = "牌子",
                             summary = effectivePlate.label + if (effectivePlate == PlateKind.MASTER) {
-                                "（仅旧框 · 达成率 > 80%）"
+                                "（达成率 > 80%）"
                             } else {
                                 ""
                             },
                             onSelectedIndexChange = { index ->
                                 plateOrdinal = (plateOptions.getOrNull(index) ?: PlateKind.FC).ordinal
-                                PlateQueryStateCache.plateOrdinal = plateOrdinal
+                                cache.plateOrdinal = plateOrdinal
                             },
                         )
                         OverlaySpinnerPreference(
@@ -217,97 +219,147 @@ fun PlateQueryScreen(
                             else difficultyLabel(difficulty),
                             onSelectedIndexChange = { index ->
                                 difficultyOrdinal = index - 1
-                                PlateQueryStateCache.difficultyOrdinal = difficultyOrdinal
+                                cache.difficultyOrdinal = difficultyOrdinal
+                            },
+                        )
+                        OverlaySpinnerPreference(
+                            items = listOf(
+                                DropdownItem(text = "列表"),
+                                DropdownItem(text = "网格 · 3 列"),
+                                DropdownItem(text = "网格 · 4 列"),
+                                DropdownItem(text = "网格 · 5 列"),
+                            ),
+                            selectedIndex = if (viewMode == "list") 0 else gridColumns - 2,
+                            title = "显示方式",
+                            summary = if (viewMode == "list") "列表" else "网格 · $gridColumns 列",
+                            onSelectedIndexChange = { index ->
+                                if (index == 0) {
+                                    viewMode = "list"
+                                } else {
+                                    viewMode = "grid"
+                                    gridColumns = index + 2
+                                }
+                                cache.viewMode = viewMode
+                                cache.gridColumns = gridColumns
                             },
                         )
                         SwitchPreference(
                             checked = hideAchieved,
                             onCheckedChange = {
                                 hideAchieved = it
-                                PlateQueryStateCache.hideAchieved = it
+                                cache.hideAchieved = it
                             },
                             title = "隐藏已达成",
-                            summary = "只看还没打满条件的谱面（EasyMai 同款开关）",
+                            summary = "只看还没达成当前牌子条件的谱面",
                         )
                     }
                 }
+            }
 
-                // ── 当前进度 ──
-                item(key = "progress_title") { SectionTitle("当前进度") }
-                item(key = "progress_card") {
-                    Card(modifier = Modifier.fillMaxWidth()) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = "${selectedGroup?.displayName ?: "—"} · " +
-                                        "${selectedGroup?.plateCode ?: ""} ${effectivePlate.label}牌",
-                                    style = MiuixTheme.textStyles.body1,
-                                    color = MiuixTheme.colorScheme.onSurface,
-                                    modifier = Modifier.weight(1f),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                Text(
-                                    text = "${currentProgress.done} / ${currentProgress.total}",
-                                    style = MiuixTheme.textStyles.body1,
-                                    color = MiuixTheme.colorScheme.primary,
-                                )
-                            }
-                            Spacer(Modifier.height(10.dp))
-                            ProgressBar(fraction = currentProgress.fraction)
-                            Spacer(Modifier.height(6.dp))
+            // ── 版本进度总览（只显示当前选中的版本，排版更宽敞）──
+            item(key = "overview_title", span = { GridItemSpan(maxLineSpan) }) { SectionTitle("版本进度") }
+            if (selectedSummary == null) {
+                item(key = "overview_empty", span = { GridItemSpan(maxLineSpan) }) {
+                    EmptyStateCard(
+                        text = "暂无数据\n先在曲目页同步曲库、并绑定查分器拉取成绩",
+                    )
+                }
+            } else {
+                item(key = "overview_card", span = { GridItemSpan(maxLineSpan) }) {
+                    OverviewCard(summary = selectedSummary)
+                }
+            }
+
+            // ── 当前筛选进度 ──
+            item(key = "progress_title", span = { GridItemSpan(maxLineSpan) }) { SectionTitle("当前进度") }
+            item(key = "progress_card", span = { GridItemSpan(maxLineSpan) }) {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                text = "${currentProgress.percentText} · " +
-                                    "共 ${currentProgress.total} 张谱面（" +
-                                    (difficulty?.let { "${difficultyLabel(it)}" } ?: "所有难度") + "）",
-                                style = MiuixTheme.textStyles.footnote2,
+                                text = "${selectedGroup?.plateCode ?: ""} ${effectivePlate.label}牌 · " +
+                                    (difficulty?.let { difficultyLabel(it) } ?: "所有难度"),
+                                style = MiuixTheme.textStyles.body1,
+                                color = MiuixTheme.colorScheme.onSurface,
+                                modifier = Modifier.weight(1f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                text = "${currentProgress.done} / ${currentProgress.total}",
+                                style = MiuixTheme.textStyles.body1,
+                                color = MiuixTheme.colorScheme.primary,
+                            )
+                        }
+                        Spacer(Modifier.height(10.dp))
+                        ProgressBar(fraction = currentProgress.fraction)
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            text = "${currentProgress.percentText} · 共 ${currentProgress.total} 张谱面",
+                            style = MiuixTheme.textStyles.footnote2,
+                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        )
+                    }
+                }
+            }
+
+            // ── 明细列表（按等级降序分组，组内定数降序；网格视图格子带角标）──
+            if (levelGroups.isEmpty()) {
+                item(key = "detail_empty", span = { GridItemSpan(maxLineSpan) }) {
+                    EmptyStateCard(
+                        text = if (hideAchieved && detail.isNotEmpty()) {
+                            "该条件下全部谱面都已达成 🎉"
+                        } else {
+                            "当前筛选下没有谱面\n试试换个版本 / 难度"
+                        },
+                    )
+                }
+            } else {
+                item(key = "count", span = { GridItemSpan(maxLineSpan) }) {
+                    Text(
+                        text = "共 ${detail.count { !hideAchieved || !it.isDone(effectivePlate) }} 张谱面",
+                        style = MiuixTheme.textStyles.footnote1,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        modifier = Modifier.padding(start = 4.dp),
+                    )
+                }
+                levelGroups.forEach { (level, rows) ->
+                    item(key = "level_$level", span = { GridItemSpan(maxLineSpan) }) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 4.dp, top = 6.dp, bottom = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = "Lv.$level",
+                                style = MiuixTheme.textStyles.footnote1,
+                                color = MiuixTheme.colorScheme.primary,
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = "(${rows.size} 首)",
+                                style = MiuixTheme.textStyles.footnote1,
                                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                             )
                         }
                     }
-                }
-
-                // ── 明细列表（按等级降序分组，组内定数降序）──
-                if (levelGroups.isEmpty()) {
-                    item(key = "detail_empty") {
-                        EmptyStateCard(
-                            text = if (hideAchieved && detail.isNotEmpty()) {
-                                "该条件下全部谱面都已达成 🎉"
-                            } else {
-                                "当前筛选下没有谱面\n试试换个版本 / 难度"
-                            },
-                        )
-                    }
-                } else {
-                    levelGroups.forEach { (level, rows) ->
-                        item(key = "level_$level") {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(start = 4.dp, top = 6.dp, bottom = 2.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Text(
-                                    text = "Lv.$level",
-                                    style = MiuixTheme.textStyles.footnote1,
-                                    color = MiuixTheme.colorScheme.primary,
-                                )
-                                Spacer(Modifier.width(6.dp))
-                                Text(
-                                    text = "(${rows.size} 首)",
-                                    style = MiuixTheme.textStyles.footnote1,
-                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                                )
-                            }
-                        }
-                        items(
-                            count = rows.size,
-                            key = { "song_${rows[it].song.id}_${rows[it].chart.difficultyType.ordinal}" },
-                        ) { index ->
-                            PlateItemRow(
-                                item = rows[index],
+                    items(
+                        count = rows.size,
+                        key = { "song_${rows[it].song.id}_${rows[it].chart.difficultyType.ordinal}" },
+                    ) { index ->
+                        val item = rows[index]
+                        if (viewMode == "grid") {
+                            PlateGridCell(
+                                item = item,
                                 plate = effectivePlate,
-                                onClick = { onOpenSong(rows[index].song.id) },
+                                onClick = { onOpenSong(item.song.id) },
+                            )
+                        } else {
+                            PlateItemRow(
+                                item = item,
+                                plate = effectivePlate,
+                                onClick = { onOpenSong(item.song.id) },
                             )
                         }
                     }
@@ -317,93 +369,112 @@ fun PlateQueryScreen(
     }
 }
 
-/** 版本总览行：版本名（代号）+ 极 / 将 / 神（旧框含霸者）四段迷你进度。 */
+/**
+ * 版本进度总览卡（只展示当前选中版本）：大字牌子代号 + 版本名 + 谱面总数，
+ * 下方分牌横向进度条（极 / 将 / 神，舞代另含霸者；真代无将），留白宽敞。
+ */
 @Composable
-private fun OverviewRow(
-    summary: PlateProgress.GroupSummary,
-    selected: Boolean,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .clickable(onClick = onClick)
-            .padding(vertical = 9.dp, horizontal = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.width(132.dp)) {
+private fun OverviewCard(summary: PlateProgress.GroupSummary) {
+    val group = summary.group
+    // 总览牌序：极 / 将 / 神（舞代另含霸者）；真代无将；舞舞不在总览内
+    val overviewPlates = remember(group) {
+        group.availablePlates.filter { it != PlateKind.FSD }
+    }
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 18.dp),
+        ) {
+            // 头部：代号大字 + 版本名 / 谱面总数
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = summary.group.plateCode,
-                    style = MiuixTheme.textStyles.body1,
-                    color = if (selected) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onSurface,
+                    text = group.plateCode,
+                    style = MiuixTheme.textStyles.title2,
+                    color = MiuixTheme.colorScheme.primary,
                 )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    text = summary.group.displayName,
-                    style = MiuixTheme.textStyles.footnote2,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Spacer(Modifier.width(14.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = group.displayName,
+                        style = MiuixTheme.textStyles.body1,
+                        color = MiuixTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = "共 ${summary.total} 张谱面",
+                        style = MiuixTheme.textStyles.footnote2,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    )
+                }
             }
-        }
-        Spacer(Modifier.width(8.dp))
-        Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            MiniProgress(PlateKind.FC.label, summary.fc, Modifier.weight(1f))
-            MiniProgress(PlateKind.SSS.label, summary.sss, Modifier.weight(1f))
-            MiniProgress(PlateKind.AP.label, summary.ap, Modifier.weight(1f))
-            if (summary.group.isOldFrame) {
-                MiniProgress(PlateKind.MASTER.label, summary.master, Modifier.weight(1f))
+            Spacer(Modifier.height(18.dp))
+            overviewPlates.forEach { kind ->
+                val progress = when (kind) {
+                    PlateKind.FC -> summary.fc
+                    PlateKind.SSS -> summary.sss
+                    PlateKind.AP -> summary.ap
+                    PlateKind.MASTER -> summary.master
+                    PlateKind.FSD -> summary.fc // 总览不含舞舞，兜底分支
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "${kind.label}牌",
+                        style = MiuixTheme.textStyles.footnote1,
+                        color = MiuixTheme.colorScheme.onSurface,
+                    )
+                    if (kind == PlateKind.MASTER) {
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = "(达成率 > 80%)",
+                            style = MiuixTheme.textStyles.footnote2,
+                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        )
+                    }
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        text = "${progress.done} / ${progress.total}",
+                        style = MiuixTheme.textStyles.footnote1,
+                        color = MiuixTheme.colorScheme.primary,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = progress.percentText,
+                        style = MiuixTheme.textStyles.footnote1,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    )
+                }
+                Spacer(Modifier.height(7.dp))
+                ProgressBar(fraction = progress.fraction, color = plateAccent(kind), height = 8.dp)
+                Spacer(Modifier.height(16.dp))
             }
         }
     }
 }
 
-/** 总览里的迷你进度：牌名 + 已完成数/总数 + 细进度条。 */
+/** 各牌子在总览进度条上的强调色（极蓝 / 将金 / 神红 / 霸者紫）。 */
+private fun plateAccent(kind: PlateKind): Color = when (kind) {
+    PlateKind.FC -> Color(0xFF3D9BE9)
+    PlateKind.SSS -> Color(0xFFF2B53C)
+    PlateKind.AP -> Color(0xFFE8547E)
+    PlateKind.FSD -> Color(0xFF34C7A0)
+    PlateKind.MASTER -> Color(0xFF9F51DC)
+}
+
+/** 牌子达成官方贴图徽章（按牌子种类给出对应贴图）。 */
 @Composable
-private fun MiniProgress(label: String, progress: PlateProgress.Progress, modifier: Modifier = Modifier) {
-    val accent = when (label) {
-        PlateKind.FC.label -> Color(0xFF3D9BE9)
-        PlateKind.SSS.label -> Color(0xFFF2B53C)
-        PlateKind.AP.label -> Color(0xFFE8547E)
-        else -> Color(0xFF9F51DC)
-    }
-    Column(modifier = modifier) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = label,
-                style = MiuixTheme.textStyles.footnote2,
-                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-            )
-            Spacer(Modifier.weight(1f))
-            Text(
-                text = "${progress.done}/${progress.total}",
-                style = MiuixTheme.textStyles.footnote2,
-                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-            )
-        }
-        Spacer(Modifier.height(4.dp))
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(4.dp)
-                .clip(RoundedCornerShape(2.dp))
-                .background(accent.copy(alpha = 0.18f)),
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(progress.fraction)
-                    .height(4.dp)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(accent),
-            )
-        }
+private fun PlateBadge(item: PlateProgress.Item, plate: PlateKind, height: Dp) {
+    when (plate) {
+        PlateKind.MASTER -> RankBadge(rate = item.record?.rate ?: "d", height = height)
+        PlateKind.FC -> ComboBadge(fc = item.record?.fc ?: "fc", height = height)
+        PlateKind.AP -> ComboBadge(fc = item.record?.fc ?: "ap", height = height)
+        PlateKind.FSD -> SyncBadge(fs = item.record?.fs ?: "fsd", height = height)
+        // 将：评级贴图（SSS / SSS+）
+        else -> RankBadge(rate = item.record?.rate ?: "sss", height = height)
     }
 }
 
-/** 明细条目：封面（难度描边）+ 歌名 + 难度/等级/定数 + 牌子达成徽章或「未达成」。 */
+/** 明细条目（列表）：封面（难度描边）+ 歌名 + 难度/等级/定数 + 牌子达成徽章或「未达成」。 */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun PlateItemRow(
@@ -453,41 +524,75 @@ private fun PlateItemRow(
             }
             Spacer(Modifier.width(8.dp))
             // 右侧：已达成显示对应官方贴图，未达成显示灰色标记
-            when {
-                plate == PlateKind.MASTER -> if (done) {
-                    RankBadge(rate = item.record?.rate ?: "d", height = 30.dp)
-                } else {
-                    UnplayedPill()
-                }
-                plate == PlateKind.FC -> if (done) {
-                    ComboBadge(fc = item.record?.fc ?: "fc", height = 30.dp)
-                } else {
-                    UnplayedPill()
-                }
-                plate == PlateKind.AP -> if (done) {
-                    ComboBadge(fc = item.record?.fc ?: "ap", height = 30.dp)
-                } else {
-                    UnplayedPill()
-                }
-                plate == PlateKind.FSD -> if (done) {
-                    SyncBadge(fs = item.record?.fs ?: "fsd", height = 30.dp)
-                } else {
-                    UnplayedPill()
-                }
-                // 将：评级贴图（SSS / SSS+）
-                else -> if (done) {
-                    RankBadge(rate = item.record?.rate ?: "sss", height = 30.dp)
-                } else {
-                    UnplayedPill()
-                }
+            if (done) {
+                PlateBadge(item = item, plate = plate, height = 30.dp)
+            } else {
+                UnplayedPill()
             }
         }
     }
 }
 
-/** 细进度条（与曲目页同步进度条同款视觉）。 */
+/** 明细条目（网格）：封面铺满格子（难度描边）+ 底部 scrim + 牌子达成角标或「未达成」。 */
 @Composable
-private fun ProgressBar(fraction: Float) {
+private fun PlateGridCell(
+    item: PlateProgress.Item,
+    plate: PlateKind,
+    onClick: () -> Unit,
+) {
+    // 网格格子是自拼 clickable（不是 miuix Card），按压反馈靠 kibaPressScale 补
+    val interaction = remember { MutableInteractionSource() }
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(1f)
+            .kibaPressScale(interaction)
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                onClick = onClick,
+            ),
+    ) {
+        // 封面铺满整个格子，描边按难度上色
+        CoverFrame(
+            songId = item.song.id,
+            imageUrl = item.song.imageUrl,
+            genre = item.song.genre,
+            size = maxWidth,
+            strokeColor = difficultyColor(item.chart.difficultyType),
+        )
+        // 底部轻 scrim，衬出角标
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .height(30.dp)
+                .background(
+                    Brush.verticalGradient(
+                        0f to Color.Transparent,
+                        1f to Color.Black.copy(alpha = 0.45f),
+                    )
+                ),
+        )
+        // 角标：已达成显示对应官方贴图，未达成显示灰色标记
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(4.dp),
+        ) {
+            if (item.isDone(plate)) {
+                PlateBadge(item = item, plate = plate, height = 20.dp)
+            } else {
+                UnplayedPill()
+            }
+        }
+    }
+}
+
+/** 细进度条（与曲目页同步进度条同款视觉；颜色 / 粗细可调）。 */
+@Composable
+private fun ProgressBar(fraction: Float, color: Color = MiuixTheme.colorScheme.primary, height: Dp = 6.dp) {
     val animated by androidx.compose.animation.core.animateFloatAsState(
         targetValue = fraction.coerceIn(0f, 1f),
         animationSpec = androidx.compose.animation.core.tween(durationMillis = 240),
@@ -496,16 +601,16 @@ private fun ProgressBar(fraction: Float) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(6.dp)
-            .clip(RoundedCornerShape(3.dp))
-            .background(MiuixTheme.colorScheme.primary.copy(alpha = 0.15f)),
+            .height(height)
+            .clip(RoundedCornerShape(height / 2))
+            .background(color.copy(alpha = 0.15f)),
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth(animated)
-                .height(6.dp)
-                .clip(RoundedCornerShape(3.dp))
-                .background(MiuixTheme.colorScheme.primary),
+                .height(height)
+                .clip(RoundedCornerShape(height / 2))
+                .background(color),
         )
     }
 }
@@ -516,6 +621,9 @@ private fun ProgressBar(fraction: Float) {
 object PlateQueryStateCache {
     var groupKey: String = "OLD"
     var plateOrdinal: Int = PlateKind.FC.ordinal
-    var difficultyOrdinal: Int = 3 // 默认 Master（EasyMai currentDiffIndex=4 → Master）
+    var difficultyOrdinal: Int = 3 // 默认 Master
     var hideAchieved: Boolean = false
+    var filtersExpanded: Boolean = false
+    var viewMode: String = "list"
+    var gridColumns: Int = 3
 }
