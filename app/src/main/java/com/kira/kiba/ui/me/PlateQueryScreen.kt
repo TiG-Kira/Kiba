@@ -1,7 +1,9 @@
 package com.kira.kiba.ui.me
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -56,6 +58,8 @@ import com.kira.kiba.ui.common.ListSnapshotCache
 import com.kira.kiba.ui.common.difficultyColor
 import com.kira.kiba.ui.common.difficultyLabel
 import com.kira.kiba.ui.common.kibaPressScale
+import com.kira.kiba.ui.common.SongCardMenuHost
+import com.kira.kiba.ui.common.rememberSongCardMenuState
 import com.kira.kiba.ui.common.pageContentPadding
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
@@ -528,15 +532,29 @@ private fun PlateBadge(item: PlateProgress.Item, plate: PlateKind, height: Dp) {
 /** 明细条目（列表）：封面（难度描边）+ 歌名 + 难度/等级/定数 + 牌子达成徽章或「未达成」。 */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
 private fun PlateItemRow(
     item: PlateProgress.Item,
     plate: PlateKind,
     onClick: () -> Unit,
 ) {
+    // 长按菜单（与曲目页 SongCard 同款：详情 / 复制歌名 / 播放 / 加入歌单）
+    val menu = rememberSongCardMenuState()
+    val interaction = remember { MutableInteractionSource() }
     val done = item.isDone(plate)
     Card(
-        modifier = Modifier.fillMaxWidth(),
-        onClick = onClick,
+        modifier = Modifier
+            .fillMaxWidth()
+            .kibaPressScale(interaction)
+            .combinedClickable(
+                interactionSource = interaction,
+                indication = null,
+                onClick = onClick,
+                onLongClick = {
+                    menu.show(item.song.id, item.song.title) { onClick() }
+                },
+            ),
     ) {
         Row(
             modifier = Modifier
@@ -582,16 +600,21 @@ private fun PlateItemRow(
             }
         }
     }
+    SongCardMenuHost(menu)
 }
 
 /** 明细条目（网格）：封面铺满格子（难度描边）+ 底部 scrim + 牌子达成角标或「未达成」。 */
+@Composable
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun PlateGridCell(
     item: PlateProgress.Item,
     plate: PlateKind,
     onClick: () -> Unit,
 ) {
-    // 网格格子是自拼 clickable（不是 miuix Card），按压反馈靠 kibaPressScale 补
+    // 网格格子是自拼 clickable（不是 miuix Card），按压反馈靠 kibaPressScale 补；
+    // 长按菜单与列表行同款（SongCardMenuHost）
+    val menu = rememberSongCardMenuState()
     val interaction = remember { MutableInteractionSource() }
     BoxWithConstraints(
         modifier = Modifier
@@ -599,10 +622,13 @@ private fun PlateGridCell(
             .aspectRatio(1f)
             .kibaPressScale(interaction)
             .clip(RoundedCornerShape(10.dp))
-            .clickable(
+            .combinedClickable(
                 interactionSource = interaction,
                 indication = null,
                 onClick = onClick,
+                onLongClick = {
+                    menu.show(item.song.id, item.song.title) { onClick() }
+                },
             ),
     ) {
         // 封面铺满整个格子，描边按难度上色
@@ -639,6 +665,7 @@ private fun PlateGridCell(
             }
         }
     }
+    SongCardMenuHost(menu)
 }
 
 /** 细进度条（与曲目页同步进度条同款视觉；颜色 / 粗细可调）。 */

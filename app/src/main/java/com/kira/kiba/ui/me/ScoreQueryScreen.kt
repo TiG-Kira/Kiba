@@ -1,7 +1,9 @@
 package com.kira.kiba.ui.me
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -59,6 +61,8 @@ import com.kira.kiba.ui.common.SyncBadge
 import com.kira.kiba.ui.common.difficultyColor
 import com.kira.kiba.ui.common.difficultyLabel
 import com.kira.kiba.ui.common.kibaPressScale
+import com.kira.kiba.ui.common.SongCardMenuHost
+import com.kira.kiba.ui.common.rememberSongCardMenuState
 import com.kira.kiba.ui.common.pageContentPadding
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
@@ -669,7 +673,7 @@ private fun FilterChip(text: String, active: Boolean = false, onClick: () -> Uni
 
 // ── 列表成绩卡（EasyMai song-card 排版：封面 + ds 角标 / 标题 / 达成率+RA+FC-FS / 评级徽章）──
 
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
 private fun RecordListCard(
     record: RecordEntity,
@@ -677,11 +681,21 @@ private fun RecordListCard(
     unplayed: Boolean = false,
     onClick: () -> Unit,
 ) {
+    // 长按菜单（与曲目页 SongCard 同款：详情 / 复制歌名 / 播放 / 加入歌单）
+    val menu = rememberSongCardMenuState()
+    val interaction = remember { MutableInteractionSource() }
     Card(
-        modifier = (Modifier.fillMaxWidth()),
-        onClick = onClick,
-        // HyperOS 按压缩放反馈（miuix Card 默认无反馈，点下去像死卡）
-        pressFeedbackType = PressFeedbackType.Sink,
+        modifier = Modifier
+            .fillMaxWidth()
+            .kibaPressScale(interaction)
+            .combinedClickable(
+                interactionSource = interaction,
+                indication = null,
+                onClick = onClick,
+                onLongClick = {
+                    menu.show(record.songId, songTitle ?: record.title) { onClick() }
+                },
+            ),
     ) {
         Row(
             modifier = Modifier
@@ -755,10 +769,12 @@ private fun RecordListCard(
             }
         }
     }
+    SongCardMenuHost(menu)
 }
 
 // ── 网格封面格子（EasyMai grid 视图：封面为格子本体 + 角标，封面必须显示）──
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun GridCoverCell(
     record: RecordEntity,
@@ -767,7 +783,9 @@ private fun GridCoverCell(
     unplayed: Boolean = false,
     onClick: () -> Unit,
 ) {
-    // 网格格子是自拼 clickable（不是 miuix Card），按压反馈靠 kibaPressScale 补
+    // 网格格子是自拼 clickable（不是 miuix Card），按压反馈靠 kibaPressScale 补；
+    // 长按菜单与列表卡同款（SongCardMenuHost）
+    val menu = rememberSongCardMenuState()
     val interaction = remember { MutableInteractionSource() }
     androidx.compose.foundation.layout.BoxWithConstraints(
         modifier = Modifier
@@ -775,10 +793,13 @@ private fun GridCoverCell(
             .aspectRatio(1f)
             .kibaPressScale(interaction)
             .clip(RoundedCornerShape(10.dp))
-            .clickable(
+            .combinedClickable(
                 interactionSource = interaction,
                 indication = null,
                 onClick = onClick,
+                onLongClick = {
+                    menu.show(record.songId, song?.title ?: record.title) { onClick() }
+                },
             ),
     ) {
         // 封面铺满整个格子，描边按难度上色（与列表卡口径一致）
@@ -822,6 +843,7 @@ private fun GridCoverCell(
             }
         }
     }
+    SongCardMenuHost(menu)
 }
 
 /** 「未游玩」标记：无成绩谱面按 D（0.0000%）参与筛选排序，但显示上与真 D 区分。 */

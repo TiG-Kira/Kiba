@@ -1,5 +1,8 @@
 package com.kira.kiba.ui.me
 
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -25,7 +28,9 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -63,6 +68,9 @@ import com.kira.kiba.ui.common.EmptyStateCard
 import com.kira.kiba.ui.common.HGap
 import com.kira.kiba.ui.common.InfoPill
 import com.kira.kiba.ui.common.ListSnapshotCache
+import com.kira.kiba.ui.common.SongCardMenuHost
+import com.kira.kiba.ui.common.rememberSongCardMenuState
+import com.kira.kiba.ui.common.kibaPressScale
 import com.kira.kiba.ui.common.difficultyColor
 import com.kira.kiba.ui.common.difficultyLabel
 import com.kira.kiba.ui.common.pageContentPadding
@@ -90,15 +98,39 @@ private sealed interface B50UiState {
     data class Done(val b50: DivingFishAccount.Best50) : B50UiState
 }
 
+/**
+ * B50 页状态快照（进程级）：从歌曲详情返回 / 从主页重新进入时首帧即渲染上次的
+ * 数据与滚动位置，否则 LazyVerticalGrid 空测量会把恢复出的滚动位置钳回 0
+ * （详见 [ListSnapshotCache]；行为对齐 ScoreQueryStateCache / PlateQueryStateCache）。
+ */
+object Best50StateCache {
+    /** 上次成功加载的 B50 数据；null 表示本会话从未加载成功（进页仍显示加载态）。 */
+    var b50: DivingFishAccount.Best50? = null
+
+    /** DX 满分表（notes × 3）快照。 */
+    var charts: List<ChartEntity> = emptyList()
+
+    /** 曲库（版本 tag / 流派用）快照。 */
+    var songs: List<SongDataEntity> = emptyList()
+
+    var scrollIndex = 0
+    var scrollOffset = 0
+}
+
 @Composable
 fun Best50Screen(
     scrollBehavior: ScrollBehavior,
     onOpenSong: (songId: Int) -> Unit = {},
 ) {
     val account by DivingFishAccount.state.collectAsState()
+    val cache = Best50StateCache
 
-    // ── 异步加载：进页先显示加载态，缓存读完后渲染卡片；账号刷新后重读 ──
-    val b50State by produceState<B50UiState>(B50UiState.Loading, account.recordCount) {
+    // ── 异步加载：进页先显示加载态，缓存读完后渲染卡片；账号刷新后重读。
+    //    首帧用进程级快照兜底：返回 / 重进时立即渲染上次数据，滚动位置才不会被钳回 0 ──
+    val b50State by produceState<B50UiState>(
+        initialValue = cache.b50?.let { B50UiState.Done(it) } ?: B50UiState.Loading,
+        account.recordCount,
+    ) {
         value = B50UiState.Loading
         val result = runCatching {
             withContext(Dispatchers.Default) { DivingFishAccount.best50() }
@@ -110,23 +142,32 @@ fun Best50Screen(
     val old = b50.old
     val new = b50.new
     val total = b50.rating
+    // 数据稳定后发布快照（重进 / 返回首帧用）
+    LaunchedEffect(b50State) {
+        (b50State as? B50UiState.Done)?.b50?.takeIf { it.old.isNotEmpty() || it.new.isNotEmpty() }
+            ?.let { cache.b50 = it }
+    }
 
     // DX 满分表（notes 总数 × 3）：贴图右下的 DX 分/满分 与 星标 都要用
-    val charts by produceState<List<ChartEntity>>(initialValue = emptyList()) {
+    val charts by produceState<List<ChartEntity>>(initialValue = cache.charts) {
         value = runCatching {
             AppDataBase.getInstance().chartDao().getAllChartsList()
         }.getOrDefault(emptyList())
     }
+    LaunchedEffect(charts) { cache.charts = charts }
     val fullScoreByKey = remember(charts) {
         charts.associate { (it.songId to it.difficultyType.ordinal) to it.notesTotal * 3 }
     }
 
     // 曲库（版本 tag 用：拉伸空白区显示歌曲所属版本）
-    val songsById by produceState<Map<Int, SongDataEntity>>(emptyMap()) {
+    val songsById by produceState<Map<Int, SongDataEntity>>(
+        initialValue = cache.songs.associateBy { it.id },
+    ) {
         value = runCatching {
             AppDataBase.getInstance().songDao().getAllSongsList().associateBy { it.id }
         }.getOrDefault(emptyMap())
     }
+    LaunchedEffect(songsById) { cache.songs = songsById.values.toList() }
 
     // ── 一行一首：固定单列，贴图九宫格拉长到整行宽（详见 Best50Tile）──
     val columns = 1
@@ -138,6 +179,15 @@ fun Best50Screen(
     var saveMsg by remember { mutableStateOf<String?>(null) }
     var pending by remember { mutableStateOf<GeneratedImage?>(null) }
 
+    // 滚动位置：初始值来自进程级快照；离开页面时写回（push 详情 / 切 tab 即触发）
+    val gridState = rememberLazyGridState(cache.scrollIndex, cache.scrollOffset)
+    DisposableEffect(Unit) {
+        onDispose {
+            cache.scrollIndex = gridState.firstVisibleItemIndex
+            cache.scrollOffset = gridState.firstVisibleItemScrollOffset
+        }
+    }
+
     Scaffold(
         modifier = Modifier
             .fillMaxSize()
@@ -145,6 +195,7 @@ fun Best50Screen(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
     ) { padding ->
         LazyVerticalGrid(
+            state = gridState,
             columns = GridCells.Fixed(columns),
             modifier = Modifier
                 .fillMaxSize()
@@ -391,6 +442,7 @@ private fun LoadingCard(text: String) {
  * Best 50 贴图卡：单曲贴图（[Best50Tile]）包在可点击卡片里。
  * 点击进入歌曲详情页（与旧版行卡行为一致）；一行一首，贴图九宫格拉长到整行宽。
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun Best50TileCard(
     rank: Int,
@@ -401,11 +453,21 @@ private fun Best50TileCard(
     genre: String,
     onClick: () -> Unit,
 ) {
+    // 长按菜单（与曲目页 SongCard 同款：详情 / 复制歌名 / 播放 / 加入歌单）
+    val menu = rememberSongCardMenuState()
+    val interaction = remember { MutableInteractionSource() }
     Card(
-        modifier = (Modifier.fillMaxWidth()),
-        onClick = onClick,
-        // 整卡按压缩放（与成绩查询 / 曲目页同一套 HyperOS 反馈）
-        pressFeedbackType = PressFeedbackType.Sink,
+        modifier = Modifier
+            .fillMaxWidth()
+            .kibaPressScale(interaction)
+            .combinedClickable(
+                interactionSource = interaction,
+                indication = null,
+                onClick = onClick,
+                onLongClick = {
+                    menu.show(record.songId, record.title) { onClick() }
+                },
+            ),
     ) {
         Box(modifier = Modifier.padding(4.dp)) {
             Best50Tile(
@@ -418,6 +480,7 @@ private fun Best50TileCard(
             )
         }
     }
+    SongCardMenuHost(menu)
 }
 
 /**

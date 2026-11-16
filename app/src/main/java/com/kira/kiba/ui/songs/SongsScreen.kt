@@ -95,6 +95,8 @@ import com.kira.kiba.ui.listen.toTrack
 import com.kira.kiba.ui.songplayer.NOW_PLAYING_BAR_CLEARANCE
 import com.kira.kiba.ui.common.pageContentPadding
 import com.kira.kiba.ui.common.SectionTitle
+import com.kira.kiba.ui.common.SongCardMenuHost
+import com.kira.kiba.ui.common.rememberSongCardMenuState
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
@@ -908,27 +910,7 @@ fun SongCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val context = LocalContext.current
-    var menuVisible by remember { mutableStateOf(false) }
-    // 加入歌单弹层（长按菜单 → 加入歌单）
-    var showAddPlaylist by remember { mutableStateOf(false) }
-    var playlists by remember {
-        mutableStateOf<List<com.kira.kiba.core.db.entity.PlaylistEntity>>(emptyList())
-    }
-    val scope = rememberCoroutineScope()
-
-    fun copyTitle() {
-        val ok = context.copyTextToClipboard(song.songData.title, label = "kiba_song")
-        Toast.makeText(
-            context,
-            if (ok) "已复制「${song.songData.title}」" else "复制失败",
-            Toast.LENGTH_SHORT,
-        ).show()
-    }
-
-    fun playSong() {
-        SongPlaybackController.play(context, song.toTrack())
-    }
+    val menu = rememberSongCardMenuState()
 
     Box(modifier = modifier.fillMaxWidth()) {
         // 按压缩放 + 单击 / 长按共用一个 interactionSource（miuix Card 的 onClick
@@ -942,7 +924,9 @@ fun SongCard(
                     interactionSource = interaction,
                     indication = null,
                     onClick = onClick,
-                    onLongClick = { menuVisible = true },
+                    onLongClick = {
+                        menu.show(song.songData.id, song.songData.title) { onClick() }
+                    },
                 ),
         ) {
             BasicComponent(
@@ -1003,132 +987,10 @@ fun SongCard(
             }
         }
 
-        // ── 长按小菜单（miuix OverlayListPopup：经根 Scaffold 弹层宿主渲染，不被列表裁剪）──
-        OverlayListPopup(
-            show = menuVisible,
-            onDismissRequest = { menuVisible = false },
-            popupPositionProvider = ListPopupDefaults.DropdownPositionProvider,
-        ) {
-            val menuActions = listOf(
-                SongCardMenuAction(
-                    text = "显示歌曲详情",
-                    icon = MiuixGlassIcons.Regular.Info,
-                    tint = KibaIconTint.BLUE,
-                ) {
-                    menuVisible = false
-                    onClick()
-                },
-                SongCardMenuAction(
-                    text = "复制歌曲名",
-                    icon = MiuixGlassIcons.Regular.Copy,
-                    tint = KibaIconTint.CYAN,
-                ) {
-                    menuVisible = false
-                    copyTitle()
-                },
-                SongCardMenuAction(
-                    text = "播放歌曲",
-                    icon = MiuixGlassIcons.Regular.Play,
-                    tint = KibaIconTint.GREEN,
-                ) {
-                    menuVisible = false
-                    playSong()
-                },
-                SongCardMenuAction(
-                    text = "加入歌单",
-                    icon = MiuixGlassIcons.Regular.Add,
-                    tint = KibaIconTint.PINK,
-                ) {
-                    menuVisible = false
-                    showAddPlaylist = true
-                },
-            )
-            ListPopupColumn {
-                menuActions.forEachIndexed { index, action ->
-                    DropdownImpl(
-                        item = DropdownItem(
-                            text = action.text,
-                            icon = { m ->
-                                Icon(
-                                    imageVector = action.icon,
-                                    contentDescription = null,
-                                    tint = kibaIconTint(action.tint),
-                                    modifier = m,
-                                )
-                            },
-                        ),
-                        optionSize = menuActions.size,
-                        isSelected = false,
-                        index = index,
-                        onSelectedIndexChange = { action.onClick() },
-                    )
-                }
-            }
-        }
-    }
-
-    // ── 加入歌单弹层：与歌曲详情页同款（列出歌单点选加入）──
-    LaunchedEffect(showAddPlaylist) {
-        if (showAddPlaylist) {
-            playlists = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                AppDataBase.getInstance().playlistDao().observeAll().firstOrNull().orEmpty()
-            }
-        }
-    }
-    if (showAddPlaylist) {
-        KibaGlassDialog(
-            show = true,
-            title = "加入歌单",
-            summary = "把《${song.songData.title}》收进哪个歌单？",
-            onDismissRequest = { showAddPlaylist = false },
-        ) {
-            Column {
-                if (playlists.isEmpty()) {
-                    Text(
-                        text = "还没有歌单\n去「畅听」页点「新建歌单」创建一个",
-                        style = MiuixTheme.textStyles.body2,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    )
-                    Spacer(Modifier.height(12.dp))
-                } else {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp),
-                    ) {
-                        itemsIndexed(playlists) { _, pl ->
-                            TextButton(
-                                text = pl.name,
-                                onClick = {
-                                    scope.launch {
-                                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                                            AppDataBase.getInstance().playlistDao()
-                                                .appendSong(pl.id, song.songData.id)
-                                        }
-                                        Toast.makeText(
-                                            context,
-                                            "已加入「${pl.name}」",
-                                            Toast.LENGTH_SHORT,
-                                        ).show()
-                                        showAddPlaylist = false
-                                    }
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                        }
-                    }
-                    Spacer(Modifier.height(8.dp))
-                }
-            }
-        }
+        // ── 长按小菜单 + 加入歌单弹层（共享宿主统一渲染，见 SongCardMenuHost）──
+        SongCardMenuHost(menu)
     }
 }
-
-/** 曲目卡片长按菜单里的一项（文案 + 彩色图标 + 动作）；舞萌 / 中二节奏曲目卡片共用。 */
-data class SongCardMenuAction(
-    val text: String,
-    val icon: androidx.compose.ui.graphics.vector.ImageVector,
-    val tint: KibaIconTint,
-    val onClick: () -> Unit,
-)
 
 /**
  * 刷新收尾提示卡（舞萌 / 中二各一张，右上角 × 可关闭）。

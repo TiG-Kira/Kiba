@@ -33,4 +33,15 @@ interface AliasDao {
 
     @Query("DELETE  FROM alias")
     fun clearAlias()
+
+    /**
+     * 别名模糊搜索（Agent 查歌用：别名关键词 → 命中的别名行， songId 回表取歌）。
+     * 精确命中与模糊命中都在结果里，优先级由调用层排序。
+     */
+    @Query("SELECT * FROM alias WHERE alias LIKE '%' || :query || '%' LIMIT :limit")
+    suspend fun searchAliasesSync(query: String, limit: Int = 50): List<AliasEntity>
+
+    /** 按歌曲 ID 批量取别名（Agent 查歌回复里附带给模型做后续工具调用）。 */
+    @Query("SELECT * FROM alias WHERE song_id IN (:songIds)")
+    suspend fun getAliasesBySongIdsSync(songIds: List<Int>): List<AliasEntity>
 }

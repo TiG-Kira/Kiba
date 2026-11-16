@@ -993,38 +993,68 @@ class KibaAgent(private val context: Context) {
         )
     }
 
+    /**
+     * 查歌曲信息（song_query 技能）。
+     *
+     * 匹配链路（按优先级合并去重）：
+     * 1. 纯数字 → 歌曲 ID 精确命中；
+     * 2. 歌名模糊匹配（SongDao.searchSongsList）；
+     * 3. **别名匹配**（alias 表模糊搜 → 回表取歌），别名精确命中排在模糊命中前。
+     *
+     * 回复文本每首附带 `ID` 与别名清单——模型拿到 ID 才能去调分数线等
+     * 需要 songId 的后续技能，别名清单让模型能主动对上用户的习惯叫法。
+     */
     private suspend fun querySong(text: String): AgentReply {
         val query = extractQuery(text)
         if (query.isBlank()) {
             return AgentReply("想查哪首歌？直接告诉我歌名、别名或 ID，例如「查歌 青」")
         }
-        val songs = withContext(Dispatchers.IO) {
+        data class SongMatches(
+            val songs: List<SongDataEntity>,
+            val aliasText: Map<Int, String>,
+        )
+
+        val matches = withContext(Dispatchers.IO) {
             runCatching {
-                AppDataBase.getInstance().songDao().searchSongsList(query, 20)
-            }.getOrDefault(emptyList())
+                val db = AppDataBase.getInstance()
+                val needle = normalizeGuess(query)
+
+                // ① ID 精确命中
+                val idMatch = query.toIntOrNull()?.let { id -> db.songDao().getSongById(id) }
+                // ② 歌名模糊
+                val titleMatches = db.songDao().searchSongsList(query, 20)
+                // ③ 别名（模糊搜别名表 → 回表取歌；精确命中排前）
+                val aliasRows = db.aliasDao().searchAliasesSync(query)
+                val exactAliasIds = aliasRows
+                    .filter { normalizeGuess(it.alias) == needle }
+                    .map { it.songId }.toSet()
+                val aliasSongs = aliasRows.map { it.songId }.distinct()
+                    .sortedByDescending { it in exactAliasIds }
+                    .mapNotNull { db.songDao().getSongById(it) }
+
+                val merged = listOfNotNull(idMatch) + aliasSongs + titleMatches
+                val aliasText = db.aliasDao()
+                    .getAliasesBySongIdsSync(merged.map { it.id }.distinct())
+                    .groupBy { it.songId }
+                    .mapValues { (_, rows) -> rows.joinToString("、") { it.alias } }
+                SongMatches(merged.distinctBy { it.id }, aliasText)
+            }.getOrDefault(SongMatches(emptyList(), emptyMap()))
         }
-        val idMatch = query.toIntOrNull()?.let { id ->
-            withContext(Dispatchers.IO) {
-                runCatching {
-                    AppDataBase.getInstance().songDao().getAllSongsList().firstOrNull { it.id == id }
-                }.getOrNull()
-            }
-        }
-        val matched = listOfNotNull(idMatch) + songs
-        if (matched.isEmpty()) {
+        if (matches.songs.isEmpty()) {
             return AgentReply(
                 "本地曲库没找到「$query」。\n可以先在「设置 → 曲库更新」同步最新曲库，或换个关键词（支持别名模糊匹配）。"
             )
         }
         val sb = StringBuilder()
         val cards = mutableListOf<AgentSong>()
-        matched.distinctBy { it.id }.take(8).forEach { song ->
+        matches.songs.take(8).forEach { song ->
             val charts = withContext(Dispatchers.IO) {
                 runCatching {
                     AppDataBase.getInstance().chartDao().getChartsBySongId(song.id)
                 }.getOrDefault(emptyList())
             }
-            sb.append("${song.title}（${song.artist}）\n")
+            sb.append("${song.title}（${song.artist}）　ID ${song.id}\n")
+            matches.aliasText[song.id]?.let { sb.append("  别名：$it\n") }
             if (charts.isEmpty()) {
                 sb.append("  暂无谱面数据\n")
             } else {
@@ -2629,11 +2659,12 @@ class KibaAgent(private val context: Context) {
             ),
             AgentSkill(
                 "song_query", "查歌曲信息",
-                "按歌名 / 别名 / 歌曲 ID 查询歌曲信息与各难度的定数、谱师",
+                "按歌名 / 别名 / 歌曲 ID 查询歌曲信息与各难度的定数、谱师；" +
+                    "结果附带歌曲 ID 与别名清单，后续需要歌曲 ID 的技能（分数线 / 谱面等）直接引用该 ID",
                 params = listOf(
                     KibaLlm.ToolParam(
                         "query", "string",
-                        "歌曲名、别名或歌曲 ID；支持模糊匹配，例：「群青」「グリーンライツ」「1234」",
+                        "歌曲名、别名或歌曲 ID；支持别名模糊匹配，例：「群青」「グリーンライツ」「1234」",
                         required = true,
                     ),
                 ),
