@@ -25,6 +25,7 @@ import com.kira.kiba.core.playback.SongPlaybackController
 import com.kira.kiba.ui.listen.toTrack
 import com.kira.kiba.ui.material.KibaGlassDialog
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.DropdownImpl
@@ -34,7 +35,8 @@ import top.yukonga.miuix.kmp.basic.ListPopupColumn
 import top.yukonga.miuix.kmp.basic.ListPopupDefaults
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
-import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
+// 通配符导入：Regular.Info / Regular.Copy 等为同包扩展属性，单导入 MiuixGlassIcons 无法解析
+import top.yukonga.miuix.kmp.icon.glass.*
 import top.yukonga.miuix.kmp.overlay.OverlayListPopup
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
