@@ -61,6 +61,7 @@ import com.kira.kiba.ui.listen.ListenScreen
 import com.kira.kiba.ui.listen.AgentPlaylistDetailScreen
 import com.kira.kiba.ui.listen.PlaylistDetailScreen
 import com.kira.kiba.ui.me.Best50Screen
+import com.kira.kiba.ui.me.Best50StateCache
 import com.kira.kiba.ui.me.ChuniBestScreen
 import com.kira.kiba.ui.me.FavoritesScreen
 import com.kira.kiba.ui.me.LoginScreen
@@ -69,7 +70,9 @@ import com.kira.kiba.ui.me.EasyMaiAccountScreen
 import com.kira.kiba.ui.me.MeScreen
 import com.kira.kiba.ui.me.MeTopBarSlot
 import com.kira.kiba.ui.me.ScoreQueryScreen
+import com.kira.kiba.ui.me.ScoreQueryStateCache
 import com.kira.kiba.ui.me.PlateQueryScreen
+import com.kira.kiba.ui.me.PlateQueryStateCache
 import com.kira.kiba.ui.settings.AboutScreen
 import com.kira.kiba.ui.settings.AvatarCropScreen
 import com.kira.kiba.ui.settings.DeviceScoreScreen
@@ -558,6 +561,24 @@ fun KibaMainScreen() {
         // 否则 enum/data class 匹配不上，旧滚动位置清不掉（表现为顶栏展开但页面没回顶）。
         pageStateHolder.removeState(pageKey(page))
         topBarMemory.remove(pageKey(page))
+        // 进程级快照缓存里的滚动位置同属「上一次浏览」的残留：带详情快照重进页面
+        // 应该从顶部开始，而不是从上次滚到的中间进入（Best50 / 成绩查询 / 名牌查询）。
+        // 只清滚动位置，数据快照保留——首帧渲染上次数据仍能避免列表空测量钳位。
+        when (page) {
+            is KibaSubPage.Best50 -> {
+                Best50StateCache.scrollIndex = 0
+                Best50StateCache.scrollOffset = 0
+            }
+            is KibaSubPage.ScoreQuery -> {
+                ScoreQueryStateCache.scrollIndex = 0
+                ScoreQueryStateCache.scrollOffset = 0
+            }
+            is KibaSubPage.PlateQuery -> {
+                PlateQueryStateCache.scrollIndex = 0
+                PlateQueryStateCache.scrollOffset = 0
+            }
+            else -> {}
+        }
         subStack = subStack + page
         resetTopBar()
     }

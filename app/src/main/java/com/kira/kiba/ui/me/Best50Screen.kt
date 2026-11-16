@@ -100,8 +100,10 @@ private sealed interface B50UiState {
 
 /**
  * B50 页状态快照（进程级）：从歌曲详情返回 / 从主页重新进入时首帧即渲染上次的
- * 数据与滚动位置，否则 LazyVerticalGrid 空测量会把恢复出的滚动位置钳回 0
+ * 数据，否则 LazyVerticalGrid 空测量会把恢复出的滚动位置钳回 0
  * （详见 [ListSnapshotCache]；行为对齐 ScoreQueryStateCache / PlateQueryStateCache）。
+ * 滚动位置只在「返回详情」场景恢复：push 进本页时由 KibaMainScreen 归零，
+ * 从账户页新进入始终从顶部开始（数据快照保留，加载期间先渲染上次内容）。
  */
 object Best50StateCache {
     /** 上次成功加载的 B50 数据；null 表示本会话从未加载成功（进页仍显示加载态）。 */
