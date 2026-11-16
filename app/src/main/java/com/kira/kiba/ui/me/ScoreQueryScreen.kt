@@ -46,6 +46,7 @@ import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.db.entity.RecordEntity
 import com.kira.kiba.core.db.entity.SongDataEntity
 import com.kira.kiba.core.db.entity.SongWithChartsEntity
+import com.kira.kiba.ui.common.ListSnapshotCache
 import com.kira.kiba.core.model.DifficultyType
 import com.kira.kiba.ui.common.ComboBadge
 import com.kira.kiba.ui.common.CoverFrame
@@ -111,6 +112,17 @@ object ScoreQueryStateCache {
     var scrollOffset = 0
 }
 
+/**
+ * 全谱面快照：返回首帧必须能重建**完整**合并列表（已游玩 + 未游玩谱面），
+ * 恢复出的滚动位置才不会被空表钳回 0（详见 [ListSnapshotCache]）。
+ * records 已有 [RecordsListCache] 兜底，但合并列表还依赖全谱面——
+ * 只有 records 时首帧列表是它的真前缀/乱序版，深滚动位置照样丢。
+ */
+object ScoreQueryChartsCache : ListSnapshotCache<List<SongWithChartsEntity>>(emptyList())
+
+/** 歌曲信息快照（版本筛选 / 封面用），与 [ScoreQueryChartsCache] 同理兜底首帧。 */
+object ScoreQuerySongsCache : ListSnapshotCache<List<SongDataEntity>>(emptyList())
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ScoreQueryScreen(
@@ -128,17 +140,25 @@ fun ScoreQueryScreen(
     }
     // 数据到达后发布快照，供从歌曲详情页返回时首帧恢复（同旧 RecordsScreen）
     LaunchedEffect(records) { RecordsListCache.publish(records) }
-    val songsById by produceState<Map<Int, SongDataEntity>>(emptyMap()) {
-        value = runCatching {
-            AppDataBase.getInstance().songDao().getAllSongsList().associateBy { it.id }
-        }.getOrDefault(emptyMap())
-    }
     // 全谱面（不含宴曲目）：未游玩的谱面也要出现在查询列表里
-    val allCharts by produceState<List<SongWithChartsEntity>>(emptyList()) {
+    // 首帧用进程级快照兜底（返回时不丢滚动位置，见 ScoreQueryChartsCache）
+    val allCharts by produceState(
+        initialValue = ScoreQueryChartsCache.current,
+    ) {
         value = runCatching {
             AppDataBase.getInstance().songWithChartDao().getAllSongsWithChartsOnce()
         }.getOrDefault(emptyList())
     }
+    LaunchedEffect(allCharts) { ScoreQueryChartsCache.publish(allCharts) }
+    // 歌曲信息（版本 / 封面）：首帧用快照，否则返回时版本筛选列表长度对不上
+    val songsById by produceState<Map<Int, SongDataEntity>>(
+        initialValue = ScoreQuerySongsCache.current.associateBy { it.id },
+    ) {
+        value = runCatching {
+            AppDataBase.getInstance().songDao().getAllSongsList().associateBy { it.id }
+        }.getOrDefault(emptyMap())
+    }
+    LaunchedEffect(songsById) { ScoreQuerySongsCache.publish(songsById.values.toList()) }
     // ── 合并未游玩谱面：无成绩的谱面视为 D（0.0000%，无 FC/FS、ra=0），
     //    合成 RecordEntity 后筛选 / 排序 / 渲染全链路复用，排序时自然沉底；
     //    unplayedKeys 记录合成记录的键，渲染时显示「未游玩」，与真 D 0.0000% 区分 ──

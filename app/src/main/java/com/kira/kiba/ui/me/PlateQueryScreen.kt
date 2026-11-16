@@ -21,8 +21,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -49,6 +52,7 @@ import com.kira.kiba.ui.common.RankBadge
 import com.kira.kiba.ui.common.SectionTitle
 import com.kira.kiba.ui.common.SyncBadge
 import com.kira.kiba.ui.common.UnplayedPill
+import com.kira.kiba.ui.common.ListSnapshotCache
 import com.kira.kiba.ui.common.difficultyColor
 import com.kira.kiba.ui.common.difficultyLabel
 import com.kira.kiba.ui.common.kibaPressScale
@@ -85,10 +89,13 @@ fun PlateQueryScreen(
 ) {
     val cache = PlateQueryStateCache
 
-    // ── 版本组 + 总览（曲库 / 成绩变化即重算）──
-    val summaries by produceState<List<PlateProgress.GroupSummary>>(initialValue = emptyList()) {
+    // ── 版本组 + 总览（曲库 / 成绩变化即重算；首帧用快照兜底以恢复滚动位置）──
+    val summaries by produceState<List<PlateProgress.GroupSummary>>(
+        initialValue = PlateOverviewCache.current,
+    ) {
         value = PlateProgress.loadOverview()
     }
+    LaunchedEffect(summaries) { PlateOverviewCache.publish(summaries) }
     val groups = remember(summaries) { summaries.map { it.group } }
 
     // ── 筛选状态（进程级快照：返回不丢）──
@@ -104,19 +111,38 @@ fun PlateQueryScreen(
         groups.firstOrNull { it.key == groupKey } ?: groups.firstOrNull()
     }
     val plate = PlateKind.entries.getOrElse(plateOrdinal) { PlateKind.FC }
+    // Re:Master（宗师）只计入舞代口径：非舞代组筛选器不提供宗师档，
+    // 选中态回落到大师（数据层 loadDetail 也会再排除一遍，双保险）
+    val allowsRemaster = selectedGroup?.isOldFrame != false
     val difficulty = if (difficultyOrdinal < 0) {
         null
     } else {
         DifficultyType.entries.getOrNull(difficultyOrdinal)
+            ?.let { if (it == DifficultyType.REMASTER && !allowsRemaster) DifficultyType.MASTER else it }
     }
 
     // ── 当前筛选下的明细 ──
+    // 首帧用进程级快照（键对齐才生效）：produceState 异步重载期间 value 保持快照，
+    // LazyVerticalGrid 第一帧就是完整 item 数，SaveableStateProvider / 缓存恢复的
+    // 滚动位置才不会被空表钳回 0（「从详情返回回顶」的根因）。
     val detail by produceState<List<PlateProgress.Item>>(
-        initialValue = emptyList(),
+        initialValue = PlateDetailCache.items.takeIf {
+            it.isNotEmpty() &&
+                PlateDetailCache.groupKey == cache.groupKey &&
+                PlateDetailCache.difficultyOrdinal == cache.difficultyOrdinal
+        } ?: emptyList(),
         selectedGroup, difficulty,
     ) {
         val g = selectedGroup
         value = if (g == null) emptyList() else PlateProgress.loadDetail(g, difficulty)
+    }
+    // 数据稳定（组解析完成且明细非空）后发布快照，供从歌曲详情返回时首帧恢复
+    LaunchedEffect(detail, groupKey, difficultyOrdinal) {
+        if (detail.isNotEmpty() && selectedGroup?.key == groupKey) {
+            PlateDetailCache.groupKey = groupKey
+            PlateDetailCache.difficultyOrdinal = difficultyOrdinal
+            PlateDetailCache.items = detail
+        }
     }
 
     // 牌子筛选跟随组切换：真代无将、霸者仅舞代（直接取组给出的可用牌集合）
@@ -147,6 +173,16 @@ fun PlateQueryScreen(
             .sortedByDescending { (level, _) -> PlateProgress.levelRank(level) }
     }
 
+    // 滚动位置：初始值来自进程级快照（与成绩查询页同款双保险）；离开页面时写回
+    // （push 歌曲详情即触发 onDispose）
+    val gridState = rememberLazyGridState(cache.scrollIndex, cache.scrollOffset)
+    DisposableEffect(Unit) {
+        onDispose {
+            cache.scrollIndex = gridState.firstVisibleItemIndex
+            cache.scrollOffset = gridState.firstVisibleItemScrollOffset
+        }
+    }
+
     Scaffold(
         modifier = Modifier
             .fillMaxSize()
@@ -154,6 +190,7 @@ fun PlateQueryScreen(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
     ) { padding ->
         LazyVerticalGrid(
+            state = gridState,
             columns = GridCells.Fixed(if (viewMode == "grid") gridColumns else 1),
             modifier = Modifier
                 .fillMaxSize()
@@ -210,10 +247,16 @@ fun PlateQueryScreen(
                                 cache.plateOrdinal = plateOrdinal
                             },
                         )
+                        // 难度选项：非舞代组不提供 Re:Master（宗师不计入名牌统计），
+                        // 选中索引按生效难度（回落后的）计算，两种选项集下映射一致：
+                        // 0=所有难度(-1)，其后依次 = ordinal
                         OverlaySpinnerPreference(
-                            items = listOf("所有难度", "Basic", "Advanced", "Expert", "Master", "Re:Master")
-                                .map { DropdownItem(text = it) },
-                            selectedIndex = difficultyOrdinal + 1,
+                            items = remember(allowsRemaster) {
+                                (listOf("所有难度", "Basic", "Advanced", "Expert", "Master") +
+                                    if (allowsRemaster) listOf("Re:Master") else emptyList())
+                                    .map { DropdownItem(text = it) }
+                            },
+                            selectedIndex = (difficulty?.ordinal ?: -1) + 1,
                             title = "难度",
                             summary = if (difficulty == null) "所有难度"
                             else difficultyLabel(difficulty),
@@ -222,6 +265,14 @@ fun PlateQueryScreen(
                                 cache.difficultyOrdinal = difficultyOrdinal
                             },
                         )
+                        if (!allowsRemaster) {
+                            Text(
+                                text = "非舞代 Re:Master 不计入名牌统计",
+                                style = MiuixTheme.textStyles.footnote2,
+                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                modifier = Modifier.padding(start = 4.dp),
+                            )
+                        }
                         OverlaySpinnerPreference(
                             items = listOf(
                                 DropdownItem(text = "列表"),
@@ -626,4 +677,20 @@ object PlateQueryStateCache {
     var filtersExpanded: Boolean = false
     var viewMode: String = "list"
     var gridColumns: Int = 3
+    var scrollIndex: Int = 0
+    var scrollOffset: Int = 0
+}
+
+/**
+ * 版本总览快照：返回首帧即可解析出 selectedGroup，明细快照（[PlateDetailCache]）
+ * 才能在第一帧生效——groups 异步加载时 selectedGroup 为 null，produceState 会在
+ * null 键上跑一轮把明细清空，滚动位置随之被钳回 0（详见 [ListSnapshotCache]）。
+ */
+object PlateOverviewCache : ListSnapshotCache<List<PlateProgress.GroupSummary>>(emptyList())
+
+/** 明细快照：键（版本 + 难度）对齐当前筛选时才允许首帧使用，避免版本切到一半返回错位。 */
+object PlateDetailCache {
+    @Volatile var groupKey: String = ""
+    @Volatile var difficultyOrdinal: Int = -1
+    var items: List<PlateProgress.Item> = emptyList()
 }

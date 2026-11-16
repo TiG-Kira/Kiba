@@ -906,6 +906,30 @@ object SpUtil {
         userInfoPrefs.edit { putString(KEY_SONG_GROUP_MODE, mode) }
     }
 
+    private const val KEY_SONG_GROUP_VIEW_MODE = "song_group_view_mode"
+    private const val KEY_SONG_GROUP_GRID_COLUMNS = "song_group_grid_columns"
+
+    /**
+     * 曲目归类分组子页的显示方式："list"（列表，默认）或 "grid"（网格）。
+     *
+     * 只作用于分组子页；曲目主页平铺视图不提供网格（顶栏已有搜索 / 排序 / 刷新三键，
+     * 再塞会挤）。菜单入口在分组子页顶栏右上角。
+     */
+    fun getSongGroupViewMode(): String =
+        userInfoPrefs.getString(KEY_SONG_GROUP_VIEW_MODE, "list") ?: "list"
+
+    fun setSongGroupViewMode(mode: String) {
+        userInfoPrefs.edit { putString(KEY_SONG_GROUP_VIEW_MODE, mode) }
+    }
+
+    /** 分组子页网格列数（仅 3 / 4 两档；5 列封面过小可读性差，不提供）。 */
+    fun getSongGroupGridColumns(): Int =
+        userInfoPrefs.getInt(KEY_SONG_GROUP_GRID_COLUMNS, 3)
+
+    fun setSongGroupGridColumns(columns: Int) {
+        userInfoPrefs.edit { putInt(KEY_SONG_GROUP_GRID_COLUMNS, columns) }
+    }
+
     // ================= 曲目列表排序 =================
 
     private const val KEY_SONG_SORT_MODE = "song_sort_mode"

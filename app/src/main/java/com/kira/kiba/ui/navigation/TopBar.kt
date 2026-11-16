@@ -256,6 +256,18 @@ fun KibaFunctionAction(onClick: () -> Unit) {
     }
 }
 
+/** 顶栏「显示方式」按钮（glass 系，曲目归类分组子页用：列表 / 网格切换菜单入口）。 */
+@Composable
+fun KibaDisplayAction(onClick: () -> Unit) {
+    KibaActionButton(onClick = onClick) {
+        Icon(
+            MiuixGlassIcons.Regular.GridView,
+            contentDescription = "显示方式",
+            tint = MiuixTheme.colorScheme.onSurface,
+        )
+    }
+}
+
 /**
  * 顶栏「舞萌 / 中二」游戏切换开关（2.4.0）。
  *

@@ -616,6 +616,8 @@ fun KibaMainScreen() {
     var songsSearchTrigger by remember { mutableIntStateOf(0) }
     // 曲目页顶栏 Sort 按钮 → 排序 / 归类选择弹层（曲目页不再放独立归类卡）
     var songsShowGroupPicker by remember { mutableStateOf(false) }
+    // 曲目归类分组子页顶栏「显示方式」按钮 → 列表 / 网格菜单（同 songsShowGroupPicker 接线）
+    var songGroupShowDisplayPicker by remember { mutableStateOf(false) }
     // Kiba 页顶栏「功能」按钮 → 技能级联弹层（与曲目页 Sort 按钮同一套接线：
     // 顶栏只负责触发，弹层本体留在 AgentScreen 的 Scaffold content 内取 MiuixPopupHost）
     var agentShowFunctionPopup by remember { mutableStateOf(false) }
@@ -889,6 +891,10 @@ fun KibaMainScreen() {
                           actions = {
                               if (sub is KibaSubPage.ScoreQuery) {
                                   KibaRefreshAction { KibaState.refreshRecords() }
+                              }
+                              if (sub is KibaSubPage.SongGroup) {
+                                  // 分组子页「显示方式」菜单入口（列表 / 网格 3·4 列）
+                                  KibaDisplayAction { songGroupShowDisplayPicker = true }
                               }
                               if (sub is KibaSubPage.ChartDetail) {
                                   // 分享谱面详情图（保存相册 / 分享给好友）
@@ -1212,6 +1218,8 @@ fun KibaMainScreen() {
                                   onChuniSongClick = { song ->
                                       pushPage(KibaSubPage.ChuniSongDetail(song.song.id))
                                   },
+                                  showDisplayPicker = songGroupShowDisplayPicker,
+                                  onDismissDisplayPicker = { songGroupShowDisplayPicker = false },
                               )
                               is KibaSubPage.DxConverter -> DxConverterScreen(scrollBehavior = scrollBehavior)
                               is KibaSubPage.MachineUpdate -> MachineUpdateScreen(scrollBehavior = scrollBehavior)
