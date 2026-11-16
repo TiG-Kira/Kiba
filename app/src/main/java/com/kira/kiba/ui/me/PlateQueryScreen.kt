@@ -530,8 +530,7 @@ private fun PlateBadge(item: PlateProgress.Item, plate: PlateKind, height: Dp) {
 }
 
 /** 明细条目（列表）：封面（难度描边）+ 歌名 + 难度/等级/定数 + 牌子达成徽章或「未达成」。 */
-@OptIn(ExperimentalLayoutApi::class)
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
 private fun PlateItemRow(
     item: PlateProgress.Item,
