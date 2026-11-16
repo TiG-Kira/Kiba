@@ -159,6 +159,17 @@ class SimaiChartTest {
     }
 
     @Test
+    fun `摘要绝赞只统计小写b且排除元数据行`() {
+        // 260b / 84b 两个小写 b → 2 个绝赞；大写 B 不是绝赞；
+        // &des 元数据行里的字母 b 不计入；一个逗号内两个 b 按两个绝赞计。
+        val chart = "&title=Blue\n&des=bbb\n" +
+            "(174){16},260b{16},84bx{8},B1,3,{{16}}x2b,"
+        val summary = SimaiChart.summarize(chart)
+        assertTrue(summary.contains("小写 b 记号 3 处")) // 260b + 84b + 2b（84bx 的 x 不带 b）
+        assertTrue(summary.contains("只有小写 b 是绝赞"))
+    }
+
+    @Test
     fun `难度编号越界被夹到合法区间`() {
         assertEquals(2, SimaiChart.inoteIndex(-3))
         assertEquals(6, SimaiChart.inoteIndex(99))

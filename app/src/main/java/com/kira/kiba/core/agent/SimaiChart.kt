@@ -156,15 +156,24 @@ object SimaiChart {
         val commas = text.count { it == ',' }
         val each = text.count { it == '/' }
         val slides = Regex("""[-<>^vpqswzV]\[""").findAll(text).count()
-        val breaks = Regex("""\d[bhx@\$?!/,E]""").findAll(text).count()
+        // 绝赞只认紧跟音符的**小写 b**（simai 语法里 b 没有任何引号，裸写）：
+        // 大写 B 不是绝赞；同一个逗号内出现几个 b，就代表这一组里有几个绝赞。
+        // 只统计谱面正文（排除 &title / &des 等元数据行，避免歌词文案里的字母 b 混入）。
+        val chartBody = text.lineSequence()
+            .filterNot { it.trimStart().startsWith("&") }
+            .joinToString("\n")
+        val breaks = chartBody.count { it == 'b' }
         return buildString {
             append("· 谱面文本长度：${text.length} 字符；逗号（时间步进）约 $commas 个\n")
             append("· BPM 声明：${if (bpms.isEmpty()) "仅元数据 / 未内联" else bpms.joinToString("、")}\n")
             append("· 拍数（1/N）声明：${if (divisors.isEmpty()) "默认 4" else divisors.joinToString("、")}\n")
             append("· 粗统计（按记号出现次数，非精确物量）：EACH 分隔符 $each 个、" +
-                "SLIDE 时长记号约 $slides 处、含 b 的 BREAK 类记号约 $breaks 处\n")
+                "SLIDE 时长记号约 $slides 处\n")
+            append("· 绝赞（BREAK）粗统计：谱面正文小写 b 记号 $breaks 处。" +
+                "注意：只有小写 b 是绝赞，大写 B 不是；一个逗号内 b 的个数 = 该组绝赞个数。\n")
             append("· 提示：精确 TAP/HOLD/SLIDE/TOUCH 物量需逐音符解析，回答数量问题时" +
-                "请基于谱面文本谨慎推断，不要编造确定数字。")
+                "请基于谱面文本谨慎推断，不要编造确定数字。若上方另有「谱面详情 Break 数量」" +
+                "（官方数据），汇报绝赞数量时优先以它为准。")
         }
     }
 

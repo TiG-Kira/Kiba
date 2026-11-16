@@ -2036,6 +2036,23 @@ class KibaAgent(private val context: Context) {
             )
         }
         val standard = SimaiChart.normalizeDisplayed(chart)
+        // 本地曲库「谱面详情」里的官方音符统计（如有）：汇报绝赞数量时以它为准，
+        // 谱面文本的小写 b 统计只作校验/兜底（落雪 txt 可能缺或作者写法有出入）。
+        val detailBreak = withContext(Dispatchers.IO) {
+            runCatching {
+                val charts = AppDataBase.getInstance().chartDao().getChartsBySongId(id)
+                val matched = if (diff != null) {
+                    charts.firstOrNull { it.difficultyType.ordinal == diff }
+                } else {
+                    // 宴谱：落雪页面自行选谱，本地取宴会场谱面对照
+                    charts.firstOrNull {
+                        it.difficultyType == DifficultyType.UTAGE ||
+                            it.difficultyType == DifficultyType.UTAGE_PLAYER2
+                    }
+                }
+                matched?.takeIf { it.notesBreak > 0 }?.notesBreak
+            }.getOrDefault(null)
+        }
         val body = if (standard.length > maxChars) {
             standard.take(maxChars) + "\n…（谱面过长已截断，共 ${standard.length} 字符）"
         } else {
@@ -2047,7 +2064,11 @@ class KibaAgent(private val context: Context) {
             append("来源：落雪谱面预览页「Simai 语句」栏 $preview\n")
             append("BPM / 拍数已按标准 Simai 写法 `(bpm){n}` 归一，其余记号不变。\n\n")
             append(SimaiChart.summarize(standard)).append('\n')
-            append("【谱面正文】\n").append(body)
+            if (detailBreak != null) {
+                append("· 谱面详情 Break 数量：$detailBreak（官方数据；" +
+                    "汇报绝赞数量时优先以此为准，谱面文本小写 b 统计仅作校验）\n")
+            }
+            append("\n【谱面正文】\n").append(body)
         })
     }
 
@@ -2941,6 +2962,11 @@ class KibaAgent(private val context: Context) {
                     "返回该难度的**标准 Simai 文本**（BPM / 拍数已还原成 (bpm){n} 写法）。" +
                     "用户问某首歌某难度的谱面配置、物量、星星 / 滑键 / 长按、变速、段落、" +
                     "或要你分析谱面时，**必须先调用它拿到真实谱面**，绝不能凭印象编造。" +
+                    "**绝赞（BREAK）认知**：谱面里只有紧跟音符的**小写 b** 是绝赞，" +
+                    "大写 B 不是绝赞（simai 语法里 b 裸写、无任何引号）；" +
+                    "同一个逗号内出现几个 b，就代表这一组音符里有几个绝赞。" +
+                    "若返回摘要里带了「谱面详情 Break 数量」（官方数据），" +
+                    "汇报绝赞数量时优先以它为准。" +
                     "不知道曲目 ID 就先用 song_query 查；解读记号再调 simai_syntax",
                 params = listOf(
                     KibaLlm.ToolParam(
