@@ -16,7 +16,9 @@ import kotlinx.coroutines.withContext
  * - **神**：AP / AP+；
  * - **舞舞**：FSD / FSD+（FULL SYNC DX 及以上）；
  * - **霸者**：达成率 > 80%（**仅旧框**，即「舞代」——所有非 DX 版本聚合；
- *   EasyMai 选霸者会强制切到舞代，此处沿用同口径）。
+ *   EasyMai 选霸者会强制切到舞代，此处沿用同口径）；
+ * - **Re:Master（宗师）**：只计入舞代（旧框聚合）口径，其余版本组（含真代与
+ *   各 DX 版本）一律不含宗师谱面。
  *
  * 条件均作用于**谱面粒度**（song + difficulty 组成的每一张谱面），与 easymai
  * 「所有难度」模式一致：总进度 = 该版本下全部谱面中达成条件的比例。
@@ -211,6 +213,8 @@ object PlateProgress {
             if (normalizeFrom(song.from) !in group.fromValues) return@forEach
             chartsBySong[song.id]?.forEach { chart ->
                 if (!chart.countable()) return@forEach
+                // Re:Master 只计入舞代（旧框聚合），其余版本组的牌子一律不含宗师谱面
+                if (!group.isOldFrame && chart.difficultyType == DifficultyType.REMASTER) return@forEach
                 if (difficulty != null && chart.difficultyType != difficulty) return@forEach
                 add(Item(song, chart, records[chart.songId to chart.difficultyType.ordinal]))
             }
