@@ -531,7 +531,6 @@ private fun PlateBadge(item: PlateProgress.Item, plate: PlateKind, height: Dp) {
 
 /** 明细条目（列表）：封面（难度描边）+ 歌名 + 难度/等级/定数 + 牌子达成徽章或「未达成」。 */
 @OptIn(ExperimentalLayoutApi::class)
-@Composable
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun PlateItemRow(
@@ -604,7 +603,6 @@ private fun PlateItemRow(
 }
 
 /** 明细条目（网格）：封面铺满格子（难度描边）+ 底部 scrim + 牌子达成角标或「未达成」。 */
-@Composable
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun PlateGridCell(
