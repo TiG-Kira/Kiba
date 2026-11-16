@@ -69,6 +69,7 @@ import com.kira.kiba.ui.me.EasyMaiAccountScreen
 import com.kira.kiba.ui.me.MeScreen
 import com.kira.kiba.ui.me.MeTopBarSlot
 import com.kira.kiba.ui.me.ScoreQueryScreen
+import com.kira.kiba.ui.me.PlateQueryScreen
 import com.kira.kiba.ui.settings.AboutScreen
 import com.kira.kiba.ui.settings.AvatarCropScreen
 import com.kira.kiba.ui.settings.DeviceScoreScreen
@@ -124,6 +125,7 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
 import top.yukonga.miuix.kmp.icon.glass.*
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.core.content.ContextCompat
@@ -244,6 +246,11 @@ sealed interface KibaSubPage {
     /** 成绩查询（EasyMai 式筛选 / 排序 / 网格，替代旧成绩记录 + 版本/等级进度）。 */
     data object ScoreQuery : KibaSubPage {
         override val title: String = "成绩查询"
+    }
+
+    /** 名牌进度（EasyMai 式牌子进度：版本总览 + 极/将/神/舞舞/霸者 + 难度明细）。 */
+    data object PlateQuery : KibaSubPage {
+        override val title: String = "名牌进度"
     }
 
     /** 工具箱（站外入口 + 本地小工具，2.6.0 从账户页合并成子页面）。 */
@@ -390,6 +397,21 @@ private fun tabIcon(tab: KibaTab) = when (tab) {
     KibaTab.Agent -> MiuixGlassIcons.Regular.AiScan
     KibaTab.Me -> MiuixGlassIcons.Regular.Contacts
     KibaTab.Settings -> MiuixGlassIcons.Regular.Settings
+}
+
+/**
+ * 底栏五个 tab 的**多彩选中态**（每 tab 一色，亮 / 暗主题各一档；未选中保持中性色）。
+ *
+ * 色系分配：曲目=蓝、畅听=绿、Kiba=紫、账户=橙、设置=青——
+ * 与卡片图标彩色化（[com.kira.kiba.ui.common.KibaIconTint]）同一套语义：
+ * 蓝账户系 / 绿数据系 / 紫 AI 系 / 橙工具系 / 青信息系。
+ */
+private fun tabAccentColor(tab: KibaTab, dark: Boolean): Color = when (tab) {
+    KibaTab.Songs -> if (dark) Color(0xFF6AA9FF) else Color(0xFF2E7CF6)
+    KibaTab.Listen -> if (dark) Color(0xFF5FDD8D) else Color(0xFF2FAE5B)
+    KibaTab.Agent -> if (dark) Color(0xFFC688FB) else Color(0xFF9F51DC)
+    KibaTab.Me -> if (dark) Color(0xFFFFB74D) else Color(0xFFF29200)
+    KibaTab.Settings -> if (dark) Color(0xFF54CFE0) else Color(0xFF0E9AA7)
 }
 
 /** Termux Ultra 浮动玻璃底栏的固定栏高（GlassNavigationBarDefaults.Height）。 */
@@ -958,6 +980,8 @@ fun KibaMainScreen() {
                               onSelect = onSelectTab,
                               backdrop = liquidBackdrop,
                               height = LiquidNavHeight,
+                              // 多彩选中态：每个 tab 选中时各自的颜色（液态玻璃导出层同步取色）
+                              selectedColors = tabs.map { tabAccentColor(it, darkTheme) },
                           )
                       } else {
                           GlassNavigationBar(
@@ -965,6 +989,9 @@ fun KibaMainScreen() {
                               selectedIndex = selectedTab.ordinal,
                               onSelect = onSelectTab,
                               backdrop = glassNavBackdrop,
+                              // 多彩选中态：selectedColor 只作用于当前选中的那一项，
+                              // 未选中项继续走默认中性色——即「选中变色、每 tab 不同色」。
+                              selectedColor = tabAccentColor(selectedTab, darkTheme),
                           )
                       }
                   }
@@ -1137,6 +1164,10 @@ fun KibaMainScreen() {
                                   scrollBehavior = scrollBehavior,
                                   onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
                               )
+                              is KibaSubPage.PlateQuery -> PlateQueryScreen(
+                                  scrollBehavior = scrollBehavior,
+                                  onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
+                              )
                               is KibaSubPage.Toolbox -> ToolboxScreen(
                                   scrollBehavior = scrollBehavior,
                                   gameType = gameType,
@@ -1258,6 +1289,7 @@ fun KibaMainScreen() {
                                   onOpenLxnsLogin = { pushPage(KibaSubPage.LxnsLogin) },
                                   onOpenBest50 = { pushPage(KibaSubPage.Best50) },
                                   onOpenScoreQuery = { pushPage(KibaSubPage.ScoreQuery) },
+                                  onOpenPlateQuery = { pushPage(KibaSubPage.PlateQuery) },
                                   onOpenFavorites = { pushPage(KibaSubPage.Favorites) },
                                   // 2.3.0：设置页「查分器工具」组整组迁入账户页查分器组
                                   onOpenMachineUpdate = { pushPage(KibaSubPage.MachineUpdate) },

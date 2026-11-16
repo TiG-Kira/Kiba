@@ -58,16 +58,15 @@ import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
- * 「账户」页面 ArrowPreference 的左侧功能图标（HyperOS 设置风格：次要色单色图标）。
+ * 「账户」页面 ArrowPreference 的左侧功能图标（彩色语义色：类型相近同色系，
+ * 色板见 [com.kira.kiba.ui.common.KibaIconTint]）。
  */
 @Composable
-private fun PrefIcon(icon: androidx.compose.ui.graphics.vector.ImageVector) {
-    Icon(
-        imageVector = icon,
-        contentDescription = null,
-        tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-        modifier = Modifier.size(26.dp),
-    )
+private fun PrefIcon(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    tint: com.kira.kiba.ui.common.KibaIconTint,
+) {
+    com.kira.kiba.ui.common.ColoredPrefIcon(icon = icon, tint = tint)
 }
 
 /**
@@ -89,6 +88,7 @@ fun MeScreen(
     onOpenLxnsLogin: () -> Unit,
     onOpenBest50: () -> Unit,
     onOpenScoreQuery: () -> Unit,
+    onOpenPlateQuery: () -> Unit,
     onOpenFavorites: () -> Unit,
     onOpenMachineUpdate: () -> Unit,
     onOpenQrImport: () -> Unit,
@@ -188,7 +188,7 @@ fun MeScreen(
                             endActions = {
                                 if (chuniRating > 0.0) ChuniRatingTag(rating = chuniRating)
                             },
-                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Contacts) },
+                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Contacts, com.kira.kiba.ui.common.KibaIconTint.BLUE) },
                         )
                     }
                 } else {
@@ -220,7 +220,7 @@ fun MeScreen(
                             endActions = {
                                 DxRatingTag(rating = if (account.bound) account.rating else 0)
                             },
-                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Contacts) },
+                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Contacts, com.kira.kiba.ui.common.KibaIconTint.BLUE) },
                         )
                     }
                 }
@@ -264,7 +264,7 @@ fun MeScreen(
                                 "当前水鱼账户：${SpUtil.getDivingFishOAuthNickname().ifBlank { "水鱼用户" }}（Rating ${SpUtil.getDivingFishRating()}）· 点击重新登录"
                             else -> "水鱼源专用：支持水鱼账号密码登录（OAuth 授权已暂时停用）"
                         },
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Lock) },
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Lock, com.kira.kiba.ui.common.KibaIconTint.BLUE) },
                         onClick = onOpenLogin,
                     )
                     ArrowPreference(
@@ -278,14 +278,14 @@ fun MeScreen(
                             else ->
                                 "落雪源专用：推荐用落雪账号授权，一步到位；也可手填个人 API 密钥"
                         },
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.CloudFill) },
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.CloudFill, com.kira.kiba.ui.common.KibaIconTint.CYAN) },
                         onClick = onOpenLxnsLogin,
                     )
                     // ── 查分器工具（2.3.0 起从设置页整组迁到这里：登录态与工具入口同一屏）──
                     ArrowPreference(
                         title = "机台成绩更新（VPN）",
                         summary = "在机台 WiFi 下抓包，按各游戏当前选的数据源上传（水鱼 / 落雪）",
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Update) },
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Update, com.kira.kiba.ui.common.KibaIconTint.GREEN) },
                         onClick = onOpenMachineUpdate,
                     )
                     // 二维码导入是**舞萌专用**通道（官方登录二维码 + 水鱼导入令牌），
@@ -296,7 +296,7 @@ fun MeScreen(
                             title = "二维码导入成绩",
                             summary = "仅舞萌 DX：免 VPN —— 先在「工具箱 → 接入 Easymai 账号」登录，" +
                                 "再粘贴官方登录二维码（公众号「舞萌 DX」生成），全难度成绩会同步进查分器账号后上传水鱼",
-                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Scan) },
+                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Scan, com.kira.kiba.ui.common.KibaIconTint.GREEN) },
                             onClick = onOpenQrImport,
                         )
                     }
@@ -308,7 +308,7 @@ fun MeScreen(
                             title = "落雪官方同步（备选）",
                             summary = "App 内抓包走不通时用这条：把 WLAN 代理设为 proxy.maimai.lxns.net:8080，" +
                                 "由落雪服务器代抓（与 App 的 VPN 不能同时开）",
-                            startAction = { PrefIcon(MiuixGlassIcons.Regular.CloudFill) },
+                            startAction = { PrefIcon(MiuixGlassIcons.Regular.CloudFill, com.kira.kiba.ui.common.KibaIconTint.CYAN) },
                             onClick = { BrowserJump.openUrl(context, LxnsAccount.SYNC_URL) },
                         )
                     }
@@ -316,8 +316,15 @@ fun MeScreen(
                         ArrowPreference(
                             title = "成绩查询",
                             summary = "筛选 / 排序 / 网格视图浏览全量成绩，顶栏刷新可更新",
-                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Notes) },
+                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Notes, com.kira.kiba.ui.common.KibaIconTint.BLUE) },
                             onClick = onOpenScoreQuery,
+                        )
+                        // 名牌进度：各版本极/将/神/舞舞总进度 + 霸者（旧框），EasyMai 牌子进度同源
+                        ArrowPreference(
+                            title = "名牌进度",
+                            summary = "各版本「极 / 将 / 神」总进度与霸者（旧框），按难度下钻未完成曲目",
+                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Album, com.kira.kiba.ui.common.KibaIconTint.ORANGE) },
+                            onClick = onOpenPlateQuery,
                         )
                     }
                     // ── 退出登录（水鱼 / 落雪合并成一个入口）──
@@ -335,7 +342,7 @@ fun MeScreen(
                                 append(logged.joinToString(" / "))
                                 append(" · 点击选择要退出的查分器")
                             },
-                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Unlock) },
+                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Unlock, com.kira.kiba.ui.common.KibaIconTint.RED) },
                             onClick = {
                                 // 默认全选「已登录的那几项」，用户取消勾选即可保留
                                 logoutWaterFish = account.dfLoggedIn
@@ -354,7 +361,7 @@ fun MeScreen(
                     ArrowPreference(
                         title = "我的收藏",
                         summary = "在歌曲详情页标记过收藏的歌曲列表",
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Favorites) },
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Favorites, com.kira.kiba.ui.common.KibaIconTint.PINK) },
                         onClick = onOpenFavorites,
                     )
                 }
@@ -369,7 +376,7 @@ fun MeScreen(
                         title = "工具箱",
                         summary = "查分器官网 / 音游地图等站外入口，以及 Rating 计算、达成率反推、" +
                             "热门排行、版本对照、查朋友等本地工具",
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Tune) },
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Tune, com.kira.kiba.ui.common.KibaIconTint.ORANGE) },
                         onClick = onOpenToolbox,
                     )
                 }

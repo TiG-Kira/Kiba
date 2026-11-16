@@ -140,7 +140,7 @@ fun ChartDetailScreen(
                     ArrowPreference(
                         title = "谱面预览（落雪）",
                         summary = "加载落雪官方谱面确认播放页，可随音乐查看每拍物量分布",
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Play) },
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Play, com.kira.kiba.ui.common.KibaIconTint.GREEN) },
                         onClick = {
                             onOpenPreview(
                                 chartPreviewUrl(currentChart),
@@ -200,13 +200,16 @@ fun chartPreviewUrl(chart: ChartEntity): String = buildString {
     }
 }
 
-/** 谱面详情页 ArrowPreference 的左侧功能图标（与「我」页 / 设置页同款）。 */
+/** 谱面详情页 ArrowPreference 的左侧功能图标（彩色语义色，色板见 [com.kira.kiba.ui.common.KibaIconTint]）。 */
 @Composable
-private fun PrefIcon(icon: androidx.compose.ui.graphics.vector.ImageVector) {
+private fun PrefIcon(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    tint: com.kira.kiba.ui.common.KibaIconTint,
+) {
     top.yukonga.miuix.kmp.basic.Icon(
         imageVector = icon,
         contentDescription = null,
-        tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+        tint = com.kira.kiba.ui.common.kibaIconTint(tint),
         modifier = Modifier.padding(end = 0.dp),
     )
 }

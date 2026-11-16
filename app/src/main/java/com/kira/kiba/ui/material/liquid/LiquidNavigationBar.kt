@@ -117,6 +117,12 @@ fun LiquidNavigationBar(
     backdrop: Backdrop?,
     modifier: Modifier = Modifier,
     height: Dp = LiquidNavHeight,
+    /**
+     * 每个 tab 的选中态颜色（与 items 一一对应）。
+     * 缺省（null / 越界）回落到统一的 [accentColor]，与旧行为一致。
+     * 「多彩选中态」：五个 tab 各一色，未选中仍走中性灰（unselectedTint）。
+     */
+    selectedColors: List<Color>? = null,
 ) {
     if (items.isEmpty()) return
     val isLightTheme = !isSystemInDarkTheme()
@@ -568,7 +574,12 @@ fun LiquidNavigationBar(
             items.forEachIndexed { i, item ->
                 TabContent(
                     item = item,
-                    tint = if (i == highlightIndex) accentColor else unselectedTint(),
+                    tint = if (i == highlightIndex) {
+                        // 多彩选中态：按 tab 取各自颜色；未配置回落统一 accent
+                        selectedColors?.getOrNull(i) ?: accentColor
+                    } else {
+                        unselectedTint()
+                    },
                     modifier = Modifier.weight(1f).fillMaxHeight(),
                     // 指针手势的抬手由上面的 Initial pass 观察器按「液滴最终落点」提交；
                     // 同一个 up 还会走到 clickable 的 onClick，但它的 i 是**按下时**的 tab
@@ -618,10 +629,11 @@ fun LiquidNavigationBar(
         ) {
             // 不画表面色、不整层 ColorFilter.tint、不挂 clickable：
             // 前两个会把 tabsBackdrop 染成实心蓝，第三个会拦掉 Row A 的真实点按。
-            items.forEach { item ->
+            // 导出层逐 tab 上各自的多彩色：胶囊取样折射出的正是该 tab 的选中色。
+            items.forEachIndexed { i, item ->
                 TabContent(
                     item = item,
-                    tint = accentColor,
+                    tint = selectedColors?.getOrNull(i) ?: accentColor,
                     modifier = Modifier.weight(1f).fillMaxHeight(),
                     onClick = null,
                     scale = pressScale,

@@ -283,7 +283,7 @@ fun ListenScreen(
                             androidx.compose.material3.Icon(
                                 imageVector = MiuixGlassIcons.Regular.Favorites,
                                 contentDescription = "收藏连播",
-                                tint = MiuixTheme.colorScheme.primary,
+                                tint = com.kira.kiba.ui.common.kibaIconTint(com.kira.kiba.ui.common.KibaIconTint.PINK),
                                 modifier = Modifier.size(22.dp),
                             )
                             Spacer(Modifier.width(12.dp))
@@ -320,7 +320,7 @@ fun ListenScreen(
                         androidx.compose.material3.Icon(
                             imageVector = MiuixGlassIcons.Regular.Download,
                             contentDescription = "我的下载",
-                            tint = MiuixTheme.colorScheme.primary,
+                            tint = com.kira.kiba.ui.common.kibaIconTint(com.kira.kiba.ui.common.KibaIconTint.GREEN),
                             modifier = Modifier.size(22.dp),
                         )
                         Spacer(Modifier.width(12.dp))
@@ -361,7 +361,7 @@ fun ListenScreen(
                         androidx.compose.material3.Icon(
                             imageVector = MiuixGlassIcons.Regular.Add,
                             contentDescription = "新建歌单",
-                            tint = MiuixTheme.colorScheme.primary,
+                            tint = com.kira.kiba.ui.common.kibaIconTint(com.kira.kiba.ui.common.KibaIconTint.PINK),
                             modifier = Modifier.size(22.dp),
                         )
                         Spacer(Modifier.width(12.dp))
@@ -413,7 +413,7 @@ fun ListenScreen(
                                     androidx.compose.material3.Icon(
                                         imageVector = MiuixGlassIcons.Regular.Playlist,
                                         contentDescription = null,
-                                        tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                        tint = com.kira.kiba.ui.common.kibaIconTint(com.kira.kiba.ui.common.KibaIconTint.PINK),
                                         modifier = Modifier.size(22.dp),
                                     )
                                 }
@@ -458,7 +458,7 @@ fun ListenScreen(
                             androidx.compose.material3.Icon(
                                 imageVector = MiuixGlassIcons.Regular.AiScan,
                                 contentDescription = "生成专属歌单",
-                                tint = MiuixTheme.colorScheme.primary,
+                                tint = com.kira.kiba.ui.common.kibaIconTint(com.kira.kiba.ui.common.KibaIconTint.PURPLE),
                                 modifier = Modifier.size(22.dp),
                             )
                             Spacer(Modifier.width(12.dp))
@@ -668,7 +668,7 @@ private fun RecommendMiniCard(
                 androidx.compose.material3.Icon(
                     imageVector = MiuixGlassIcons.Regular.Info,
                     contentDescription = "曲目详情",
-                    tint = MiuixTheme.colorScheme.primary,
+                    tint = com.kira.kiba.ui.common.kibaIconTint(com.kira.kiba.ui.common.KibaIconTint.CYAN),
                     modifier = Modifier.size(16.dp),
                 )
             }
@@ -717,7 +717,7 @@ private fun AgentPlaylistEntry(
                     androidx.compose.material3.Icon(
                         imageVector = MiuixGlassIcons.Regular.Playlist,
                         contentDescription = null,
-                        tint = MiuixTheme.colorScheme.primary,
+                        tint = com.kira.kiba.ui.common.kibaIconTint(com.kira.kiba.ui.common.KibaIconTint.PINK),
                         modifier = Modifier.size(22.dp),
                     )
                 }
@@ -755,7 +755,7 @@ private fun AgentPlaylistEntry(
                 androidx.compose.material3.Icon(
                     imageVector = MiuixGlassIcons.Regular.Delete,
                     contentDescription = "删除歌单",
-                    tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    tint = com.kira.kiba.ui.common.kibaIconTint(com.kira.kiba.ui.common.KibaIconTint.RED),
                     modifier = Modifier.size(18.dp),
                 )
             }
@@ -832,7 +832,7 @@ fun ListenSongRow(
                     androidx.compose.material3.Icon(
                         imageVector = MiuixGlassIcons.Regular.Info,
                         contentDescription = "曲目详情",
-                        tint = MiuixTheme.colorScheme.primary,
+                        tint = com.kira.kiba.ui.common.kibaIconTint(com.kira.kiba.ui.common.KibaIconTint.CYAN),
                         modifier = Modifier.size(20.dp),
                     )
                 }

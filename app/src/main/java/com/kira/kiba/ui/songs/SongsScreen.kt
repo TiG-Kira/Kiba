@@ -1,5 +1,6 @@
 package com.kira.kiba.ui.songs
 
+import android.widget.Toast
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateDpAsState
@@ -11,6 +12,9 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,6 +34,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -77,27 +82,38 @@ import com.kira.kiba.ui.common.ChartTypeChip
 import com.kira.kiba.ui.common.CoverFrame
 import com.kira.kiba.ui.common.DifficultyChip
 import com.kira.kiba.ui.common.EmptyStateCard
+import com.kira.kiba.ui.common.KibaIconTint
 import com.kira.kiba.ui.common.ListSnapshotCache
 import com.kira.kiba.ui.common.collectAsStateCached
+import com.kira.kiba.ui.common.copyTextToClipboard
 import com.kira.kiba.ui.common.difficultyColor
 import com.kira.kiba.ui.common.difficultyLabel
+import com.kira.kiba.ui.common.kibaIconTint
+import com.kira.kiba.ui.common.kibaPressScale
 import com.kira.kiba.core.playback.SongPlaybackController
+import com.kira.kiba.ui.listen.toTrack
 import com.kira.kiba.ui.songplayer.NOW_PLAYING_BAR_CLEARANCE
 import com.kira.kiba.ui.common.pageContentPadding
 import com.kira.kiba.ui.common.SectionTitle
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
+import top.yukonga.miuix.kmp.basic.DropdownImpl
+import top.yukonga.miuix.kmp.basic.DropdownItem
 import top.yukonga.miuix.kmp.basic.Icon
+import top.yukonga.miuix.kmp.basic.ListPopupColumn
+import top.yukonga.miuix.kmp.basic.ListPopupDefaults
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.icon.glass.*
+import top.yukonga.miuix.kmp.overlay.OverlayListPopup
 import com.kira.kiba.ui.material.KibaGlassDialog
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.utils.PressFeedbackType
@@ -881,78 +897,238 @@ private fun SyncProgressBar(progress: Float?) {
  *
  * 标题行的换行策略：FlowRow 承载「歌名 + SD/DX 贴图」，歌名占满一行或剩余空间放不下贴图时，
  * 贴图自动落到标题下一行；贴图与歌名垂直居中对齐。
+ *
+ * 交互：单击进歌曲详情；**长按弹出 miuix 小菜单**（[OverlayListPopup]，非 dialog）——
+ * 显示歌曲详情 / 复制歌曲名 / 播放歌曲 / 加入歌单。
  */
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun SongCard(
     song: SongWithChartsEntity,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Card(
-        modifier = (modifier.fillMaxWidth()),
-        onClick = onClick,
-        // HyperOS 风格按压缩放反馈（miuix Card 默认无反馈）
-        pressFeedbackType = PressFeedbackType.Sink,
-    ) {
-        BasicComponent(
-            startAction = {
-                CoverFrame(
-                    songId = song.songData.id,
-                    imageUrl = song.songData.imageUrl,
-                    genre = song.songData.genre,
-                    size = 64.dp,
-                )
-            },
-            bottomAction = {
-                // 各难度等级，放在副标题下方；FlowRow 保证放不下时自动换行
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    song.charts.sortedBy { it.difficultyType.ordinal }.forEach { chart ->
-                        DifficultyChip(
-                            text = "${difficultyLabel(chart.difficultyType)} ${chart.level}",
-                            color = difficultyColor(chart.difficultyType),
-                        )
-                    }
-                }
-            },
+    val context = LocalContext.current
+    var menuVisible by remember { mutableStateOf(false) }
+    // 加入歌单弹层（长按菜单 → 加入歌单）
+    var showAddPlaylist by remember { mutableStateOf(false) }
+    var playlists by remember {
+        mutableStateOf<List<com.kira.kiba.core.db.entity.PlaylistEntity>>(emptyList())
+    }
+    val scope = rememberCoroutineScope()
+
+    fun copyTitle() {
+        val ok = context.copyTextToClipboard(song.songData.title, label = "kiba_song")
+        Toast.makeText(
+            context,
+            if (ok) "已复制「${song.songData.title}」" else "复制失败",
+            Toast.LENGTH_SHORT,
+        ).show()
+    }
+
+    fun playSong() {
+        SongPlaybackController.play(context, song.toTrack())
+    }
+
+    Box(modifier = modifier.fillMaxWidth()) {
+        // 按压缩放 + 单击 / 长按共用一个 interactionSource（miuix Card 的 onClick
+        // 只有单击语义，长按必须自带 combinedClickable；Sink 反馈用 kibaPressScale 补）
+        val interaction = remember { MutableInteractionSource() }
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .kibaPressScale(interaction)
+                .combinedClickable(
+                    interactionSource = interaction,
+                    indication = null,
+                    onClick = onClick,
+                    onLongClick = { menuVisible = true },
+                ),
         ) {
-            // ── 标题行：歌名 + SD/DX 贴图（样式对齐 miuix BasicComponent 默认 title）──
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
+            BasicComponent(
+                startAction = {
+                    CoverFrame(
+                        songId = song.songData.id,
+                        imageUrl = song.songData.imageUrl,
+                        genre = song.songData.genre,
+                        size = 64.dp,
+                    )
+                },
+                bottomAction = {
+                    // 各难度等级，放在副标题下方；FlowRow 保证放不下时自动换行
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        song.charts.sortedBy { it.difficultyType.ordinal }.forEach { chart ->
+                            DifficultyChip(
+                                text = "${difficultyLabel(chart.difficultyType)} ${chart.level}",
+                                color = difficultyColor(chart.difficultyType),
+                            )
+                        }
+                    }
+                },
             ) {
+                // ── 标题行：歌名 + SD/DX 贴图（样式对齐 miuix BasicComponent 默认 title）──
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Text(
+                        text = song.songData.title,
+                        fontSize = MiuixTheme.textStyles.headline1.fontSize,
+                        fontWeight = FontWeight.Medium,
+                        color = MiuixTheme.colorScheme.onBackground,
+                    )
+                    ChartTypeChip(
+                        type = song.songData.type,
+                        modifier = Modifier.align(Alignment.CenterVertically),
+                    )
+                }
+                // 副标题：曲师 · 分类（样式对齐 miuix BasicComponent 默认 summary）
                 Text(
-                    text = song.songData.title,
-                    fontSize = MiuixTheme.textStyles.headline1.fontSize,
-                    fontWeight = FontWeight.Medium,
-                    color = MiuixTheme.colorScheme.onBackground,
-                )
-                ChartTypeChip(
-                    type = song.songData.type,
-                    modifier = Modifier.align(Alignment.CenterVertically),
+                    text = buildString {
+                        // 曲师 = 歌曲艺术家（artist），不是谱师（charter）；直接展示名字不加前缀
+                        val artist = song.songData.artist.takeIf { it.isNotBlank() && it != "-" }
+                        if (artist != null) {
+                            append(artist)
+                            append(" · ")
+                        }
+                        append(song.songData.genre)
+                    },
+                    fontSize = MiuixTheme.textStyles.body2.fontSize,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                 )
             }
-            // 副标题：曲师 · 分类（样式对齐 miuix BasicComponent 默认 summary）
-            Text(
-                text = buildString {
-                    // 曲师 = 歌曲艺术家（artist），不是谱师（charter）；直接展示名字不加前缀
-                    val artist = song.songData.artist.takeIf { it.isNotBlank() && it != "-" }
-                    if (artist != null) {
-                        append(artist)
-                        append(" · ")
-                    }
-                    append(song.songData.genre)
+        }
+
+        // ── 长按小菜单（miuix OverlayListPopup：经根 Scaffold 弹层宿主渲染，不被列表裁剪）──
+        OverlayListPopup(
+            show = menuVisible,
+            onDismissRequest = { menuVisible = false },
+            popupPositionProvider = ListPopupDefaults.DropdownPositionProvider,
+        ) {
+            val menuActions = listOf(
+                SongCardMenuAction(
+                    text = "显示歌曲详情",
+                    icon = MiuixGlassIcons.Regular.Info,
+                    tint = KibaIconTint.BLUE,
+                ) {
+                    menuVisible = false
+                    onClick()
                 },
-                fontSize = MiuixTheme.textStyles.body2.fontSize,
-                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                SongCardMenuAction(
+                    text = "复制歌曲名",
+                    icon = MiuixGlassIcons.Regular.Copy,
+                    tint = KibaIconTint.CYAN,
+                ) {
+                    menuVisible = false
+                    copyTitle()
+                },
+                SongCardMenuAction(
+                    text = "播放歌曲",
+                    icon = MiuixGlassIcons.Regular.Play,
+                    tint = KibaIconTint.GREEN,
+                ) {
+                    menuVisible = false
+                    playSong()
+                },
+                SongCardMenuAction(
+                    text = "加入歌单",
+                    icon = MiuixGlassIcons.Regular.Add,
+                    tint = KibaIconTint.PINK,
+                ) {
+                    menuVisible = false
+                    showAddPlaylist = true
+                },
             )
+            ListPopupColumn {
+                menuActions.forEachIndexed { index, action ->
+                    DropdownImpl(
+                        item = DropdownItem(
+                            text = action.text,
+                            icon = { m ->
+                                Icon(
+                                    imageVector = action.icon,
+                                    contentDescription = null,
+                                    tint = kibaIconTint(action.tint),
+                                    modifier = m,
+                                )
+                            },
+                        ),
+                        optionSize = menuActions.size,
+                        isSelected = false,
+                        index = index,
+                        onSelectedIndexChange = { action.onClick() },
+                    )
+                }
+            }
+        }
+    }
+
+    // ── 加入歌单弹层：与歌曲详情页同款（列出歌单点选加入）──
+    LaunchedEffect(showAddPlaylist) {
+        if (showAddPlaylist) {
+            playlists = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                AppDataBase.getInstance().playlistDao().observeAll().firstOrNull().orEmpty()
+            }
+        }
+    }
+    if (showAddPlaylist) {
+        KibaGlassDialog(
+            show = true,
+            title = "加入歌单",
+            summary = "把《${song.songData.title}》收进哪个歌单？",
+            onDismissRequest = { showAddPlaylist = false },
+        ) {
+            Column {
+                if (playlists.isEmpty()) {
+                    Text(
+                        text = "还没有歌单\n去「畅听」页点「新建歌单」创建一个",
+                        style = MiuixTheme.textStyles.body2,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp),
+                    ) {
+                        itemsIndexed(playlists) { _, pl ->
+                            TextButton(
+                                text = pl.name,
+                                onClick = {
+                                    scope.launch {
+                                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                            AppDataBase.getInstance().playlistDao()
+                                                .appendSong(pl.id, song.songData.id)
+                                        }
+                                        Toast.makeText(
+                                            context,
+                                            "已加入「${pl.name}」",
+                                            Toast.LENGTH_SHORT,
+                                        ).show()
+                                        showAddPlaylist = false
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
+            }
         }
     }
 }
+
+/** 曲目卡片长按菜单里的一项（文案 + 彩色图标 + 动作）。 */
+private data class SongCardMenuAction(
+    val text: String,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val tint: KibaIconTint,
+    val onClick: () -> Unit,
+)
 
 /**
  * 刷新收尾提示卡（舞萌 / 中二各一张，右上角 × 可关闭）。

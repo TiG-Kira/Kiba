@@ -203,7 +203,7 @@ fun SongDetailScreen(
                         androidx.compose.material3.Icon(
                             imageVector = if (isPlayingThis) MiuixGlassIcons.Regular.Pause else MiuixGlassIcons.Regular.Play,
                             contentDescription = if (isPlayingThis) "正在播放" else "播放乐曲",
-                            tint = MiuixTheme.colorScheme.primary,
+                            tint = com.kira.kiba.ui.common.kibaIconTint(com.kira.kiba.ui.common.KibaIconTint.GREEN),
                             modifier = Modifier.size(22.dp),
                         )
                         Spacer(Modifier.width(12.dp))
@@ -277,7 +277,7 @@ fun SongDetailScreen(
                         androidx.compose.material3.Icon(
                             imageVector = MiuixGlassIcons.Regular.Add,
                             contentDescription = "加入歌单",
-                            tint = MiuixTheme.colorScheme.primary,
+                            tint = com.kira.kiba.ui.common.kibaIconTint(com.kira.kiba.ui.common.KibaIconTint.PINK),
                             modifier = Modifier.size(22.dp),
                         )
                         Spacer(Modifier.width(12.dp))

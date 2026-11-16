@@ -388,6 +388,28 @@ fun InfoPill(text: String, modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * 「未游玩 / 未达成」灰色小标记：无成绩或未满足牌子条件的谱面在列表右侧的占位，
+ * 与官方贴图徽章（RankBadge / ComboBadge / SyncBadge）左右呼应。
+ */
+@Composable
+fun UnplayedPill(text: String = "未达成") {
+    Box(
+        modifier = Modifier
+            .background(
+                MiuixTheme.colorScheme.onSurface.copy(alpha = 0.14f),
+                RoundedCornerShape(6.dp),
+            )
+            .padding(horizontal = 7.dp, vertical = 3.dp),
+    ) {
+        Text(
+            text = text,
+            style = MiuixTheme.textStyles.footnote2,
+            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+        )
+    }
+}
+
 // ── 官方贴图徽标（与 Best50 图片生成同一套素材）──
 
 /** drawable 名 → 资源 id（素材名全小写，取不到返回 0，调用方自行跳过）。 */
