@@ -16,7 +16,8 @@ import java.nio.ByteOrder
  * 资源由 `tools/nameplate_font_pack.py` 打包：
  * - `tmp_morisawa_r`   Morisawa UD 新ゴ SC-R，`TMP_Name` / `TMP_Title` 指定的主字体（日文/汉字）
  * - `tmp_liberation`   LiberationSans SDF，TMP 的 fallback —— 游戏里拉丁字母实际由它出字形
- * - `tmp_newrodin_eb`  SEGA NewRodinN v2-EB，DX 分数数字
+ * - `tmp_newrodin_eb`  SEGA NewRodinN v2-EB，**达成率**（`99.9999%`）用的数字字体，
+ *   只打包了 0-9 / `.` / `%` / `±` 这些字形
  *
  * 排版与 TMP 一致：`pen += bearingX`，字形左上角 `(pen + bx*scale, baseline - by*scale)`，
  * 之后 `pen += advance*scale`，`scale = size / pointSize`（每个字形用它自己所属字体的 scale，
@@ -68,8 +69,7 @@ class TmpFont private constructor(
         return total
     }
 
-    /** 墨迹上下沿（相对基线，向上为正），用于视觉垂直居中。 */
-    fun inkBounds(text: CharSequence, size: Float): FloatArray {
+    /** 墨迹上下沿（相对基线，向上为正），用于视觉垂直居中。 */    fun inkBounds(text: CharSequence, size: Float): FloatArray {
         var top = Float.NEGATIVE_INFINITY
         var bottom = Float.POSITIVE_INFINITY
         text.forEach { ch ->
@@ -81,6 +81,18 @@ class TmpFont private constructor(
         if (top == Float.NEGATIVE_INFINITY) return floatArrayOf(0f, 0f)
         return floatArrayOf(top, bottom)
     }
+
+    /** 基线在「行顶→行底」里的比例（0..1）。Compose 侧的自定义对齐线直接用它。 */
+    fun baselineRatio(): Float {
+        val h = ascent - descent
+        return if (h > 0f) ascent / h else 0.8f
+    }
+
+    /** 单行高度（与 [size] 同单位）。 */
+    fun lineHeight(size: Float): Float = (ascent - descent) * size / pointSize
+
+    /** 基线上沿到行顶的距离（与 [size] 同单位）。 */
+    fun ascentOf(size: Float): Float = ascent * size / pointSize
 
     /**
      * 逐字绘制。[cell] > 0 时走等宽槽，否则按字形 advance 正常前进。
@@ -131,6 +143,15 @@ class TmpFont private constructor(
         /** 姓名牌口径的字体：Morisawa 主字体 + LiberationSans fallback。 */
         fun namePlate(context: Context): TmpFont? =
             load(context, "tmp_morisawa_r", load(context, "tmp_liberation"))
+
+        /**
+         * 达成率口径的字体：SEGA NewRodinN v2-EB。
+         *
+         * B50 卡片与导出图里的 `99.9999%` 都用它 —— 也就是用户截图里那排又粗又圆的数字。
+         * 只打包了数字 / 小数点 / 百分号，别的字符由 Liberation 兜（正常用不到）。
+         */
+        fun achievements(context: Context): TmpFont? =
+            load(context, "tmp_newrodin_eb", load(context, "tmp_liberation"))
 
         // 注：SEGA_NewRodinN EB 是**达成率**的数字字体，不是 DX 评分数字。
         // 姓名牌里的 DX 评分走 `SpriteCounter` 的 UI_CMN_Num_26p 精灵（见 NamePlateRenderer）。

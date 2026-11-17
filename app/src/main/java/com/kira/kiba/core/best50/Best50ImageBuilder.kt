@@ -248,6 +248,9 @@ object Best50ImageBuilder {
                 oldRa = totalSd,
                 newRa = totalDx,
                 avatar = avatar,
+                // 导出图是要发出去的：称号条不再写 B35/B15，改成一句免责说明，
+                // 免得别人把这张图当官方口径。
+                titleText = "Best 列表仅供参考使用",
             ),
             scale = 128f / NamePlateRenderer.PLATE_H,
         )
@@ -341,9 +344,26 @@ object Best50ImageBuilder {
         // 歌名（超 12 列截断到 11 列 + ...）
         drawText(c, trimTitle(r.title), 32f, 27f, 16f, ink, font(context, "adobe_simhei.otf"))
 
-        // 达成率
-        drawText(c, "%.4f%%".format(r.achievements), 30f, 42f, 26f,
-            rgb(245, 252, 255), font(context, "Andrea.otf"))
+        // 达成率：游戏本体的 SEGA_NewRodinN EB（SDF 位图字形），和 B50 页面卡片同一套。
+        // 竖直锚的是**墨迹中线 59**：歌名墨迹到 43、信息带上沿在 76，取两者中缝；
+        // 旧的 51.5 是照搬 Andrea 的位置，NewRodin 自身重心更高，看起来贴着歌名。
+        val pct = "%.4f%%".format(r.achievements)
+        val achFont = TmpFont.achievements(context)
+        if (achFont != null) {
+            // 版面从 x=30 到评级贴图左缘 159 只有 129px：NewRodin EB 每字宽 0.83em
+            // （比 Andrea 宽近一倍），写死 25 会让「100.4999%」横冲到 SSS 徽章上并被裁掉
+            // —— 这里按可用宽度反算字号，上限仍是 25（真机反证）。
+            val avail = 159f - 4f - 30f
+            val unit = achFont.advance(pct, 1f).coerceAtLeast(0.1f)
+            val achSize = minOf(25f, avail / unit)
+            val ink = achFont.inkBounds(pct, achSize)
+            achFont.draw(
+                c, pct, 30f, 59f + (ink[0] + ink[1]) / 2f, achSize,
+                Paint(Paint.ANTI_ALIAS_FLAG).apply { color = rgb(245, 252, 255) },
+            )
+        } else {
+            drawText(c, pct, 30f, 42f, 26f, rgb(245, 252, 255), font(context, "Andrea.otf"))
+        }
 
         // 评级（MaimaiData 高清源 kiba_rank_* 600×267）
         // 旧 86×38 @ y=40 → 底边落在 78，**压过信息带上沿那条 74 的横线**（用户截图点名

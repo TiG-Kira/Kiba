@@ -11,6 +11,7 @@ import android.graphics.PorterDuff
 import android.graphics.PorterDuffColorFilter
 import android.graphics.RectF
 import android.graphics.Shader
+import android.graphics.Typeface
 import com.kira.kiba.core.account.loadAccountAvatarBitmap
 import com.kira.kiba.core.model.GameType
 import com.kira.kiba.core.utils.SpUtil
@@ -107,6 +108,14 @@ object NamePlateRenderer {
     /** `NUM_Rateing` 的 `SpriteCounter.m_Color`（prefab 原值 1 / 0.796 / 0.004）。 */
     internal const val NUM_COLOR = 0xFFFFCB01.toInt()
 
+    /**
+     * 数字底下那层 `UI_CMN_Num_26p_Outline_*` 的颜色。
+     *
+     * 精灵本身是比数字外扩约 4px 的白色实心剪影，游戏把它染成近黑垫在下面，
+     * 于是金色数字外缘压着一条细黑边 —— 少了这层，金数字在深灰槽里像直接抠出来的贴纸。
+     */
+    private const val NUM_OUTLINE_COLOR = 0xFF0E1014.toInt()
+
     /** 没数据时的占位符（未登录查分器）。 */
     private const val PLACEHOLDER = "—"
 
@@ -119,6 +128,14 @@ object NamePlateRenderer {
     private const val TITLE_TEXT_Y = 3.3f
     private const val TITLE_TEXT_W = 255f
     private const val TITLE_TEXT_H = 33f
+
+    /**
+     * 称号条字号 / 条高。
+     *
+     * 原来把 TMP_Title（Morisawa R）的 0.58 搬过来，换成 HOS 后字面更宽、x-height 更高，
+     * 同样的比例显得挤 —— 落到 0.52 才是「比名字小一号、又不空」的观感。
+     */
+    private const val TITLE_TEXT_RATIO = 0.52f
 
     private const val NAME_TEXT_X = 118.5f
     private const val NAME_TEXT_Y = 35f
@@ -153,6 +170,12 @@ object NamePlateRenderer {
         val oldRa: Int,
         val newRa: Int,
         val avatar: Bitmap? = null,
+        /**
+         * 称号条里写什么：
+         * - `null`（默认）：页面卡片用，写「B35 <旧曲 ra>」「B15 <新曲 ra>」两段；
+         * - 非空：整条居中写这一句 —— 导出图用它标注「Best 列表仅供参考使用」。
+         */
+        val titleText: String? = null,
     )
 
     /** 素材缓存：底图 96 张 + 徽章 11 张 + 称号条 1 张，命中率极高，直接进程级持有。 */
@@ -269,23 +292,32 @@ object NamePlateRenderer {
         drawIcon(canvas, spec.avatar, rect(ICON_X, ICON_Y, ICON_S, ICON_S), s)
         canvas.restore()
 
-        // ── 6. 称号条内文：左 B35 右 B15 两段独立 Rating，字体同 TMP_Title（Morisawa R）──
+        // ── 6. 称号条内文：字体走 App 自带的 HOS（和整套 UI 同一套字），
+        //      页面卡片写「B35 x / B15 y」，导出图整条写一句免责说明 ──
         val titleText = rect(TITLE_TEXT_X, TITLE_TEXT_Y, TITLE_TEXT_W, TITLE_TEXT_H)
+        val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = hosTypeface(context)
+            color = 0xFF6E4200.toInt()
+            textAlign = Paint.Align.CENTER
+        }
         val half = titleText.width() / 2f
-        val titleFont = TmpFont.namePlate(context)
-        if (titleFont != null) {
-            val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF6E4200.toInt() }
-            listOf(
-                "B35 ${spec.oldRa}" to titleText.left + half * 0.5f,
-                "B15 ${spec.newRa}" to titleText.left + half * 1.5f,
-            ).forEach { (text, cx) ->
-                var size = TITLE_TEXT_H * 0.58f * s
-                while (titleFont.advance(text, size) > half - 8f * s && size > 6f) size -= 0.5f
-                val w = titleFont.advance(text, size)
-                val ink = titleFont.inkBounds(text, size)
-                val baselineY = titleText.centerY() + (ink[0] + ink[1]) / 2f
-                titleFont.draw(canvas, text, cx - w / 2f, baselineY, size, titlePaint)
+        // 竖排居中：按字体度量把「视觉中线」落到条的几何中线上
+        fun drawTitleLine(text: String, cx: Float, maxW: Float) {
+            var size = TITLE_TEXT_H * TITLE_TEXT_RATIO * s
+            titlePaint.textSize = size
+            while (titlePaint.measureText(text) > maxW && size > 6f) {
+                size -= 0.5f
+                titlePaint.textSize = size
             }
+            val fm = titlePaint.fontMetrics
+            canvas.drawText(text, cx, titleText.centerY() - (fm.ascent + fm.descent) / 2f, titlePaint)
+        }
+        val override = spec.titleText
+        if (override != null) {
+            drawTitleLine(override, titleText.centerX(), titleText.width() - 14f * s)
+        } else {
+            drawTitleLine("B35 ${spec.oldRa}", titleText.left + half * 0.5f, half - 8f * s)
+            drawTitleLine("B15 ${spec.newRa}", titleText.left + half * 1.5f, half - 8f * s)
         }
 
         // ── 7. 玩家名：游戏 TMP_Name 是等宽的 1em 槽（拉丁走 LiberationSans fallback）──
@@ -366,6 +398,19 @@ object NamePlateRenderer {
         }.getOrNull()?.also { cache[name] = it }
     }
 
+    private val typefaceCache = HashMap<String, Typeface?>()
+
+    private fun typeface(context: Context, assetName: String): Typeface? =
+        typefaceCache.getOrPut(assetName) {
+            runCatching { Typeface.createFromAsset(context.assets, "fonts/$assetName") }.getOrNull()
+        }
+
+    /** 称号条文字字体：App 自带的 HOS（Medium 优先），拿不到就退回默认粗体。 */
+    private fun hosTypeface(context: Context): Typeface =
+        typeface(context, "HOS_Med.ttf")
+            ?: typeface(context, "HOS.ttf")
+            ?: Typeface.DEFAULT_BOLD
+
     /**
      * 段位徽章贴图（`badge_01..11.webp`，176×40 原生），供 Compose 侧（[com.kira.kiba.ui.common.DxRatingTag]）
      * 直接复用，和姓名框里那张徽章是同一份素材。
@@ -406,12 +451,17 @@ object NamePlateRenderer {
         val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
             colorFilter = PorterDuffColorFilter(NUM_COLOR, PorterDuff.Mode.SRC_IN)
         }
+        // 黑边层：同一尺寸框、同一落位，只是染成近黑先画一遍
+        val outlinePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+            colorFilter = PorterDuffColorFilter(NUM_OUTLINE_COLOR, PorterDuff.Mode.SRC_IN)
+        }
         val text = rating.coerceIn(0, 99999).toString().padStart(5, '0').takeLast(5)
         text.forEachIndexed { i, ch ->
             val digit = ch.digitToIntOrNull() ?: return@forEachIndexed
             val bmp = asset(context, "num_$digit.webp") ?: return@forEachIndexed
             val cx = left + pitch * (i + 0.5f)
             val dst = RectF(cx - boxW / 2f, cy - boxH / 2f, cx + boxW / 2f, cy + boxH / 2f)
+            asset(context, "num_out_$digit.webp")?.let { canvas.drawBitmap(it, null, dst, outlinePaint) }
             canvas.drawBitmap(bmp, null, dst, paint)
         }
     }

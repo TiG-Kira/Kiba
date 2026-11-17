@@ -148,23 +148,32 @@ def main():
 
     # DX 评分数字 0..9（34×40 精灵，`NUM_Rateing` 的 SpriteCounter 用的就是这套
     # `UI_CMN_Num_26p_*`；白字贴图，游戏里用 color=#FFCB01 染成金色）。
+    # 配套的 `UI_CMN_Num_26p_Outline_*` 是同尺寸、外扩约 4px 的实心剪影，
+    # 游戏把它垫在数字下面染深色 —— 也就是用户看到的「细黑包边」。两张都要导。
     # 注意：**不要**拿 SEGA_NewRodinN 去排 DX 评分数字 —— 那套字体是达成率/曲名用的。
     nums = {}
+    outlines = {}
     for o in env.objects:
         if o.type.name != "Sprite":
             continue
         d = o.read()
         nm = d.m_Name or ""
-        if not nm.startswith("UI_CMN_Num_26p_") or "Outline" in nm:
+        if not nm.startswith("UI_CMN_Num_26p_"):
             continue
-        tail = nm[len("UI_CMN_Num_26p_"):]
+        rest = nm[len("UI_CMN_Num_26p_"):]
+        is_outline = rest.startswith("Outline_")
+        tail = rest[len("Outline_"):] if is_outline else rest
         if not tail.isdigit() or int(tail) > 9:
             continue
+        name = f"num_out_{tail}.webp" if is_outline else f"num_{tail}.webp"
         d.image.convert("RGBA").save(
-            os.path.join(ASSET_DIR, f"num_{tail}.webp"), "WEBP", quality=92, method=5
+            os.path.join(ASSET_DIR, name), "WEBP", quality=92, method=5
         )
-        nums[int(tail)] = d.image.size
-    print("数字贴图导出", sorted(nums.items()))
+        if is_outline:
+            outlines[int(tail)] = d.image.size
+        else:
+            nums[int(tail)] = d.image.size
+    print("数字贴图导出", sorted(nums.items()), "黑边", sorted(outlines.items()))
 
     # ── 生成 Kotlin 映射表 ──
     lines = []

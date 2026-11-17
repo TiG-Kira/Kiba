@@ -40,7 +40,9 @@ import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.painter.BitmapPainter
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -54,32 +56,63 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.SubcomposeAsyncImage
 import com.kira.kiba.core.best50.Best50ImageBuilder
+import com.kira.kiba.core.best50.TmpFont
 import com.kira.kiba.core.db.entity.RecordEntity
 import com.kira.kiba.ui.common.coverCandidateUrls
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Best 50 单曲卡片（宽卡版 / Kiba Dark Glass）。
+ * 达成率数字（`99.9999%`）：用游戏本体的位图字形 `SEGA_NewRodinN EB` 直接画。
  *
- * 旧实现把 246×132 的导出图贴图（`kiba_mb_ui` + 难度框）做九宫格水平拉伸，
- * 左段 132dp、右段 98dp、中间一大片空白只塞两个小 tag —— 元素全是小卡时代的
- * 原生素材，拉宽后比例失调、信息密度极低。
- *
- * 新版是**为整行宽卡重新设计**的三段式布局，不依赖九宫格：
- * - 难度色竖条（20dp）：官方完整难度名整词旋转 90° 竖排，颜色与导出图素材一一对应；
- * - 主信息区（weight 弹性）：序号徽章 / 曲号 / 流派·版本 pill / 歌名 / 达成率
- *   / 定数 / DX 分；屏幕越宽歌名可显示的列数越多；
- * - 右侧信息区（150dp 固定）：SD·DX 徽章、DX 星标、评级贴图、FC/FS 状态、
- *   ra 与榜单序号，全部右对齐成一块稳定的「成绩面板」。
- *
- * 上下两段固定高度（TOP_H + BAND_H = TILE_H）：早期版本用整卡 SpaceBetween
- * 排四行，达成率行的顶部会越过 74dp 的信息带上沿、压到封面区（真机截图反证）。
- * 现在「达成率 / LV / DX 分 / ra」全部锁在下半成绩带内，与字体度量无关。
- *
- * 视觉语言与导出图同源（深色玻璃 + 冷白文字 + 青色 ra 强调），但排版按宽卡重排；
- * 游戏内正式徽章（SSS+ 评级 / FC / FS）沿用 MaimaiData 高清素材，其余老贴图
- * （SD·DX 图标、星标、灰色占位圆）改为 Compose 原生绘制。
+ * 这套字只有 SDF 图集没有 TTF，没法交给 Compose 的 `Text`，所以这里用
+ * [TmpFont.draw] 自己贴字形：
+ * - 尺寸完全由调用方给出（[sizeSp]），宽高按 advance / 行高算，**不额外撑大行高**；
+ * - 基线由 [TmpFont.baselineRatio] 换算成对齐线，同行里的「LV 定数」靠它对齐 ——
+ *   直接把 Canvas 丢进 Row 会因为「量不到基线」被顶到顶部；
+ * - 字体缺失时退回原先的 Andrea 文字，版式最坏只是回到旧观感，不会崩。
  */
+@Composable
+private fun AchievementRate(
+    text: String,
+    sizeSp: Float,
+    color: Color,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val density = LocalDensity.current
+    val font = remember { TmpFont.achievements(context) }
+    if (font == null) {
+        BasicText(
+            text,
+            style = TextStyle(
+                fontSize = sizeSp.sp,
+                fontFamily = rememberTileFonts().andrea,
+                color = color,
+            ),
+            maxLines = 1,
+            softWrap = false,
+            modifier = modifier,
+        )
+        return
+    }
+    val sizePx = with(density) { sizeSp.sp.toPx() }
+    val wPx = font.advance(text, sizePx).coerceAtLeast(1f)
+    val hPx = font.lineHeight(sizePx)
+    val paint = remember(color) {
+        android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            this.color = color.toArgb()
+        }
+    }
+    Canvas(
+        modifier.size(
+            width = with(density) { wPx.toDp() },
+            height = with(density) { hPx.toDp() },
+        )
+    ) {
+        font.draw(drawContext.canvas.nativeCanvas, text, 0f, font.ascentOf(sizePx), sizePx, paint)
+    }
+}
+
 private val TILE_H = 132.dp
 private val TOP_H = 66.dp
 private val BAND_H = 66.dp
@@ -109,6 +142,28 @@ private val MAGENTA = Color(0xFFFF5FA2)
 private val VIOLET = Color(0xFFA98BFF)
 private val AMBER = Color(0xFFFFBE78)
 
+/**
+ * Best 50 单曲卡片（宽卡版 / Kiba Dark Glass）。
+ *
+ * 旧实现把 246×132 的导出图贴图（`kiba_mb_ui` + 难度框）做九宫格水平拉伸，
+ * 左段 132dp、右段 98dp、中间一大片空白只塞两个小 tag —— 元素全是小卡时代的
+ * 原生素材，拉宽后比例失调、信息密度极低。
+ *
+ * 新版是**为整行宽卡重新设计**的三段式布局，不依赖九宫格：
+ * - 难度色竖条（20dp）：官方完整难度名整词旋转 90° 竖排，颜色与导出图素材一一对应；
+ * - 主信息区（weight 弹性）：序号徽章 / 曲号 / 流派·版本 pill / 歌名 / 达成率
+ *   / 定数 / DX 分；屏幕越宽歌名可显示的列数越多；
+ * - 右侧信息区（150dp 固定）：SD·DX 徽章、DX 星标、评级贴图、FC/FS 状态、
+ *   ra 与榜单序号，全部右对齐成一块稳定的「成绩面板」。
+ *
+ * 上下两段固定高度（TOP_H + BAND_H = TILE_H）：早期版本用整卡 SpaceBetween
+ * 排四行，达成率行的顶部会越过 74dp 的信息带上沿、压到封面区（真机截图反证）。
+ * 现在「达成率 / LV / DX 分 / ra」全部锁在下半成绩带内，与字体度量无关。
+ *
+ * 视觉语言与导出图同源（深色玻璃 + 冷白文字 + 青色 ra 强调），但排版按宽卡重排；
+ * 游戏内正式徽章（SSS+ 评级 / FC / FS）沿用 MaimaiData 高清素材，其余老贴图
+ * （SD·DX 图标、星标、灰色占位圆）改为 Compose 原生绘制。
+ */
 @Composable
 fun Best50Tile(
     record: RecordEntity,
@@ -120,6 +175,7 @@ fun Best50Tile(
     modifier: Modifier = Modifier,
 ) {
     val fonts = rememberTileFonts()
+    val context = LocalContext.current
     val diffColor = tileDifficultyColor(record.levelIndex)
     val dxStar = dxStarLevel(record.dxScore, fullScore)
     val ra = Best50ImageBuilder.computeRa(record.ds, record.achievements, true)
@@ -148,8 +204,19 @@ fun Best50Tile(
         val idText = "ID ${trackIdOf(record)}"
         val pctText = "%.4f%%".format(record.achievements)
         val lvText = "LV ${record.ds}"
-        val pctUnit = (textW(pctText, TextStyle(fontSize = 27.sp, fontFamily = fonts.andrea)) / 27f)
-            .coerceAtLeast(0.1f)
+        // 达成率走游戏本体那套 SEGA NewRodinN EB（位图字形，量不出 Compose 的 textWidth），
+        // 宽度统一从 TmpFont 的 advance 拿；字体缺失时退回原来的 Andrea 度量。
+        val pctFont = remember { TmpFont.achievements(context) }
+        fun pctWidthDp(sizeSp: Float): Float = if (pctFont != null) {
+            val px = with(density) { sizeSp.sp.toPx() }
+            pctFont.advance(pctText, px) / density.density
+        } else {
+            textW(pctText, TextStyle(fontSize = sizeSp.sp, fontFamily = fonts.andrea))
+        }
+        // pctUnit = 每 1sp 的宽度（dp）。位图字形量不到 Compose 的 textWidth，
+        // 宽度必须走 `TmpFont.advance`；漏掉这一步会让 pctUnit 退化成 1.0，
+        // 于是「97.3771%」按 27sp 顶满整条成绩带、把 LV 挤出卡片（真机反证）。
+        val pctUnit = (pctWidthDp(27f) / 27f).coerceAtLeast(0.1f)
         val lvUnit = (textW(lvText, TextStyle(fontSize = 13.sp, fontFamily = fonts.exo)) / 13f)
             .coerceAtLeast(0.1f)
 
@@ -259,29 +326,39 @@ fun Best50Tile(
                     }
 
                     Column(
+                        // top = 4dp：居中盒（下面那个 27dp 的 Box）的盒心要落在图标可见圆心
+                        // （band 顶下 ~17.7dp）；6dp 的旧值会让整排再低 2dp，和右侧图标错开。
                         Modifier.height(BAND_H)
-                            .padding(start = 12.dp, end = 8.dp, top = 6.dp, bottom = 8.dp),
+                            .padding(start = 12.dp, end = 8.dp, top = 4.dp, bottom = 8.dp),
                         verticalArrangement = Arrangement.SpaceBetween,
                     ) {
-                        // 达成率与定数**按基线对齐**（alignByBaseline），字号再变也是
-                        // 同一条基线；旧版用 Alignment.Bottom + 4dp 底距，字号一缩
-                        // LV 就浮到半空 —— 窄屏被看成「对齐顶部」，宽屏却是齐底的。
-                        Row {
-                            BasicText(
-                                pctText,
-                                style = TextStyle(fontSize = pctSize.sp, fontFamily = fonts.andrea, color = INK_SOFT),
-                                maxLines = 1,
-                                softWrap = false,
-                                modifier = Modifier.alignByBaseline(),
-                            )
-                            Spacer(Modifier.width(10.dp))
-                            BasicText(
-                                lvText,
-                                style = TextStyle(fontSize = lvSize.sp, fontFamily = fonts.exo, color = DIM),
-                                maxLines = 1,
-                                softWrap = false,
-                                modifier = Modifier.alignByBaseline(),
-                            )
+                        // 达成率是位图字形（自绘 Canvas，没有可上报的基线），没法用
+                        // alignByBaseline；Row 内部仍用 Alignment.Bottom 让「LV 定数」
+                        // 和数字基线对齐（两者基线误差 < 0.5dp）。
+                        //
+                        // 整组再放进一个 **27dp 高的居中盒**：位图字形在 Canvas 里是贴底的
+                        // （墨迹下沿只剩 0.07em），直接 Bottom 对齐到行首会让整排重心比右侧
+                        // FC/FS 圆高 3~4dp，真机上读成「达成率和定数浮在图标上面」。
+                        // 盒高必须 ≥ 最大字号（27dp），否则大字号那档会被 Row 约束成固定高度、
+                        // 变成**顶对齐**溢出，wide 比 narrow 低 5px（真机反证）。
+                        Box(
+                            modifier = Modifier.height(27.dp),
+                            contentAlignment = Alignment.CenterStart,
+                        ) {
+                            Row(verticalAlignment = Alignment.Bottom) {
+                                AchievementRate(
+                                    text = pctText,
+                                    sizeSp = pctSize,
+                                    color = INK_SOFT,
+                                )
+                                Spacer(Modifier.width(10.dp))
+                                BasicText(
+                                    lvText,
+                                    style = TextStyle(fontSize = lvSize.sp, fontFamily = fonts.exo, color = DIM),
+                                    maxLines = 1,
+                                    softWrap = false,
+                                )
+                            }
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             BasicText(
