@@ -500,7 +500,7 @@ private fun scoreSourceSummary(
         "水鱼 · 完整成绩，机台更新链路最成熟（推荐）"
     }
     ScoreSource.LXNS -> when {
-        !lxnsBound -> "落雪 · 尚未登录落雪账号，请到「我」页的「落雪账户登录」"
+        !lxnsBound -> "落雪 · 尚未登录落雪账号，请到「账户」页的「落雪账户登录」"
         game == GameType.CHUNITHM -> "落雪 · 全量成绩 + 官方当前版本 B20"
         else -> "落雪 · 全量成绩（需先在落雪同步过一次，账号才会绑定玩家）"
     }

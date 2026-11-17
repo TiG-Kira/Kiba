@@ -251,47 +251,59 @@ fun MeScreen(
 
             item(key = "checker_card") {
                 Card(modifier = (Modifier.fillMaxWidth())) {
-                    ArrowPreference(
-                        // 水鱼卡只看**水鱼凭据**：落雪源下 account.bound / account.nickname /
-                        // account.rating 会被落雪数据覆盖，若直接读 account 就会把落雪账户
-                        // 显示成「当前水鱼账户」。这里固定读水鱼自己的持久化身份。
-                        title = when {
-                            account.dfLoggedIn -> "重新登录水鱼账户"
-                            else -> "水鱼账户登录"
-                        },
-                        summary = when {
-                            account.dfLoggedIn ->
-                                "当前水鱼账户：${SpUtil.getDivingFishOAuthNickname().ifBlank { "水鱼用户" }}（Rating ${SpUtil.getDivingFishRating()}）· 点击重新登录"
-                            else -> "水鱼源专用：支持水鱼账号密码登录（OAuth 授权已暂时停用）"
-                        },
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Lock, com.kira.kiba.ui.common.KibaIconTint.BLUE) },
-                        onClick = onOpenLogin,
-                    )
-                    ArrowPreference(
-                        title = when {
-                            lxnsBound -> "管理落雪账户"
-                            else -> "落雪账户登录"
-                        },
-                        summary = when {
-                            lxnsBound ->
-                                "当前落雪账户：${lxnsName.ifBlank { "落雪玩家" }} · ${if (lxnsOauth) "账号授权" else "个人 API 密钥"} · 点击管理"
-                            else ->
-                                "落雪源专用：推荐用落雪账号授权，一步到位；也可手填个人 API 密钥"
-                        },
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.CloudFill, com.kira.kiba.ui.common.KibaIconTint.CYAN) },
-                        onClick = onOpenLxnsLogin,
-                    )
+                    // 查分器组只保留**当前游戏所选数据源**的那一套入口：
+                    // 选了水鱼就没必要把「落雪账户登录」摆出来（反之亦然），
+                    // 免得用户在两个源之间反复怀疑自己点错了。唯一的例外是「退出登录」——
+                    // 另一个源可能还挂着凭据，必须留个地方退。
+                    val src = if (isChunithm) chuniSource else maimaiSource
+                    if (src == ScoreSource.WATER_FISH) {
+                        ArrowPreference(
+                            // 水鱼卡只看**水鱼凭据**：落雪源下 account.bound / account.nickname /
+                            // account.rating 会被落雪数据覆盖，若直接读 account 就会把落雪账户
+                            // 显示成「当前水鱼账户」。这里固定读水鱼自己的持久化身份。
+                            title = when {
+                                account.dfLoggedIn -> "重新登录水鱼账户"
+                                else -> "水鱼账户登录"
+                            },
+                            summary = when {
+                                account.dfLoggedIn ->
+                                    "当前水鱼账户：${SpUtil.getDivingFishOAuthNickname().ifBlank { "水鱼用户" }}（Rating ${SpUtil.getDivingFishRating()}）· 点击重新登录"
+                                else -> "水鱼源专用：支持水鱼账号密码登录（OAuth 授权已暂时停用）"
+                            },
+                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Lock, com.kira.kiba.ui.common.KibaIconTint.BLUE) },
+                            onClick = onOpenLogin,
+                        )
+                    }
+                    if (src == ScoreSource.LXNS) {
+                        ArrowPreference(
+                            title = when {
+                                lxnsBound -> "管理落雪账户"
+                                else -> "落雪账户登录"
+                            },
+                            summary = when {
+                                lxnsBound ->
+                                    "当前落雪账户：${lxnsName.ifBlank { "落雪玩家" }} · ${if (lxnsOauth) "账号授权" else "个人 API 密钥"} · 点击管理"
+                                else ->
+                                    "落雪源专用：推荐用落雪账号授权，一步到位；也可手填个人 API 密钥"
+                            },
+                            startAction = { PrefIcon(MiuixGlassIcons.Regular.CloudFill, com.kira.kiba.ui.common.KibaIconTint.CYAN) },
+                            onClick = onOpenLxnsLogin,
+                        )
+                    }
                     // ── 查分器工具（2.3.0 起从设置页整组迁到这里：登录态与工具入口同一屏）──
                     ArrowPreference(
                         title = "机台成绩更新（VPN）",
-                        summary = "在机台 WiFi 下抓包，按各游戏当前选的数据源上传（水鱼 / 落雪）",
+                        summary = when (src) {
+                            ScoreSource.LXNS -> "在机台 WiFi 下抓包，解析后上传落雪（与「落雪官方同步」二选一）"
+                            ScoreSource.WATER_FISH -> "在机台 WiFi 下抓包，解析后上传水鱼"
+                        },
                         startAction = { PrefIcon(MiuixGlassIcons.Regular.Update, com.kira.kiba.ui.common.KibaIconTint.GREEN) },
                         onClick = onOpenMachineUpdate,
                     )
-                    // 二维码导入是**舞萌专用**通道（官方登录二维码 + 水鱼导入令牌），
-                    // 中二节奏既没有对应二维码体系、也没有水鱼导入通道，切到中二时整行隐藏，
-                    // 免得用户点进去看到一条走不通的路。
-                    if (!isChunithm) {
+                    // 二维码导入是**舞萌 + 水鱼**专用通道（官方登录二维码 + 水鱼导入令牌）：
+                    // 中二节奏既没有对应二维码体系、也没有水鱼导入通道，切到中二时整行隐藏；
+                    // 数据源选落雪时同理 —— 落雪走官方服务端解析，这条路的终点是水鱼。
+                    if (!isChunithm && src == ScoreSource.WATER_FISH) {
                         ArrowPreference(
                             title = "二维码导入成绩",
                             summary = "仅舞萌 DX：免 VPN —— 先在「工具箱 → 接入 Easymai 账号」登录，" +
@@ -300,7 +312,7 @@ fun MeScreen(
                             onClick = onOpenQrImport,
                         )
                     }
-                    if (maimaiSource == ScoreSource.LXNS || chuniSource == ScoreSource.LXNS) {
+                    if (src == ScoreSource.LXNS) {
                         // 落雪官方的同步方式是「代理同步」：把 WLAN 代理指向他们的服务器，
                         // 由落雪代抓。它和本 App 的本地 VPN 抢同一块网络接管，只能二选一，
                         // 所以这里只做备选入口 —— App 内抓包走不通时用户还有路可走。

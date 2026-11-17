@@ -273,35 +273,14 @@ fun Best50Screen(
                     }
                 }
                 item(key = "summary", span = { GridItemSpan(maxLineSpan) }) {
-                    Card(modifier = (Modifier.fillMaxWidth())) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "DX Rating $total",
-                                    style = MiuixTheme.textStyles.headline1,
-                                    color = MiuixTheme.colorScheme.primary,
-                                )
-                                Spacer(Modifier.height(2.dp))
-                                Text(
-                                    text = "旧曲 ${old.size}（ra ${b50.oldRa}） + 新曲 ${new.size}（ra ${b50.newRa}）",
-                                    style = MiuixTheme.textStyles.footnote1,
-                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                                )
-                            }
-                            Column(horizontalAlignment = Alignment.End) {
-                                Text(
-                                    text = "旧 ${old.size} / 新 ${new.size}",
-                                    style = MiuixTheme.textStyles.footnote1,
-                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                                )
-                            }
-                        }
-                    }
+                    // 顶部换成游戏同款「姓名框」：头像 + DX 评分徽章 + 玩家名 + 称号条
+                    // （称号条内文 = B35 / B15 独立 Rating）。渲染器与导出图共用。
+                    NamePlateCard(
+                        nickname = account.nickname.ifBlank { "Kiba" },
+                        rating = total,
+                        oldRa = b50.oldRa,
+                        newRa = b50.newRa,
+                    )
                 }
                 item(key = "trend", span = { GridItemSpan(maxLineSpan) }) {
                     // Rating 历史曲线：**只画当前数据源自己的桶**——水鱼 / 落雪口径不同，

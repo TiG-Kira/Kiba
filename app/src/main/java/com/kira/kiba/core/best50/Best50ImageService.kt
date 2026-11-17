@@ -57,6 +57,9 @@ object Best50ImageService {
             loadAccountAvatarBitmap(context, GameType.MAIMAI, SpUtil.maimaiSourceFlow.value)
         }.getOrNull()
 
+        // 姓名框名牌：与 B50 页卡片同一套判定与按天随机，保证「页面看到的 = 图里印的」
+        val plateAsset = NamePlatePicker.pick(nickname)
+
         val bytes = Best50ImageBuilder.build(
             context = context,
             old = old,
@@ -65,6 +68,7 @@ object Best50ImageService {
             rating = rating,
             charts = charts,
             avatar = avatar,
+            plateAsset = plateAsset,
         ) ?: return@withContext null
 
         val dir = CacheDirs.generated(context)
