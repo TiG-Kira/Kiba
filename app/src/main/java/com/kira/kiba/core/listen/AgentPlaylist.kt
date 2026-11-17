@@ -102,6 +102,78 @@ object AgentPlaylist {
         records: List<RecordEntity>,
         favoriteIds: List<String>,
     ): Saved {
+        val (candidates, genreProfile, favTitles) = buildProfileCandidates(songs, records, favoriteIds)
+        return refresh(context, candidates, genreProfile, favTitles, null)
+    }
+
+    /**
+     * 按用户要求生成专属歌单（听页「按需求生成」入口）。
+     *
+     * 与 [refreshWithProfile] 的区别：除画像预筛候选外，还会**整库搜索要求里点名的
+     * 曲师 / 曲目 / 流派**，命中的歌直接进候选（带 ★ 标记、排在最前）——
+     * 用户点名「要某曲师的歌」时不受 60 首画像预筛范围限制。
+     * 要求原文一并交给 LLM 作最高优先级约束。
+     */
+    suspend fun refreshWithRequirements(
+        context: android.content.Context,
+        requirement: String,
+        songs: List<SongWithChartsEntity>,
+        records: List<RecordEntity>,
+        favoriteIds: List<String>,
+    ): Saved {
+        val req = requirement.trim()
+        check(req.isNotBlank()) { "要求不能为空" }
+
+        // ── 点名匹配（整库）：要求文本里出现的曲师（分段匹配）/ 曲名 / 流派 → 进候选 ──
+        // 曲师名常带合作分段（「A×B」「A feat. B」「A vs. B」），按分段任一命中即算点名；
+        // 曲名 / 流派要求全文精确包含（保守匹配，避免两字误命中泛洪候选）。
+        val named = songs.filter { swc ->
+            val artistHit = swc.songData.artist.split(ARTIST_SEPARATORS).any { part ->
+                val p = part.trim()
+                p.length >= 2 && req.contains(p, ignoreCase = true)
+            }
+            val titleHit = swc.songData.title.length >= 2 && req.contains(swc.songData.title, ignoreCase = true)
+            val genreHit = swc.songData.genre.isNotBlank() &&
+                req.contains(swc.songData.genre, ignoreCase = true)
+            artistHit || titleHit || genreHit
+        }.take(30)
+
+        val (profileCandidates, genreProfile, favTitles) = buildProfileCandidates(songs, records, favoriteIds)
+        val namedIds = named.map { it.songData.id }.toSet()
+        val masterDs = songs.associate { swc ->
+            swc.songData.id to swc.charts.filter { it.difficultyType.ordinal == 3 }
+                .minOfOrNull { it.ds }
+        }
+        val playedIds = records.groupBy { it.songId }.keys
+        val namedCandidates = named.map { swc ->
+            Profile(
+                id = swc.songData.id,
+                title = swc.songData.title,
+                artist = swc.songData.artist,
+                genre = swc.songData.genre,
+                ds = masterDs[swc.songData.id],
+                played = swc.songData.id in playedIds,
+                named = true,
+            )
+        }
+        val merged = namedCandidates + profileCandidates.filterNot { it.id in namedIds }
+        return refresh(context, merged, genreProfile, favTitles, null, req)
+    }
+
+    /** 曲师名的合作分段分隔符：× / feat. / vs. / & / 、 / ， / , / / / ; / ； / | / 独立 x。 */
+    private val ARTIST_SEPARATORS = Regex(
+        """(?i)\s*(?:×|feat\.|vs\.|&|、|，|,|/|;|；|\|| x )\s*""",
+    )
+
+    /**
+     * 画像候选构建（[refreshWithProfile] 与按需求生成共用）：
+     * 流派画像 + 收藏名 + [SongRecommender] 预筛 60 首。
+     */
+    private suspend fun buildProfileCandidates(
+        songs: List<SongWithChartsEntity>,
+        records: List<RecordEntity>,
+        favoriteIds: List<String>,
+    ): Triple<List<Profile>, String, List<String>> {
         // 成绩 ra 取每首歌最高（跨难度去重），构造轻量成绩
         val bestBySong = records.groupBy { it.songId }.mapValues { (_, rs) -> rs.maxOf { it.ra } }
         val genreOf = songs.associate { it.songData.id to it.songData.genre }
@@ -155,7 +227,7 @@ object AgentPlaylist {
         val favTitles = favoriteIds.mapNotNull { it.toIntOrNull() }.mapNotNull { sid ->
             songs.firstOrNull { it.songData.id == sid }?.songData?.title
         }
-        return refresh(context, candidates, genreProfile, favTitles, null)
+        return Triple(candidates, genreProfile, favTitles)
     }
 
     /** 距上次生成是否已过期（intervalHours 来自设置页）。 */
@@ -170,7 +242,7 @@ object AgentPlaylist {
      * 调 LLM 生成专属歌单并落盘。
      *
      * @param candidates 本地预筛候选（[SongRecommender] 已按分数排好序，
-     *   建议传入打分排序后的前 60 首，UI 层负责从曲库实体转换）
+     *   建议传入打分排序后的前 60 首；按需求生成时点名曲目排在最前，上限 90，UI 层负责从曲库实体转换）
      * @param genreProfile 流派画像摘要（如 "流行 12 / 东方 8 / niconico 5"）
      * @param favoriteTitles 收藏曲目名列表（截断到 30 个防止 prompt 过长）
      * @param rating 用户 Rating（冷启动/无成绩可为 null）
@@ -182,15 +254,17 @@ object AgentPlaylist {
         genreProfile: String,
         favoriteTitles: List<String>,
         rating: Int?,
+        requirement: String? = null,
     ): Saved = withContext(Dispatchers.IO) {
         if (candidates.isEmpty()) throw IllegalStateException("曲库为空，无法生成推荐")
         check(KibaLlm.isConfigured()) { "LLM 未配置" }
 
         val max = SongRecommender.LIMIT
-        val candidateLines = candidates.take(60).mapIndexed { i, c ->
+        val candidateLines = candidates.take(90).mapIndexed { i, c ->
             val parts = mutableListOf("${i + 1}. ${c.title} / ${c.artist} / ${c.genre}")
             c.ds?.let { parts.add("定数$it") }
             if (c.played) parts.add("已打过")
+            if (c.named) parts.add("★用户点名")
             parts.joinToString(" ")
         }
         val system = buildString {
@@ -208,6 +282,13 @@ object AgentPlaylist {
             append("cover 是封面设计字段，必须填：title ≤ 12 字、subtitle ≤ 24 字、")
             append("mood 从「夜行 / 清晨 / 热血 / 静谧 / 赛博 / 复古 / 海洋 / 甜梦」里选一个最贴合歌单气质的词，" )
             append("tags 给 2~3 个短标签（每个 ≤ 4 字）。")
+            // 用户对本次生成的明确要求（按需求生成入口）：最高优先级，与画像冲突时以要求为准
+            requirement?.trim()?.takeIf { it.isNotBlank() }?.let {
+                append("\n本次生成有用户的明确要求，**最高优先级**（画像与它冲突时以要求为准）：\n")
+                append(it).append("\n")
+                append("候选里带 ★用户点名 标记的是按这个要求补进来的曲目，优先从中挑选；")
+                append("若候选不足以满足要求，可在剩余候选里合理补齐。\n")
+            }
             // 长期记忆里用户自己声明的口味 / 雷点，比统计出来的流派分布更权威
             AgentMemory.promptBlock().takeIf { it.isNotBlank() }?.let {
                 append("\n若上面的长期记忆提到这个人的口味偏好或明确排斥，选曲时优先贴合它。\n")
@@ -392,5 +473,7 @@ object AgentPlaylist {
         val ds: Double?,
         /** 是否已有成绩（帮 LLM 区分「回味」与「尝新」）。 */
         val played: Boolean,
+        /** true = 按用户要求点名补进来的曲目（prompt 里打 ★ 标记，优先挑选）。 */
+        val named: Boolean = false,
     )
 }

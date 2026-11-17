@@ -22,6 +22,10 @@ interface SongDao {
     @Query("SELECT * FROM song_data WHERE title LIKE '%' || :query || '%' LIMIT :limit")
     suspend fun searchSongsList(query: String, limit: Int = 50): List<SongDataEntity>
 
+    /** 曲师模糊搜索（Agent 按曲师查歌 / 按需求生成歌单时点名曲师用）。 */
+    @Query("SELECT * FROM song_data WHERE artist LIKE '%' || :query || '%' ORDER BY id LIMIT :limit")
+    suspend fun searchByArtist(query: String, limit: Int = 50): List<SongDataEntity>
+
     /** 随机一首（Agent 随机选曲用）。 */
     @Query("SELECT * FROM song_data ORDER BY RANDOM() LIMIT 1")
     suspend fun randomSong(): SongDataEntity?

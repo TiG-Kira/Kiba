@@ -999,7 +999,8 @@ class KibaAgent(private val context: Context) {
      * 匹配链路（按优先级合并去重）：
      * 1. 纯数字 → 歌曲 ID 精确命中；
      * 2. 歌名模糊匹配（SongDao.searchSongsList）；
-     * 3. **别名匹配**（alias 表模糊搜 → 回表取歌），别名精确命中排在模糊命中前。
+     * 3. **别名匹配**（alias 表模糊搜 → 回表取歌），别名精确命中排在模糊命中前；
+     * 4. **曲师匹配**（前三级都没命中时兜底）：曲师名模糊搜索，按曲师列歌。
      *
      * 回复文本每首附带 `ID` 与别名清单——模型拿到 ID 才能去调分数线等
      * 需要 songId 的后续技能，别名清单让模型能主动对上用户的习惯叫法。
@@ -1007,11 +1008,13 @@ class KibaAgent(private val context: Context) {
     private suspend fun querySong(text: String): AgentReply {
         val query = extractQuery(text)
         if (query.isBlank()) {
-            return AgentReply("想查哪首歌？直接告诉我歌名、别名或 ID，例如「查歌 青」")
+            return AgentReply("想查哪首歌？直接告诉我歌名、别名、曲师或 ID，例如「查歌 青」「查曲师 Laur」")
         }
         data class SongMatches(
             val songs: List<SongDataEntity>,
             val aliasText: Map<Int, String>,
+            /** true = 前三级都没命中、靠曲师匹配兜底（回复按曲师口径组织）。 */
+            val artistMode: Boolean,
         )
 
         val matches = withContext(Dispatchers.IO) {
@@ -1033,36 +1036,61 @@ class KibaAgent(private val context: Context) {
                     .mapNotNull { db.songDao().getSongById(it) }
 
                 val merged = listOfNotNull(idMatch) + aliasSongs + titleMatches
+                if (merged.isNotEmpty()) {
+                    val aliasText = db.aliasDao()
+                        .getAliasesBySongIdsSync(merged.map { it.id }.distinct())
+                        .groupBy { it.songId }
+                        .mapValues { (_, rows) -> rows.joinToString("、") { it.alias } }
+                    return@runCatching SongMatches(merged.distinctBy { it.id }, aliasText, false)
+                }
+
+                // ④ 曲师兜底：歌名 / 别名 / ID 都没对上时按曲师搜（列出该曲师的歌）
+                val artistHits = db.songDao().searchByArtist(query, 20)
                 val aliasText = db.aliasDao()
-                    .getAliasesBySongIdsSync(merged.map { it.id }.distinct())
+                    .getAliasesBySongIdsSync(artistHits.map { it.id })
                     .groupBy { it.songId }
                     .mapValues { (_, rows) -> rows.joinToString("、") { it.alias } }
-                SongMatches(merged.distinctBy { it.id }, aliasText)
-            }.getOrDefault(SongMatches(emptyList(), emptyMap()))
+                SongMatches(artistHits, aliasText, artistHits.isNotEmpty())
+            }.getOrDefault(SongMatches(emptyList(), emptyMap(), false))
         }
         if (matches.songs.isEmpty()) {
             return AgentReply(
-                "本地曲库没找到「$query」。\n可以先在「设置 → 曲库更新」同步最新曲库，或换个关键词（支持别名模糊匹配）。"
+                "本地曲库没找到「$query」。\n可以先在「设置 → 曲库更新」同步最新曲库，" +
+                    "或换个关键词（支持歌名 / 别名 / 曲师模糊匹配）。"
             )
         }
         val sb = StringBuilder()
         val cards = mutableListOf<AgentSong>()
-        matches.songs.take(8).forEach { song ->
+        if (matches.artistMode) {
+            val total = runCatching {
+                AppDataBase.getInstance().songDao().searchByArtist(query, Int.MAX_VALUE).size
+            }.getOrDefault(matches.songs.size)
+            sb.append("按曲师「$query」找到 $total 首")
+            if (total > matches.songs.size) sb.append("（下面显示前 ${matches.songs.size} 首，需要更多可说「再来」）")
+            sb.append("：\n\n")
+        }
+        matches.songs.take(if (matches.artistMode) 20 else 8).forEach { song ->
             val charts = withContext(Dispatchers.IO) {
                 runCatching {
                     AppDataBase.getInstance().chartDao().getChartsBySongId(song.id)
                 }.getOrDefault(emptyList())
             }
-            sb.append("${song.title}（${song.artist}）　ID ${song.id}\n")
-            matches.aliasText[song.id]?.let { sb.append("  别名：$it\n") }
-            if (charts.isEmpty()) {
-                sb.append("  暂无谱面数据\n")
+            if (matches.artistMode) {
+                // 曲师口径列歌清单（供按曲师组歌单 / 挑歌），不展开各难度定数
+                sb.append("${song.title}　ID ${song.id} · ${song.genre}\n")
+                matches.aliasText[song.id]?.let { sb.append("  别名：$it\n") }
             } else {
-                charts.sortedBy { it.difficultyType.ordinal }.forEach { c ->
-                    sb.append(
-                        "  [${difficultyLabel(c.difficultyType.ordinal)} ${c.level}] 定数 ${c.ds}" +
-                            "　谱师：${c.charter}\n"
-                    )
+                sb.append("${song.title}（${song.artist}）　ID ${song.id}\n")
+                matches.aliasText[song.id]?.let { sb.append("  别名：$it\n") }
+                if (charts.isEmpty()) {
+                    sb.append("  暂无谱面数据\n")
+                } else {
+                    charts.sortedBy { it.difficultyType.ordinal }.forEach { c ->
+                        sb.append(
+                            "  [${difficultyLabel(c.difficultyType.ordinal)} ${c.level}] 定数 ${c.ds}" +
+                                "　谱师：${c.charter}\n"
+                        )
+                    }
                 }
             }
             sb.append("\n")
@@ -2680,16 +2708,18 @@ class KibaAgent(private val context: Context) {
             ),
             AgentSkill(
                 "song_query", "查歌曲信息",
-                "按歌名 / 别名 / 歌曲 ID 查询歌曲信息与各难度的定数、谱师；" +
+                "按歌名 / 别名 / 曲师 / 歌曲 ID 查询歌曲：歌名与别名命中时返回各难度定数与谱师，" +
+                    "曲师命中时列出该曲师在库歌曲清单（标题 + ID + 流派，适合按曲师挑歌 / 组歌单）；" +
                     "结果附带歌曲 ID 与别名清单，后续需要歌曲 ID 的技能（分数线 / 谱面等）直接引用该 ID",
                 params = listOf(
                     KibaLlm.ToolParam(
                         "query", "string",
-                        "歌曲名、别名或歌曲 ID；支持别名模糊匹配，例：「群青」「グリーンライツ」「1234」",
+                        "歌曲名、别名、曲师名或歌曲 ID；歌名 / 别名 / 曲师均支持模糊匹配，" +
+                            "例：「群青」「グリーンライツ」「Laur」「1234」",
                         required = true,
                     ),
                 ),
-                paramHint = "输入歌名 / 别名 / 歌曲 ID，例如：群青",
+                paramHint = "输入歌名 / 别名 / 曲师 / 歌曲 ID，例如：群青",
             ),
             AgentSkill(
                 "fortune", "今日舞萌运势",

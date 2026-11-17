@@ -192,11 +192,20 @@ fun ListenScreen(
         }
     }
 
-    fun generateAgentPlaylist() {
+    fun generateAgentPlaylist(requirement: String? = null) {
         if (agentRefreshing) return
         agentRefreshing = true
         scope.launch {
-            runCatching { AgentPlaylist.refreshWithProfile(context, songs, records, favoriteIds) }
+            val result = runCatching {
+                if (requirement.isNullOrBlank()) {
+                    AgentPlaylist.refreshWithProfile(context, songs, records, favoriteIds)
+                } else {
+                    AgentPlaylist.refreshWithRequirements(
+                        context, requirement.trim(), songs, records, favoriteIds,
+                    )
+                }
+            }
+            result
                 .onSuccess {
                     agentHistory = AgentPlaylistStore.load()
                     Toast.makeText(context, "已生成并加入「Agent 专属歌单」", Toast.LENGTH_SHORT).show()
@@ -207,6 +216,10 @@ fun ListenScreen(
             agentRefreshing = false
         }
     }
+
+    // ── 按需求生成 Agent 歌单（输入要求弹窗）
+    var showAgentRequirement by remember { mutableStateOf(false) }
+    var agentRequirement by remember { mutableStateOf("") }
 
     // ── 新建歌单弹层
     var showCreatePlaylist by remember { mutableStateOf(false) }
@@ -477,6 +490,40 @@ fun ListenScreen(
                         }
                     }
                 }
+                item(key = "agent_generate_requirement") {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = { if (!agentRefreshing) { agentRequirement = ""; showAgentRequirement = true } },
+                        pressFeedbackType = PressFeedbackType.Sink,
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            androidx.compose.material3.Icon(
+                                imageVector = MiuixGlassIcons.Regular.Edit,
+                                contentDescription = "按需求生成歌单",
+                                tint = com.kira.kiba.ui.common.kibaIconTint(com.kira.kiba.ui.common.KibaIconTint.BLUE),
+                                modifier = Modifier.size(22.dp),
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    text = if (agentRefreshing) "正在生成…" else "按你的要求生成歌单",
+                                    style = MiuixTheme.textStyles.body1,
+                                    color = MiuixTheme.colorScheme.onSurface,
+                                )
+                                Text(
+                                    text = "写下要求，Agent 按要求选曲（点名曲师 / 流派 / 气氛都行）",
+                                    style = MiuixTheme.textStyles.footnote2,
+                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                )
+                            }
+                        }
+                    }
+                }
             }
 
             if (agentHistory.isNotEmpty()) {
@@ -573,6 +620,48 @@ fun ListenScreen(
                             showCreatePlaylist = false
                             Toast.makeText(context, "歌单「$name」已创建", Toast.LENGTH_SHORT).show()
                         }
+                    },
+                )
+            }
+        }
+    }
+
+    // ── 按需求生成 Agent 歌单弹层 ──
+    KibaGlassDialog(
+        show = showAgentRequirement,
+        title = "按需求生成歌单",
+        summary = "写下你的要求，Agent 按要求选曲（点名曲师 / 流派 / 气氛 / 数量都行）",
+        onDismissRequest = { showAgentRequirement = false },
+    ) {
+        Column {
+            TextField(
+                value = agentRequirement,
+                onValueChange = { agentRequirement = it },
+                label = "生成要求",
+                useLabelAsPlaceholder = true,
+                singleLine = false,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(14.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextButton(
+                    text = "取消",
+                    onClick = { showAgentRequirement = false },
+                )
+                Spacer(Modifier.width(12.dp))
+                TextButton(
+                    text = "生成",
+                    onClick = {
+                        val req = agentRequirement.trim()
+                        if (req.isEmpty()) {
+                            Toast.makeText(context, "先写下你的要求", Toast.LENGTH_SHORT).show()
+                            return@TextButton
+                        }
+                        showAgentRequirement = false
+                        generateAgentPlaylist(req)
                     },
                 )
             }
