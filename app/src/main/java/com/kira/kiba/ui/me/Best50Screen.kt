@@ -458,31 +458,36 @@ private fun Best50TileCard(
     // 长按菜单（与曲目页 SongCard 同款：详情 / 复制歌名 / 播放 / 加入歌单）
     val menu = rememberSongCardMenuState()
     val interaction = remember { MutableInteractionSource() }
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .kibaPressScale(interaction)
-            .combinedClickable(
-                interactionSource = interaction,
-                indication = null,
-                onClick = onClick,
-                onLongClick = {
-                    menu.show(record.songId, record.title) { onClick() }
-                },
-            ),
-    ) {
-        Box(modifier = Modifier.padding(4.dp)) {
-            Best50Tile(
-                record = record,
-                fullScore = fullScore,
-                rankNum = rank,
-                listSize = listSize,
-                version = version,
-                genre = genre,
-            )
+    // 弹层宿主必须与卡片同处一个布局节点：miuix ListPopupLayout 拿其内部隐形
+    // Spacer 的「父布局节点」当 anchor，平铺在 item 里时父节点会上溯到 LazyColumn，
+    // 菜单就不贴卡且左缘对齐 —— 包一层 Box 让父节点 = 卡片矩形（与曲目页同款）
+    Box(modifier = Modifier.fillMaxWidth()) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .kibaPressScale(interaction)
+                .combinedClickable(
+                    interactionSource = interaction,
+                    indication = null,
+                    onClick = onClick,
+                    onLongClick = {
+                        menu.show(record.songId, record.title) { onClick() }
+                    },
+                ),
+        ) {
+            Box(modifier = Modifier.padding(4.dp)) {
+                Best50Tile(
+                    record = record,
+                    fullScore = fullScore,
+                    rankNum = rank,
+                    listSize = listSize,
+                    version = version,
+                    genre = genre,
+                )
+            }
         }
+        SongCardMenuHost(menu)
     }
-    SongCardMenuHost(menu, centeredOnScreen = true)
 }
 
 /**

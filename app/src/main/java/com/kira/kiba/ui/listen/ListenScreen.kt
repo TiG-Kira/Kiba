@@ -46,8 +46,10 @@ import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.db.entity.PlaylistEntity
 import com.kira.kiba.core.db.entity.SongWithChartsEntity
 import com.kira.kiba.core.listen.AgentPlaylist
+import com.kira.kiba.core.listen.AgentPlaylistJobs
 import com.kira.kiba.core.listen.AgentPlaylistStore
 import com.kira.kiba.core.listen.SongDownloader
+import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
 import com.kira.kiba.core.listen.SongRecommender
 import com.kira.kiba.core.playback.SongPlaybackController
 import com.kira.kiba.core.repository.SongWithChartRepository
@@ -160,7 +162,6 @@ fun ListenScreen(
     val llmReady = remember { KibaLlm.isConfigured() }
     // 初值给空、读盘放到 LaunchedEffect：SP + JSON 解析不该占组合期的第一帧
     var agentHistory by remember { mutableStateOf<List<AgentPlaylistStore.Item>>(emptyList()) }
-    var agentRefreshing by remember { mutableStateOf(false) }
 
     // 旧版「只存最新一份」的歌单迁移进历史（按版本号只跑一次，内部幂等 + 全程兜底）
     LaunchedEffect(Unit) {
@@ -168,50 +169,50 @@ fun ListenScreen(
             .onFailure { android.util.Log.w("Listen", "legacy migrate failed: ${it.message}") }
         agentHistory = AgentPlaylistStore.load()
     }
+    // 双通道生成（听页 / Agent 对话）任意一条落盘后重载历史：busy 状态也在 jobs 里，
+    // 本页直接观察即可，不再自己拿局部变量锁生成（两通道互不互锁）
+    LaunchedEffect(AgentPlaylistJobs.revision) {
+        agentHistory = AgentPlaylistStore.load()
+    }
 
     // 过期自动续一张（间隔在设置页可调）；已有历史时只追加，不覆盖旧的
     LaunchedEffect(llmReady, songs.size) {
         if (llmReady && songs.isNotEmpty() && AgentPlaylist.isStale()) {
-            agentRefreshing = true
-            runCatching { AgentPlaylist.refreshWithProfile(context, songs, records, favoriteIds) }
-                .onFailure { android.util.Log.w("Listen", "agent playlist refresh failed: ${it.message}") }
+            AgentPlaylistJobs.startSmart(context, songs, records, favoriteIds)
             // 自动生成事件 = 一次天然的打扫时机：此刻不会有人在画封面，
             // 顺手把「没有任何歌单引用」的历史封面（含上次生成失败留下的半成品）全清掉。
             runCatching { AgentPlaylistStore.cleanupCovers(context) }
                 .onFailure { android.util.Log.w("Listen", "cover cleanup failed: ${it.message}") }
-            agentHistory = AgentPlaylistStore.load()
-            agentRefreshing = false
         }
     }
 
-    fun generateAgentPlaylist(requirement: String? = null) {
-        if (agentRefreshing) return
-        agentRefreshing = true
-        scope.launch {
-            val result = runCatching {
-                if (requirement.isNullOrBlank()) {
-                    AgentPlaylist.refreshWithProfile(context, songs, records, favoriteIds)
-                } else {
-                    AgentPlaylist.refreshWithRequirements(
-                        context, requirement.trim(), songs, records, favoriteIds,
-                    )
-                }
+    fun toastAgentResult(result: Result<AgentPlaylist.Saved>) {
+        result
+            .onSuccess {
+                Toast.makeText(context, "已生成并加入「Agent 专属歌单」", Toast.LENGTH_SHORT).show()
             }
-            result
-                .onSuccess {
-                    agentHistory = AgentPlaylistStore.load()
-                    Toast.makeText(context, "已生成并加入「Agent 专属歌单」", Toast.LENGTH_SHORT).show()
-                }
-                .onFailure { e ->
-                    Toast.makeText(context, "生成失败：${e.message}", Toast.LENGTH_SHORT).show()
-                }
-            agentRefreshing = false
+            .onFailure { e ->
+                Toast.makeText(context, "生成失败：${e.message}", Toast.LENGTH_SHORT).show()
+            }
+    }
+
+    fun generateAgentPlaylist(requirement: String? = null) {
+        if (requirement.isNullOrBlank()) {
+            AgentPlaylistJobs.startSmart(context, songs, records, favoriteIds, ::toastAgentResult)
+        } else {
+            AgentPlaylistJobs.startRequirement(
+                context, requirement, viaChat = false, songs, records, favoriteIds, ::toastAgentResult,
+            )
         }
     }
 
     // ── 按需求生成 Agent 歌单（输入要求弹窗）
     var showAgentRequirement by remember { mutableStateOf(false) }
     var agentRequirement by remember { mutableStateOf("") }
+
+    // ── 删除二次确认（清空全部 / 单张 Agent 歌单）──
+    var showClearAgentConfirm by remember { mutableStateOf(false) }
+    var agentDeleteTarget by remember { mutableStateOf<AgentPlaylistStore.Item?>(null) }
 
     // ── 新建歌单弹层
     var showCreatePlaylist by remember { mutableStateOf(false) }
@@ -451,7 +452,7 @@ fun ListenScreen(
                 item(key = "agent_generate") {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
-                        onClick = { if (!agentRefreshing) generateAgentPlaylist() },
+                        onClick = { generateAgentPlaylist() },
                         pressFeedbackType = PressFeedbackType.Sink,
                     ) {
                         Row(
@@ -469,7 +470,7 @@ fun ListenScreen(
                             Spacer(Modifier.width(12.dp))
                             Column(Modifier.weight(1f)) {
                                 Text(
-                                    text = if (agentRefreshing) "正在生成…" else "让 Agent 生成一张新歌单",
+                                    text = if (AgentPlaylistJobs.smartBusy) "正在生成…" else "让 Agent 生成一张新歌单",
                                     style = MiuixTheme.textStyles.body1,
                                     color = MiuixTheme.colorScheme.onSurface,
                                 )
@@ -479,13 +480,25 @@ fun ListenScreen(
                                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                                 )
                             }
+                            // 智能生成中：尾部加载动画（只跟智能通道，不互锁按需求通道）
+                            if (AgentPlaylistJobs.smartBusy) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    progress = null,
+                                )
+                            }
                         }
                     }
                 }
                 item(key = "agent_generate_requirement") {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
-                        onClick = { if (!agentRefreshing) { agentRequirement = ""; showAgentRequirement = true } },
+                        onClick = {
+                            if (!AgentPlaylistJobs.requirementBusy) {
+                                agentRequirement = ""
+                                showAgentRequirement = true
+                            }
+                        },
                         pressFeedbackType = PressFeedbackType.Sink,
                     ) {
                         Row(
@@ -503,7 +516,12 @@ fun ListenScreen(
                             Spacer(Modifier.width(12.dp))
                             Column(Modifier.weight(1f)) {
                                 Text(
-                                    text = if (agentRefreshing) "正在生成…" else "按你的要求生成歌单",
+                                    text = when {
+                                        AgentPlaylistJobs.requirementBusy && AgentPlaylistJobs.requirementViaChat ->
+                                            "正在通过对话生成歌单中"
+                                        AgentPlaylistJobs.requirementBusy -> "正在生成…"
+                                        else -> "按你的要求生成歌单"
+                                    },
                                     style = MiuixTheme.textStyles.body1,
                                     color = MiuixTheme.colorScheme.onSurface,
                                 )
@@ -511,6 +529,13 @@ fun ListenScreen(
                                     text = "写下要求，Agent 按要求选曲（点名曲师 / 流派 / 气氛都行）",
                                     style = MiuixTheme.textStyles.footnote2,
                                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                )
+                            }
+                            // 按需求通道生成中：尾部加载动画（与智能通道互不阻塞）
+                            if (AgentPlaylistJobs.requirementBusy) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    progress = null,
                                 )
                             }
                         }
@@ -534,11 +559,7 @@ fun ListenScreen(
                         )
                         TextButton(
                             text = "清空全部",
-                            onClick = {
-                                AgentPlaylistStore.clear()
-                                agentHistory = AgentPlaylistStore.load()
-                                Toast.makeText(context, "已清空全部 Agent 歌单", Toast.LENGTH_SHORT).show()
-                            },
+                            onClick = { showClearAgentConfirm = true },
                         )
                     }
                 }
@@ -547,11 +568,7 @@ fun ListenScreen(
                     AgentPlaylistEntry(
                         item = item,
                         onClick = { onOpenAgentPlaylist(item.id) },
-                        onDelete = {
-                            AgentPlaylistStore.delete(item)
-                            agentHistory = AgentPlaylistStore.load()
-                            Toast.makeText(context, "已删除「${item.name}」", Toast.LENGTH_SHORT).show()
-                        },
+                        onDelete = { agentDeleteTarget = item },
                     )
                 }
             } else if (llmReady) {
@@ -654,6 +671,58 @@ fun ListenScreen(
                         }
                         showAgentRequirement = false
                         generateAgentPlaylist(req)
+                    },
+                )
+            }
+        }
+    }
+
+    // ── 清空全部二次确认 ──
+    KibaGlassDialog(
+        show = showClearAgentConfirm,
+        title = "清空全部 Agent 歌单？",
+        summary = "将删除全部 ${agentHistory.size} 张歌单及其封面，不可撤销。",
+        onDismissRequest = { showClearAgentConfirm = false },
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+        ) {
+            TextButton(text = "取消", onClick = { showClearAgentConfirm = false })
+            Spacer(Modifier.width(12.dp))
+            TextButton(
+                text = "清空",
+                onClick = {
+                    showClearAgentConfirm = false
+                    AgentPlaylistStore.clear()
+                    agentHistory = AgentPlaylistStore.load()
+                    Toast.makeText(context, "已清空全部 Agent 歌单", Toast.LENGTH_SHORT).show()
+                },
+            )
+        }
+    }
+
+    // ── 单张歌单删除二次确认 ──
+    agentDeleteTarget?.let { target ->
+        KibaGlassDialog(
+            show = true,
+            title = "删除歌单？",
+            summary = "「${target.name}」将从历史歌单中移除，封面文件一并删除。不可撤销。",
+            onDismissRequest = { agentDeleteTarget = null },
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextButton(text = "取消", onClick = { agentDeleteTarget = null })
+                Spacer(Modifier.width(12.dp))
+                TextButton(
+                    text = "删除",
+                    onClick = {
+                        agentDeleteTarget = null
+                        AgentPlaylistStore.delete(target)
+                        agentHistory = AgentPlaylistStore.load()
+                        Toast.makeText(context, "已删除「${target.name}」", Toast.LENGTH_SHORT).show()
                     },
                 )
             }

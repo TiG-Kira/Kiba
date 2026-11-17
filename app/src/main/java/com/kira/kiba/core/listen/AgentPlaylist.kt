@@ -274,7 +274,9 @@ object AgentPlaylist {
             append("规则：\n")
             append("1. 只能从候选里选，数量 5~").append(max).append(" 首；\n")
             append("2. 兼顾口味延续与新鲜感：多数贴合画像，少量跳出舒适区；\n")
-            append("3. 每首给不超过 20 字的中文推荐理由；\n")
+            append("3. 每首给不超过 20 字的中文推荐理由；理由必须描述**这首曲子本身**：" )
+            append("结合它的标题 / 曲师 / 流派 / 节奏 / 气质来写，严禁把某首歌的介绍词张冠李戴到另一首不相关的歌上；")
+            append("输出前逐条复核 reasons 与 picks 一一对应（reasons[i] 说的是 picks[i] 那首），对不上的宁可重写；\n")
             append("4. 严格输出 JSON：{\"summary\":\"歌单一句话\",")
             append("\"cover\":{\"title\":\"封面主标题\",\"subtitle\":\"封面副标题\",\"mood\":\"情绪词\",\"tags\":[\"短标签\"]},")
             append("\"reasons\":[\"理由1\",\"理由2\",...],\"picks\":[1,2,...]}，")
@@ -324,6 +326,7 @@ object AgentPlaylist {
                             append("你上一次的输出无法解析（")
                             append(lastReason)
                             append("），已丢弃。请立刻重新生成一张专属歌单，")
+                            append("理由必须与所选曲目一一对应（reasons[i] 描述 picks[i] 那首，严禁张冠李戴），")
                             lastTheme?.let { append("整体气质与主题保持「$it」不变，") }
                             append("严格只输出符合规则的 JSON，不要输出 JSON 以外的任何内容。")
                         }))

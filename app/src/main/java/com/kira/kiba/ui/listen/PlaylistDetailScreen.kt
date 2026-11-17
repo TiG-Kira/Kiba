@@ -18,9 +18,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -52,6 +54,7 @@ import top.yukonga.miuix.kmp.utils.PressFeedbackType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.asFlow
 import kotlinx.coroutines.flow.firstOrNull
+import com.kira.kiba.ui.material.KibaGlassDialog
 
 /**
  * 歌单详情子页：歌单内歌曲管理（点歌即播 / 整单播放 / 移除 / 跳详情）。
@@ -68,6 +71,8 @@ fun PlaylistDetailScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val dao = remember { AppDataBase.getInstance().playlistDao() }
+    // 删除歌单二次确认：标题栏「删除歌单」不再直接删库，先弹窗确认不可撤销
+    var showDeleteConfirm by remember { mutableStateOf(false) }
 
     val playlist by produceState<com.kira.kiba.core.db.entity.PlaylistEntity?>(initialValue = null, playlistId) {
         value = withContext(Dispatchers.IO) { dao.getById(playlistId) }
@@ -138,13 +143,7 @@ fun PlaylistDetailScreen(
                                 Spacer(Modifier.width(12.dp))
                                 TextButton(
                                     text = "删除歌单",
-                                    onClick = {
-                                        scope.launch {
-                                            withContext(Dispatchers.IO) { dao.delete(playlistId) }
-                                            Toast.makeText(context, "歌单已删除", Toast.LENGTH_SHORT).show()
-                                            onBack()
-                                        }
-                                    },
+                                    onClick = { showDeleteConfirm = true },
                                 )
                             }
                         }
@@ -228,6 +227,35 @@ fun PlaylistDetailScreen(
                         }
                     }
                 }
+            }
+        }
+    }
+
+    // 删除歌单二次确认
+    if (showDeleteConfirm) {
+        KibaGlassDialog(
+            show = true,
+            title = "删除歌单",
+            summary = "「${playlist?.name ?: "该歌单"}」及其全部曲目记录将被删除，不可撤销。",
+            onDismissRequest = { showDeleteConfirm = false },
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextButton(text = "取消", onClick = { showDeleteConfirm = false })
+                Spacer(Modifier.width(12.dp))
+                TextButton(
+                    text = "删除",
+                    onClick = {
+                        showDeleteConfirm = false
+                        scope.launch {
+                            withContext(Dispatchers.IO) { dao.delete(playlistId) }
+                            Toast.makeText(context, "歌单已删除", Toast.LENGTH_SHORT).show()
+                            onBack()
+                        }
+                    },
+                )
             }
         }
     }

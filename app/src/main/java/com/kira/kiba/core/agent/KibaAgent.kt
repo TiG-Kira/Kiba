@@ -3,6 +3,7 @@ package com.kira.kiba.core.agent
 import android.content.Context
 import android.net.Uri
 import android.util.Log
+import android.widget.Toast
 import androidx.core.content.FileProvider
 import com.kira.kiba.core.account.DivingFishAccount
 import com.kira.kiba.core.utils.CacheCleaner
@@ -24,6 +25,7 @@ import com.kira.kiba.core.model.ChuniDiffType
 import com.kira.kiba.core.model.DifficultyType
 import com.kira.kiba.core.stats.ChuniPushRecommender
 import com.kira.kiba.core.stats.RecommendFusion
+import com.kira.kiba.core.listen.AgentPlaylistJobs
 import com.kira.kiba.core.listen.AgentPlaylistStore
 import com.kira.kiba.core.listen.PlaylistCover
 import com.kira.kiba.core.utils.SpUtil
@@ -276,6 +278,9 @@ class KibaAgent(private val context: Context) {
             }
             "today_kink" -> todayKink()
             "eat_what" -> eatWhat()
+            "generate_playlist" -> generatePlaylistChat(
+                args["requirement"] ?: args["requirement_text"] ?: fallbackText
+            )
             "playlist_cover" -> playlistCover(args)
             "web_search" -> webSearch(
                 args["query"] ?: args["q"] ?: args["keyword"] ?: fallbackText,
@@ -1830,6 +1835,40 @@ class KibaAgent(private val context: Context) {
     }
 
     /**
+     * 对话内生成 Agent 专属歌单（generate_playlist 工具）：异步发起，立即回执不阻塞对话。
+     *
+     * 与听页「按你的要求生成歌单」**共用同一条按需求通道**（[AgentPlaylistJobs]）：
+     * 对话发起期间听页按钮显示「正在通过对话生成歌单中」，通道忙时拒绝再次发起；
+     * 落盘成功 / 失败会弹 Toast（agent 无 UI 会话，用系统提示告知结果）。
+     */
+    private fun generatePlaylistChat(requirement: String): AgentReply {
+        val req = requirement.trim()
+        if (AgentPlaylistJobs.requirementBusy) {
+            return AgentReply(
+                "GENERATING_BUSY：已有一张歌单正在生成中（可能来自听页或上一轮对话），本次未发起。" +
+                    "请如实告诉用户稍等片刻，等它完成后再试；不要谎报已生成。",
+            )
+        }
+        if (req.isBlank()) {
+            return AgentReply(
+                "缺少生成要求。请用户先说说想要什么（曲师 / 流派 / 气氛 / 数量都行），或明确说「按我的口味挑」。",
+            )
+        }
+        AgentPlaylistJobs.startRequirement(context, req, viaChat = true) { result ->
+            result.onSuccess {
+                Toast.makeText(context, "专属歌单已生成，去「畅听 → Agent 专属歌单」查看", Toast.LENGTH_LONG).show()
+            }.onFailure { e ->
+                Toast.makeText(context, "歌单生成失败：${e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+        return AgentReply(
+            "GENERATING_STARTED：已按用户要求「$req」在后台发起歌单生成（异步，不影响继续对话）。" +
+                "生成约需十几秒到一分钟，完成时会弹 Toast，新歌单出现在「畅听 → Agent 专属歌单」。" +
+                "把「正在生成、稍后完成」如实转告用户即可；**此时歌单还没生成，不要编造歌单内容或曲目介绍**。",
+        )
+    }
+
+    /**
      * 歌单封面设计技能：把 Agent 填的文案套进 [PlaylistCover] 模板并落盘，
      * 结果写回 [AgentPlaylistStore]（列表缩略图 / 详情页大封面 / 顶栏大图都用这张）。
      *
@@ -2873,6 +2912,23 @@ class KibaAgent(private val context: Context) {
          * 查到的结果回灌后由模型总结给用户——不允许 agent 对 maimai 的事完全不知道。
          */
         private val LLM_ONLY_TOOLS = listOf(
+            AgentSkill(
+                "generate_playlist", "生成专属歌单",
+                "在对话中为用户生成一张 Agent 专属歌单（异步，完成后自动出现在「畅听」页的 Agent 专属歌单里，带封面）。" +
+                    "用户说「帮我生成一张歌单 / 按我说的做张歌单 / 推荐一批想听的」时调用。" +
+                    "requirement 填用户的要求原文（曲师 / 流派 / 气氛 / 数量）；没有明确要求就填「按我的口味挑」。" +
+                    "同一时刻只能生成一张：工具返回「已在生成中」时**不要再调**，如实告诉用户稍等即可，" +
+                    "**绝不能谎报歌单已生成完毕**；生成完成后会弹 Toast，不需要你再确认。" +
+                    "生成完用户想了解歌单时，先如实转述用户已知信息，介绍曲目时**介绍词必须对应该曲本身**" +
+                    "（标题 / 曲师 / 流派 / 气质），严禁把一首歌的介绍写到另一首不相关的歌上；不确定就说明不确定。",
+                params = listOf(
+                    KibaLlm.ToolParam(
+                        "requirement", "string",
+                        "用户的生成要求原文；没有明确要求填「按我的口味挑」",
+                        required = true,
+                    ),
+                ),
+            ),
             AgentSkill(
                 "memory", "长期记忆",
                 "跨会话记住关于用户的**稳定信息**：称呼、主玩游戏与主玩难度、常去的机厅城市、" +

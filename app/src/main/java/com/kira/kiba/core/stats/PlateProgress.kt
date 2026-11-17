@@ -77,13 +77,14 @@ object PlateProgress {
         val percentText: String get() = "${(fraction * 100).toInt()}%"
     }
 
-    /** 一个组的四牌总览（total = 组内谱面总数，各牌共用）。 */
+    /** 一个组的五牌总览（total = 组内谱面总数，各牌共用）。 */
     data class GroupSummary(
         val group: Group,
         val total: Int,
         val fc: Progress,
         val sss: Progress,
         val ap: Progress,
+        val fsd: Progress,
         val master: Progress,
     )
 
@@ -288,6 +289,7 @@ object PlateProgress {
                     fc = progressOf(PlateKind.FC),
                     sss = progressOf(PlateKind.SSS),
                     ap = progressOf(PlateKind.AP),
+                    fsd = progressOf(PlateKind.FSD),
                     master = progressOf(PlateKind.MASTER),
                 )
             }

@@ -426,14 +426,14 @@ fun PlateQueryScreen(
 
 /**
  * 版本进度总览卡（只展示当前选中版本）：大字牌子代号 + 版本名 + 谱面总数，
- * 下方分牌横向进度条（极 / 将 / 神，舞代另含霸者；真代无将），留白宽敞。
+ * 下方分牌横向进度条（极 / 将 / 神 / 舞舞，舞代另含霸者；真代无将），留白宽敞。
  */
 @Composable
 private fun OverviewCard(summary: PlateProgress.GroupSummary) {
     val group = summary.group
-    // 总览牌序：极 / 将 / 神（舞代另含霸者）；真代无将；舞舞不在总览内
+    // 总览牌序即 availablePlates 顺序：极 / 将 / 神 / 舞舞（舞代末尾追加霸者；真代无将）
     val overviewPlates = remember(group) {
-        group.availablePlates.filter { it != PlateKind.FSD }
+        group.availablePlates
     }
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -470,7 +470,7 @@ private fun OverviewCard(summary: PlateProgress.GroupSummary) {
                     PlateKind.SSS -> summary.sss
                     PlateKind.AP -> summary.ap
                     PlateKind.MASTER -> summary.master
-                    PlateKind.FSD -> summary.fc // 总览不含舞舞，兜底分支
+                    PlateKind.FSD -> summary.fsd
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
@@ -541,64 +541,69 @@ private fun PlateItemRow(
     val menu = rememberSongCardMenuState()
     val interaction = remember { MutableInteractionSource() }
     val done = item.isDone(plate)
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .kibaPressScale(interaction)
-            .combinedClickable(
-                interactionSource = interaction,
-                indication = null,
-                onClick = onClick,
-                onLongClick = {
-                    menu.show(item.song.id, item.song.title) { onClick() }
-                },
-            ),
-    ) {
-        Row(
+    // 弹层宿主必须与卡片同处一个布局节点：miuix ListPopupLayout 拿其内部隐形
+    // Spacer 的「父布局节点」当 anchor，平铺在 item 里时父节点会上溯到 LazyColumn，
+    // 菜单就不贴卡且左缘对齐 —— 包一层 Box 让父节点 = 卡片矩形（与曲目页同款）
+    Box(modifier = Modifier.fillMaxWidth()) {
+        Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
+                .kibaPressScale(interaction)
+                .combinedClickable(
+                    interactionSource = interaction,
+                    indication = null,
+                    onClick = onClick,
+                    onLongClick = {
+                        menu.show(item.song.id, item.song.title) { onClick() }
+                    },
+                ),
         ) {
-            CoverFrame(
-                songId = item.song.id,
-                imageUrl = item.song.imageUrl,
-                genre = item.song.genre,
-                size = 56.dp,
-                strokeColor = difficultyColor(item.chart.difficultyType),
-            )
-            Spacer(Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = item.song.title,
-                    style = MiuixTheme.textStyles.body1,
-                    color = MiuixTheme.colorScheme.onSurface,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                CoverFrame(
+                    songId = item.song.id,
+                    imageUrl = item.song.imageUrl,
+                    genre = item.song.genre,
+                    size = 56.dp,
+                    strokeColor = difficultyColor(item.chart.difficultyType),
                 )
-                Spacer(Modifier.height(4.dp))
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(5.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    InfoPill(difficultyLabel(item.chart.difficultyType))
-                    InfoPill("Lv.${item.chart.level}")
-                    InfoPill("定数 ${item.chart.ds}")
-                    if (plate == PlateKind.MASTER && item.record != null) {
-                        InfoPill("%.4f%%".format(item.record.achievements))
+                Spacer(Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = item.song.title,
+                        style = MiuixTheme.textStyles.body1,
+                        color = MiuixTheme.colorScheme.onSurface,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        InfoPill(difficultyLabel(item.chart.difficultyType))
+                        InfoPill("Lv.${item.chart.level}")
+                        InfoPill("定数 ${item.chart.ds}")
+                        if (plate == PlateKind.MASTER && item.record != null) {
+                            InfoPill("%.4f%%".format(item.record.achievements))
+                        }
                     }
                 }
-            }
-            Spacer(Modifier.width(8.dp))
-            // 右侧：已达成显示对应官方贴图，未达成显示灰色标记
-            if (done) {
-                PlateBadge(item = item, plate = plate, height = 30.dp)
-            } else {
-                UnplayedPill()
+                Spacer(Modifier.width(8.dp))
+                // 右侧：已达成显示对应官方贴图，未达成显示灰色标记
+                if (done) {
+                    PlateBadge(item = item, plate = plate, height = 30.dp)
+                } else {
+                    UnplayedPill()
+                }
             }
         }
+        SongCardMenuHost(menu)
     }
-    SongCardMenuHost(menu, centeredOnScreen = true)
 }
 
 /** 明细条目（网格）：封面铺满格子（难度描边）+ 底部 scrim + 牌子达成角标或「未达成」。 */
@@ -613,56 +618,61 @@ private fun PlateGridCell(
     // 长按菜单与列表行同款（SongCardMenuHost）
     val menu = rememberSongCardMenuState()
     val interaction = remember { MutableInteractionSource() }
-    BoxWithConstraints(
-        modifier = Modifier
-            .fillMaxWidth()
-            .aspectRatio(1f)
-            .kibaPressScale(interaction)
-            .clip(RoundedCornerShape(10.dp))
-            .combinedClickable(
-                interactionSource = interaction,
-                indication = null,
-                onClick = onClick,
-                onLongClick = {
-                    menu.show(item.song.id, item.song.title) { onClick() }
-                },
-            ),
-    ) {
-        // 封面铺满整个格子，描边按难度上色
-        CoverFrame(
-            songId = item.song.id,
-            imageUrl = item.song.imageUrl,
-            genre = item.song.genre,
-            size = maxWidth,
-            strokeColor = difficultyColor(item.chart.difficultyType),
-        )
-        // 底部轻 scrim，衬出角标
-        Box(
+    // 弹层宿主必须与卡片同处一个布局节点：miuix ListPopupLayout 拿其内部隐形
+    // Spacer 的「父布局节点」当 anchor，平铺在 item 里时父节点会上溯到 LazyColumn，
+    // 菜单就不贴卡且左缘对齐 —— 包一层 Box 让父节点 = 卡片矩形（与曲目页同款）
+    Box(modifier = Modifier.fillMaxWidth()) {
+        BoxWithConstraints(
             modifier = Modifier
-                .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .height(30.dp)
-                .background(
-                    Brush.verticalGradient(
-                        0f to Color.Transparent,
-                        1f to Color.Black.copy(alpha = 0.45f),
-                    )
+                .aspectRatio(1f)
+                .kibaPressScale(interaction)
+                .clip(RoundedCornerShape(10.dp))
+                .combinedClickable(
+                    interactionSource = interaction,
+                    indication = null,
+                    onClick = onClick,
+                    onLongClick = {
+                        menu.show(item.song.id, item.song.title) { onClick() }
+                    },
                 ),
-        )
-        // 角标：已达成显示对应官方贴图，未达成显示灰色标记
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(4.dp),
         ) {
-            if (item.isDone(plate)) {
-                PlateBadge(item = item, plate = plate, height = 20.dp)
-            } else {
-                UnplayedPill()
+            // 封面铺满整个格子，描边按难度上色
+            CoverFrame(
+                songId = item.song.id,
+                imageUrl = item.song.imageUrl,
+                genre = item.song.genre,
+                size = maxWidth,
+                strokeColor = difficultyColor(item.chart.difficultyType),
+            )
+            // 底部轻 scrim，衬出角标
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .height(30.dp)
+                    .background(
+                        Brush.verticalGradient(
+                            0f to Color.Transparent,
+                            1f to Color.Black.copy(alpha = 0.45f),
+                        )
+                    ),
+            )
+            // 角标：已达成显示对应官方贴图，未达成显示灰色标记
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(4.dp),
+            ) {
+                if (item.isDone(plate)) {
+                    PlateBadge(item = item, plate = plate, height = 20.dp)
+                } else {
+                    UnplayedPill()
+                }
             }
         }
+        SongCardMenuHost(menu)
     }
-    SongCardMenuHost(menu, centeredOnScreen = true)
 }
 
 /** 细进度条（与曲目页同步进度条同款视觉；颜色 / 粗细可调）。 */

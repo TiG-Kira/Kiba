@@ -322,7 +322,7 @@ fun MeScreen(
                         // 名牌进度：各版本极/将/神/舞舞总进度 + 霸者（旧框），EasyMai 牌子进度同源
                         ArrowPreference(
                             title = "名牌进度",
-                            summary = "各版本「极 / 将 / 神」总进度与霸者（旧框），按难度下钻未完成曲目",
+                            summary = "各版本「极 / 将 / 神 / 舞舞」总进度与霸者（旧框），按难度下钻未完成曲目",
                             startAction = { PrefIcon(MiuixGlassIcons.Regular.Album, com.kira.kiba.ui.common.KibaIconTint.ORANGE) },
                             onClick = onOpenPlateQuery,
                         )

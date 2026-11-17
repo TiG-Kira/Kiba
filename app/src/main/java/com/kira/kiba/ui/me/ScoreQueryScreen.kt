@@ -684,92 +684,97 @@ private fun RecordListCard(
     // 长按菜单（与曲目页 SongCard 同款：详情 / 复制歌名 / 播放 / 加入歌单）
     val menu = rememberSongCardMenuState()
     val interaction = remember { MutableInteractionSource() }
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .kibaPressScale(interaction)
-            .combinedClickable(
-                interactionSource = interaction,
-                indication = null,
-                onClick = onClick,
-                onLongClick = {
-                    menu.show(record.songId, songTitle ?: record.title) { onClick() }
-                },
-            ),
-    ) {
-        Row(
+    // 弹层宿主必须与卡片同处一个布局节点：miuix ListPopupLayout 拿其内部隐形
+    // Spacer 的「父布局节点」当 anchor，平铺在 item 里时父节点会上溯到 LazyColumn，
+    // 菜单就不贴卡且左缘对齐 —— 包一层 Box 让父节点 = 卡片矩形（与曲目页同款）
+    Box(modifier = Modifier.fillMaxWidth()) {
+        Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
+                .kibaPressScale(interaction)
+                .combinedClickable(
+                    interactionSource = interaction,
+                    indication = null,
+                    onClick = onClick,
+                    onLongClick = {
+                        menu.show(record.songId, songTitle ?: record.title) { onClick() }
+                    },
+                ),
         ) {
-            // 封面 + 左下角定数角标（难度色）
-            Box {
-                CoverFrame(
-                    songId = record.songId,
-                    imageUrl = "",
-                    genre = "",
-                    size = 64.dp,
-                    // 描边按难度上色：成绩查询是按「谱面」列，流派色无法区分是哪一档
-                    strokeColor = difficultyColor(difficultyOf(record.levelIndex)),
-                )
-                // 定数角标：覆盖在封面左下（EasyMai difficulty-badge）
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .clip(RoundedCornerShape(5.dp))
-                        .background(difficultyColor(difficultyOf(record.levelIndex)))
-                        .padding(horizontal = 4.dp, vertical = 1.dp),
-                ) {
-                    Text(
-                        text = "${record.ds}",
-                        style = MiuixTheme.textStyles.footnote2,
-                        color = Color.White,
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                // 封面 + 左下角定数角标（难度色）
+                Box {
+                    CoverFrame(
+                        songId = record.songId,
+                        imageUrl = "",
+                        genre = "",
+                        size = 64.dp,
+                        // 描边按难度上色：成绩查询是按「谱面」列，流派色无法区分是哪一档
+                        strokeColor = difficultyColor(difficultyOf(record.levelIndex)),
                     )
-                }
-            }
-            Spacer(Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = songTitle ?: record.title,
-                    style = MiuixTheme.textStyles.body1,
-                    color = MiuixTheme.colorScheme.onSurface,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(Modifier.height(4.dp))
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(5.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    InfoPill("%.4f%%".format(record.achievements))
-                    // 水鱼对未定数新曲（level 带「?」）返回 ra = 0，显示为「-」更优雅
-                    InfoPill(if (record.ra > 0) "RA ${record.ra}" else "RA -")
-                    InfoPill(difficultyLabel(difficultyOf(record.levelIndex)) + " ${record.level}")
-                    // FC/FS 状态贴图（与 B50 / 网格角标同一套官方贴图资源）
-                    if (record.fc.isNotBlank() && record.fc != "none") {
-                        Box(modifier = Modifier.height(18.dp), contentAlignment = Alignment.Center) {
-                            ComboBadge(fc = record.fc, height = 18.dp)
-                        }
-                    }
-                    if (record.fs.isNotBlank() && record.fs != "none") {
-                        Box(modifier = Modifier.height(18.dp), contentAlignment = Alignment.Center) {
-                            SyncBadge(fs = record.fs, height = 18.dp)
-                        }
+                    // 定数角标：覆盖在封面左下（EasyMai difficulty-badge）
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .clip(RoundedCornerShape(5.dp))
+                            .background(difficultyColor(difficultyOf(record.levelIndex)))
+                            .padding(horizontal = 4.dp, vertical = 1.dp),
+                    ) {
+                        Text(
+                            text = "${record.ds}",
+                            style = MiuixTheme.textStyles.footnote2,
+                            color = Color.White,
+                        )
                     }
                 }
-            }
-            Spacer(Modifier.width(8.dp))
-            // 右侧评级：未游玩显示「未游玩」标记（与真 D 0.0000% 的 D 贴图区分）
-            if (unplayed) {
-                UnplayedBadge()
-            } else {
-                RankBadge(rate = record.rate, height = 30.dp)
+                Spacer(Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = songTitle ?: record.title,
+                        style = MiuixTheme.textStyles.body1,
+                        color = MiuixTheme.colorScheme.onSurface,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        InfoPill("%.4f%%".format(record.achievements))
+                        // 水鱼对未定数新曲（level 带「?」）返回 ra = 0，显示为「-」更优雅
+                        InfoPill(if (record.ra > 0) "RA ${record.ra}" else "RA -")
+                        InfoPill(difficultyLabel(difficultyOf(record.levelIndex)) + " ${record.level}")
+                        // FC/FS 状态贴图（与 B50 / 网格角标同一套官方贴图资源）
+                        if (record.fc.isNotBlank() && record.fc != "none") {
+                            Box(modifier = Modifier.height(18.dp), contentAlignment = Alignment.Center) {
+                                ComboBadge(fc = record.fc, height = 18.dp)
+                            }
+                        }
+                        if (record.fs.isNotBlank() && record.fs != "none") {
+                            Box(modifier = Modifier.height(18.dp), contentAlignment = Alignment.Center) {
+                                SyncBadge(fs = record.fs, height = 18.dp)
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.width(8.dp))
+                // 右侧评级：未游玩显示「未游玩」标记（与真 D 0.0000% 的 D 贴图区分）
+                if (unplayed) {
+                    UnplayedBadge()
+                } else {
+                    RankBadge(rate = record.rate, height = 30.dp)
+                }
             }
         }
+        SongCardMenuHost(menu)
     }
-    SongCardMenuHost(menu, centeredOnScreen = true)
 }
 
 // ── 网格封面格子（EasyMai grid 视图：封面为格子本体 + 角标，封面必须显示）──
@@ -786,64 +791,69 @@ private fun GridCoverCell(
     // 网格格子是自拼 clickable（不是 miuix Card），按压反馈靠 kibaPressScale 补；
     // 长按菜单与列表卡同款（SongCardMenuHost）
     val menu = rememberSongCardMenuState()
-    val interaction = remember { MutableInteractionSource() }
-    androidx.compose.foundation.layout.BoxWithConstraints(
-        modifier = Modifier
-            .fillMaxWidth()
-            .aspectRatio(1f)
-            .kibaPressScale(interaction)
-            .clip(RoundedCornerShape(10.dp))
-            .combinedClickable(
-                interactionSource = interaction,
-                indication = null,
-                onClick = onClick,
-                onLongClick = {
-                    menu.show(record.songId, song?.title ?: record.title) { onClick() }
-                },
-            ),
-    ) {
-        // 封面铺满整个格子，描边按难度上色（与列表卡口径一致）
-        CoverFrame(
-            songId = record.songId,
-            imageUrl = song?.imageUrl ?: "",
-            genre = song?.genre ?: "",
-            size = maxWidth,
-            strokeColor = difficultyColor(difficultyOf(record.levelIndex)),
-        )
-        // 底部轻 scrim，衬出角标
-        Box(
+    // 弹层宿主必须与卡片同处一个布局节点：miuix ListPopupLayout 拿其内部隐形
+    // Spacer 的「父布局节点」当 anchor，平铺在 item 里时父节点会上溯到 LazyColumn，
+    // 菜单就不贴卡且左缘对齐 —— 包一层 Box 让父节点 = 卡片矩形（与曲目页同款）
+    Box(modifier = Modifier.fillMaxWidth()) {
+        val interaction = remember { MutableInteractionSource() }
+        androidx.compose.foundation.layout.BoxWithConstraints(
             modifier = Modifier
-                .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .height(34.dp)
-                .background(
-                    Brush.verticalGradient(
-                        0f to Color.Transparent,
-                        1f to Color.Black.copy(alpha = 0.45f),
-                    )
+                .aspectRatio(1f)
+                .kibaPressScale(interaction)
+                .clip(RoundedCornerShape(10.dp))
+                .combinedClickable(
+                    interactionSource = interaction,
+                    indication = null,
+                    onClick = onClick,
+                    onLongClick = {
+                        menu.show(record.songId, song?.title ?: record.title) { onClick() }
+                    },
                 ),
-        )
-        // 角标（评级 / FC / FS / RA，EasyMai iconDisplay 四态）
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(4.dp),
         ) {
-            when {
-                // 未游玩：无论角标显示模式都显示「未游玩」标记
-                unplayed -> UnplayedBadge()
-                iconDisplay == "fc" -> ComboBadge(fc = record.fc, height = 20.dp)
-                iconDisplay == "fs" -> SyncBadge(fs = record.fs, height = 20.dp)
-                iconDisplay == "ra" -> Text(
-                    text = if (record.ra > 0) "${record.ra}" else "-",
-                    style = MiuixTheme.textStyles.footnote1,
-                    color = Color.White,
-                )
-                else -> RankBadge(rate = record.rate, height = 22.dp)
+            // 封面铺满整个格子，描边按难度上色（与列表卡口径一致）
+            CoverFrame(
+                songId = record.songId,
+                imageUrl = song?.imageUrl ?: "",
+                genre = song?.genre ?: "",
+                size = maxWidth,
+                strokeColor = difficultyColor(difficultyOf(record.levelIndex)),
+            )
+            // 底部轻 scrim，衬出角标
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .height(34.dp)
+                    .background(
+                        Brush.verticalGradient(
+                            0f to Color.Transparent,
+                            1f to Color.Black.copy(alpha = 0.45f),
+                        )
+                    ),
+            )
+            // 角标（评级 / FC / FS / RA，EasyMai iconDisplay 四态）
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(4.dp),
+            ) {
+                when {
+                    // 未游玩：无论角标显示模式都显示「未游玩」标记
+                    unplayed -> UnplayedBadge()
+                    iconDisplay == "fc" -> ComboBadge(fc = record.fc, height = 20.dp)
+                    iconDisplay == "fs" -> SyncBadge(fs = record.fs, height = 20.dp)
+                    iconDisplay == "ra" -> Text(
+                        text = if (record.ra > 0) "${record.ra}" else "-",
+                        style = MiuixTheme.textStyles.footnote1,
+                        color = Color.White,
+                    )
+                    else -> RankBadge(rate = record.rate, height = 22.dp)
+                }
             }
         }
+        SongCardMenuHost(menu)
     }
-    SongCardMenuHost(menu, centeredOnScreen = true)
 }
 
 /** 「未游玩」标记：无成绩谱面按 D（0.0000%）参与筛选排序，但显示上与真 D 区分。 */

@@ -1,7 +1,6 @@
 package com.kira.kiba.ui.common
 
 import android.widget.Toast
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -19,10 +18,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.IntRect
-import androidx.compose.ui.unit.IntSize
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.kira.kiba.core.db.AppDataBase
 import com.kira.kiba.core.db.entity.PlaylistEntity
@@ -39,7 +34,6 @@ import top.yukonga.miuix.kmp.basic.DropdownItem
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.ListPopupColumn
 import top.yukonga.miuix.kmp.basic.ListPopupDefaults
-import top.yukonga.miuix.kmp.basic.PopupPositionProvider
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 // 通配符导入：Regular.Info / Regular.Copy 等为同包扩展属性，单导入 MiuixGlassIcons 无法解析
@@ -87,42 +81,16 @@ class SongCardMenuState {
 fun rememberSongCardMenuState(): SongCardMenuState = remember { SongCardMenuState() }
 
 /**
- * 居中弹层定位器：忽略锚点位置，把弹层固定在窗口安全区域正中。
- *
- * Best 50 / 成绩查询 / 名牌进度页的卡片是全宽整行，且弹层宿主就写在每张卡片后面
- * （anchor 会落在卡片下缘左角），贴着锚点弹出既盖住相邻内容又位置突兀——
- * 这些页面统一传 `centeredOnScreen = true` 改走此定位器；曲目页保持贴卡弹出的原行为。
- */
-private object CenteredPopupPositionProvider : PopupPositionProvider {
-    override fun calculatePosition(
-        anchorBounds: IntRect,
-        windowBounds: IntRect,
-        layoutDirection: LayoutDirection,
-        popupContentSize: IntSize,
-        popupMargin: IntRect,
-        alignment: PopupPositionProvider.Align,
-    ): IntOffset = IntOffset(
-        x = windowBounds.left + (windowBounds.width - popupContentSize.width) / 2,
-        y = windowBounds.top + (windowBounds.height - popupContentSize.height) / 2,
-    )
-
-    override fun getMargins(): PaddingValues = PaddingValues(0.dp)
-}
-
-/**
  * 歌曲长按菜单宿主：渲染 miuix [OverlayListPopup] 小菜单 + 「加入歌单」弹层。
  *
  * 四项操作（与曲目页 SongCard 同款）：
  * 显示歌曲详情 / 复制歌曲名 / 播放歌曲 / 加入歌单；
  * [includePlayAndPlaylist] = false 时只保留前两项（中二节奏无本地播放与歌单）。
- * [centeredOnScreen] = true 时弹层固定在屏幕中间，不跟随卡片锚点
- * （Best 50 / 成绩查询 / 名牌进度等全宽卡片页用）。
  */
 @Composable
 fun SongCardMenuHost(
     menu: SongCardMenuState,
     includePlayAndPlaylist: Boolean = true,
-    centeredOnScreen: Boolean = false,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -156,9 +124,7 @@ fun SongCardMenuHost(
     OverlayListPopup(
         show = menu.visible,
         onDismissRequest = { menu.visible = false },
-        popupPositionProvider =
-            if (centeredOnScreen) CenteredPopupPositionProvider
-            else ListPopupDefaults.DropdownPositionProvider,
+        popupPositionProvider = ListPopupDefaults.DropdownPositionProvider,
     ) {
         val actions = buildList {
             add(
