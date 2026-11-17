@@ -482,7 +482,7 @@ private fun Best50TileCard(
             )
         }
     }
-    SongCardMenuHost(menu)
+    SongCardMenuHost(menu, centeredOnScreen = true)
 }
 
 /**

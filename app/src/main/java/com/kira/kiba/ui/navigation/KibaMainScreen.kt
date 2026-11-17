@@ -2,8 +2,11 @@ package com.kira.kiba.ui.navigation
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedContentScope
 import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -38,10 +41,21 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.painter.BitmapPainter
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.lerp
+import androidx.compose.ui.util.lerp
+import androidx.compose.ui.zIndex
+import androidx.compose.foundation.shape.RoundedCornerShape
 import com.kira.kiba.core.data.ChuniRecordSync
 import com.kira.kiba.core.data.ChuniSongSync
 import com.kira.kiba.core.data.SongDataSync
@@ -129,8 +143,6 @@ import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
 import top.yukonga.miuix.kmp.icon.glass.*
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.painter.BitmapPainter
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.toBitmap
 import com.kira.kiba.R
@@ -426,6 +438,106 @@ private val GLASS_NAV_HEIGHT = 54.dp
  */
 private val TabSwitchEasing = CubicBezierEasing(0.22f, 0.85f, 0.16f, 1f)
 
+/** 卡片展开 / 播放页上拉的缓动：强调减速曲线（快起步、缓落点），非线性。 */
+private val ExpandDecelerateEasing = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f)
+
+/** 卡片收缩 / 播放页下沉的缓动：强调加速曲线（快起步、干脆离场），非线性。 */
+private val ExpandAccelerateEasing = CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f)
+
+/**
+ * 曲目详情页的「卡片展开式」转场容器（高级动画，评分 > 40 分才启用）。
+ *
+ * - push（navForward=true）：详情页从触发它的曲目卡片矩形非线性展开到全屏；
+ * - pop 回列表：详情页从全屏非线性收缩回卡片矩形；
+ * - 子页↔子页（详情内再进谱面详情 / 预览 / 播放页）：进度恒 1，不重复动画；
+ *   pop 从其他子页回到详情：进度恒 1，也不重复动画；
+ * - TopBar 动画由转场 spec 侧置为瞬时切换，避免与本几何动画叠加。
+ *
+ * 实现要点：进度用实例级 [Animatable] 自管，而不是挂在 AnimatedContent 的转场上
+ * （内容 lambda 里的 `transition` 是子转场 Transition<EnterExitState>，语义不对，
+ * 且父转场结束就会卸载退场内容、把自管动画掐死）。为了让收缩动画能播完，
+ * cardShrinkOut 分支的退场 spec 用「零位移占位 slideOut」把转场时钟撑到 400ms；
+ * 详情退场收缩期间由调用方传入的 isActive/shrinkOnExit 判定并 zIndex 压顶。
+ *
+ * @param sourceRect    触发进入的卡片窗口矩形（展开/收缩的目标位置）
+ * @param enteredByPush 首次组合时的 push 方向快照（只在 remember 初始化里读一次）
+ * @param isActive      本页当前是否处于返回栈顶
+ * @param shrinkOnExit  退场目的地是否是列表（subStack 已空 → 回到 Tab）
+ */
+@Composable
+private fun AnimatedContentScope.SongDetailExpandHost(
+    sourceRect: Rect?,
+    enteredByPush: Boolean,
+    isActive: Boolean,
+    shrinkOnExit: Boolean,
+    content: @Composable () -> Unit,
+) {
+    if (sourceRect == null || !KibaMotion.advancedAnimationsEnabled) {
+        content()
+        return
+    }
+    // push 进入 → 从 0 起步展开；pop 回到本页（返回恢复）→ 直接满屏，不重播动画
+    val progress = remember { Animatable(if (enteredByPush) 0f else 1f) }
+    // 收缩退场（回列表）时压在目标页之上，否则收缩中的详情页会被下层页面盖住
+    val onTop = !isActive && shrinkOnExit
+    LaunchedEffect(isActive, shrinkOnExit) {
+        when {
+            // 成为栈顶：展开到位。push 时从 0 走到 1；pop 回到本页时已在 1，空转
+            isActive -> progress.animateTo(
+                1f,
+                tween(KibaMotion.millis(420), easing = ExpandDecelerateEasing),
+            )
+            // 退回列表：从 1 收缩到 0（卡片矩形）
+            shrinkOnExit -> progress.animateTo(
+                0f,
+                tween(KibaMotion.millis(360), easing = ExpandAccelerateEasing),
+            )
+            // 进了别的子页：保持满屏（进度不动），等下次要么恢复要么淡出
+        }
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .zIndex(if (onTop) 1f else 0f),
+    ) {
+        // 容器矩形存 state、在 graphicsLayer（绘制期）里读：顶栏塌缩每帧改变容器
+        // 位置时只触发下一帧重算几何，不触发重组
+        val containerRect = remember { mutableStateOf<Rect?>(null) }
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .onGloballyPositioned { containerRect.value = it.boundsInWindow() }
+                .graphicsLayer {
+                    val cb = containerRect.value
+                    val p = progress.value
+                    if (cb == null || cb.width <= 0f || cb.height <= 0f || p >= 1f) {
+                        // 无几何或动画已完成：原样满屏渲染
+                        alpha = 1f
+                        return@graphicsLayer
+                    }
+                    alpha = if (onTop) {
+                        // 收缩末段快速淡出，避免缩到卡片矩形瞬间消失的突兀感
+                        (p / 0.12f).coerceIn(0f, 1f)
+                    } else {
+                        // 展开初期快速淡入，避免缩放中的页面文字刺眼
+                        (p * 2.5f).coerceIn(0f, 1f)
+                    }
+                    val sx = (sourceRect.width / cb.width).coerceAtLeast(0.01f)
+                    val sy = (sourceRect.height / cb.height).coerceAtLeast(0.01f)
+                    transformOrigin = TransformOrigin(0f, 0f)
+                    scaleX = lerp(sx, 1f, p)
+                    scaleY = lerp(sy, 1f, p)
+                    translationX = lerp(sourceRect.left - cb.left, 0f, p)
+                    translationY = lerp(sourceRect.top - cb.top, 0f, p)
+                    clip = true
+                    shape = RoundedCornerShape(lerp(20.dp, 0.dp, p))
+                },
+        ) {
+            content()
+        }
+    }
+}
+
 @Composable
 fun KibaMainScreen() {
     val context = LocalContext.current
@@ -444,6 +556,9 @@ fun KibaMainScreen() {
     var subStack by remember { mutableStateOf<List<KibaSubPage>>(emptyList()) }
     // 导航方向：true=前进入栈，false=后退出栈（驱动页面切换动画方向）
     var navForward by remember { mutableStateOf(true) }
+    // 本次 push 携带的曲目卡片矩形（卡片 onClick 时 offer、pushPage 里 take）：
+    // 非空且评分达标时详情页做卡片展开式转场；其他入口 push 取到 null，同时清掉陈旧值
+    var expandSourceRect by remember { mutableStateOf<Rect?>(null) }
     // 出发时刻顶栏是否已收窄（resetTopBar 前抓快照）：收窄态出发的顶栏转场跳过下沉动画
     var topBarWasCollapsed by remember { mutableStateOf(false) }
 
@@ -549,6 +664,9 @@ fun KibaMainScreen() {
 
     fun pushPage(page: KibaSubPage) {
         navForward = true
+        // 卡片点击路径会在 push 前上报卡片矩形：这里一次性取走（其他入口取到 null，
+        // 同时把上一次展开残留的矩形清掉，不会误用到本次）
+        expandSourceRect = PageTransitionSource.take()
         // 在 reset 前抓出发页顶栏是否已收窄：收窄态出发的转场不做下沉动画
         // （收窄态高度与展开态差异大，强行下沉会出现大标题残影跳变，用户实测反馈）
         // 液态玻璃顶栏高度恒定、不靠收缩，不存在「大标题残影」问题，
@@ -699,7 +817,23 @@ fun KibaMainScreen() {
                       }
                       val initialTab = initialState as? KibaTab
                       val targetTab = targetState as? KibaTab
+                      // 曲目卡片展开/收缩转场：顶栏动画置为瞬时切换，避免与
+                      // 详情页自身的几何动画叠加变难看（播放页上拉不在此列，
+                      // 顶栏下沉是既有设计）
+                      val cardExpandTransition =
+                          KibaMotion.advancedAnimationsEnabled &&
+                              expandSourceRect != null &&
+                              ((navForward &&
+                                  (targetState is KibaSubPage.SongDetail ||
+                                      targetState is KibaSubPage.ChuniSongDetail)) ||
+                                  (!navForward &&
+                                      (initialState is KibaSubPage.SongDetail ||
+                                          initialState is KibaSubPage.ChuniSongDetail) &&
+                                      targetState is KibaTab))
                       when {
+                          // 卡片展开/收缩：顶栏瞬时切换，不参与几何动画
+                          cardExpandTransition ->
+                              fadeIn(tween(1)).togetherWith(fadeOut(tween(1)))
                           // 收窄态出发：直接切换不做下沉（大标题从收窄态强行展开会残影跳变）
                           topBarWasCollapsed ->
                               fadeIn(tween(1)).togetherWith(fadeOut(tween(1)))
@@ -1091,11 +1225,30 @@ fun KibaMainScreen() {
                   AnimatedContent(
                       targetState = subStack.lastOrNull() ?: selectedTab,
                       transitionSpec = {
-                          val initialTab = initialState as? KibaTab
-                          val targetTab = targetState as? KibaTab
-                          val isSub = targetState is KibaSubPage
-                          val forward = navForward
-                          if (initialTab != null && targetTab != null) {
+                      val initialTab = initialState as? KibaTab
+                      val targetTab = targetState as? KibaTab
+                      val isSub = targetState is KibaSubPage
+                      val forward = navForward
+                      // 高级转场闸门：评分 > 40 分才启用卡片展开 / 播放页上拉；
+                      // 低分机（或无卡片来源矩形）全部回落到普通位移+淡切分支
+                      val advancedAnim = KibaMotion.advancedAnimationsEnabled
+                      // 展开：进曲目详情（舞萌/中二）且本次 push 来自歌曲卡片点击
+                      val cardExpandIn = forward && advancedAnim &&
+                          expandSourceRect != null &&
+                          (targetState is KibaSubPage.SongDetail ||
+                              targetState is KibaSubPage.ChuniSongDetail)
+                      // 收缩：从曲目详情返回列表（目标回到 Tab 才收缩，子页↔子页保持淡切）
+                      val cardShrinkOut = !forward && advancedAnim &&
+                          expandSourceRect != null && targetTab != null &&
+                          (initialState is KibaSubPage.SongDetail ||
+                              initialState is KibaSubPage.ChuniSongDetail)
+                      // 上拉：进音乐播放页（任何入口，无需来源矩形）
+                      val playerPullUp = forward && advancedAnim &&
+                          targetState is KibaSubPage.SongPlayer
+                      // 下沉：从音乐播放页返回
+                      val playerSinkOut = !forward && advancedAnim &&
+                          initialState is KibaSubPage.SongPlayer
+                      if (initialTab != null && targetTab != null) {
                               // +1 = 目标在右侧（页面向左推），-1 = 目标在左侧（页面向右推）
                               val direction = if (targetTab.ordinal > initialTab.ordinal) 1 else -1
                               (slideInHorizontally(
@@ -1113,6 +1266,42 @@ fun KibaMainScreen() {
                                           ),
                                           targetOffsetX = { full -> -full * direction },
                                       ) + fadeOut(tween(KibaMotion.millis(200))),
+                                  )
+                          } else if (cardExpandIn) {
+                              // 卡片展开：详情页几何由 SongDetailExpandHost 的 Animatable 驱动；
+                              // enter 用「零位移占位 slideIn」撑起 420ms 转场窗口让展开走完
+                              slideInVertically(
+                                  tween(KibaMotion.millis(420), easing = ExpandDecelerateEasing),
+                              ) { 0 }
+                                  .togetherWith(fadeOut(tween(KibaMotion.millis(240))))
+                          } else if (cardShrinkOut) {
+                              // 卡片收缩：下层列表页照常淡入+轻推；退场详情页用「微位移占位」
+                              // slideOut 撑住转场时钟 —— 父转场一旦结束就会卸载退场内容，
+                              // Animatable 驱动的收缩动画会被掐断。位移必须非零：
+                              // 0→0 的动画会被瞬间判定完成（实测退场内容被立即卸载），
+                              // 全屏的 1/200（≈14px）肉眼不可见但足以让时钟走满 400ms
+                              (fadeIn(tween(KibaMotion.millis(200))) +
+                                  slideInHorizontally(tween(KibaMotion.millis(240))) { it / 8 })
+                                  .togetherWith(
+                                      slideOutVertically(
+                                          tween(KibaMotion.millis(400), easing = ExpandAccelerateEasing),
+                                      ) { it / 200 }
+                                  )
+                          } else if (playerPullUp) {
+                              // 播放页从屏幕底部非线性上拉盖到全屏，旧页原地保留被覆盖
+                              slideInVertically(
+                                  tween(KibaMotion.millis(420), easing = ExpandDecelerateEasing),
+                              ) { it }
+                                  .togetherWith(ExitTransition.None)
+                          } else if (playerSinkOut) {
+                              // 播放页向屏幕底部下沉退场，下层页面淡入+轻推补位
+                              // （播放页压顶由内容分支的 zIndex 保证）
+                              (fadeIn(tween(KibaMotion.millis(200))) +
+                                  slideInHorizontally(tween(KibaMotion.millis(240))) { it / 8 })
+                                  .togetherWith(
+                                      slideOutVertically(
+                                          tween(KibaMotion.millis(380), easing = ExpandAccelerateEasing),
+                                      ) { it }
                                   )
                           } else if (isSub) {
                               if (forward) {
@@ -1139,18 +1328,38 @@ fun KibaMainScreen() {
                       pageStateHolder.SaveableStateProvider(pageKey(target)) {
                           when (target) {
                               is KibaSubPage -> when (target) {
-                              is KibaSubPage.SongDetail -> SongDetailScreen(
-                                  songId = target.songId,
-                                  scrollBehavior = scrollBehavior,
-                                  onOpenChart = { songId, difficultyOrdinal ->
-                                      pushPage(KibaSubPage.ChartDetail(songId, difficultyOrdinal))
-                                  },
-                                  onOpenPlayer = { pushPage(KibaSubPage.SongPlayer) },
-                              )
-                              is KibaSubPage.SongPlayer -> SongPlayerScreen(
-                                  scrollBehavior = scrollBehavior,
-                                  onBack = { popPage() },
-                              )
+                              is KibaSubPage.SongDetail -> SongDetailExpandHost(
+                                  sourceRect = expandSourceRect,
+                                  enteredByPush = navForward,
+                                  isActive = subStack.lastOrNull() == target,
+                                  shrinkOnExit = subStack.isEmpty(),
+                              ) {
+                                  SongDetailScreen(
+                                      songId = target.songId,
+                                      scrollBehavior = scrollBehavior,
+                                      onOpenChart = { songId, difficultyOrdinal ->
+                                          pushPage(KibaSubPage.ChartDetail(songId, difficultyOrdinal))
+                                      },
+                                      onOpenPlayer = { pushPage(KibaSubPage.SongPlayer) },
+                                  )
+                              }
+                              is KibaSubPage.SongPlayer -> {
+                                  // 返回下沉时播放页必须压在下层页面之上，否则
+                                  // 一返回就被目标页盖住，下沉动画看不见
+                                  // （注意不能用 AnimatedVisibilityScope.transition 判方向，
+                                  //  那是子转场 Transition<EnterExitState>，与页面无关）
+                                  val playerOnTop = subStack.lastOrNull() != target
+                                  Box(
+                                      modifier = Modifier
+                                          .fillMaxSize()
+                                          .zIndex(if (playerOnTop) 1f else 0f),
+                                  ) {
+                                      SongPlayerScreen(
+                                          scrollBehavior = scrollBehavior,
+                                          onBack = { popPage() },
+                                      )
+                                  }
+                              }
                               is KibaSubPage.ChartDetail -> ChartDetailScreen(
                                   songId = target.songId,
                                   difficultyOrdinal = target.difficultyOrdinal,
@@ -1167,13 +1376,20 @@ fun KibaMainScreen() {
                                   songImageUrl = target.songImageUrl,
                                   onBack = { popPage() },
                               )
-                              is KibaSubPage.ChuniSongDetail -> ChuniSongDetailScreen(
-                                  songId = target.songId,
-                                  scrollBehavior = scrollBehavior,
-                                  onOpenChart = { songId, difficultyOrdinal ->
-                                      pushPage(KibaSubPage.ChuniChartDetail(songId, difficultyOrdinal))
-                                  },
-                              )
+                              is KibaSubPage.ChuniSongDetail -> SongDetailExpandHost(
+                                  sourceRect = expandSourceRect,
+                                  enteredByPush = navForward,
+                                  isActive = subStack.lastOrNull() == target,
+                                  shrinkOnExit = subStack.isEmpty(),
+                              ) {
+                                  ChuniSongDetailScreen(
+                                      songId = target.songId,
+                                      scrollBehavior = scrollBehavior,
+                                      onOpenChart = { songId, difficultyOrdinal ->
+                                          pushPage(KibaSubPage.ChuniChartDetail(songId, difficultyOrdinal))
+                                      },
+                                  )
+                              }
                               is KibaSubPage.ChuniChartDetail -> ChuniChartDetailScreen(
                                   songId = target.songId,
                                   difficultyOrdinal = target.difficultyOrdinal,

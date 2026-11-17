@@ -769,7 +769,7 @@ private fun RecordListCard(
             }
         }
     }
-    SongCardMenuHost(menu)
+    SongCardMenuHost(menu, centeredOnScreen = true)
 }
 
 // ── 网格封面格子（EasyMai grid 视图：封面为格子本体 + 角标，封面必须显示）──
@@ -843,7 +843,7 @@ private fun GridCoverCell(
             }
         }
     }
-    SongCardMenuHost(menu)
+    SongCardMenuHost(menu, centeredOnScreen = true)
 }
 
 /** 「未游玩」标记：无成绩谱面按 D（0.0000%）参与筛选排序，但显示上与真 D 区分。 */

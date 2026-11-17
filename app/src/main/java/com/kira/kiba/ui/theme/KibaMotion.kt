@@ -27,13 +27,24 @@ object KibaMotion {
     /** 动画下限分：低于此分彻底关掉装饰性动画（与材质门槛 PASS_SCORE=55 分开）。 */
     const val ANIMATION_FLOOR_SCORE = 15
 
+    /**
+     * 高级转场动画门槛：高于此分才启用卡片展开 / 播放页上拉这类
+     * 逐帧重绘的大面积几何动画（低端机跑不动，回退普通位移+淡切）。
+     */
+    const val ADVANCED_ANIMATION_FLOOR_SCORE = 40
+
     /** 当前是否允许装饰性动画。 */
     var animationsEnabled by mutableStateOf(true)
+        private set
+
+    /** 当前是否允许高级转场动画（卡片展开 / 播放页上拉）。 */
+    var advancedAnimationsEnabled by mutableStateOf(true)
         private set
 
     /** 用设备评分同步闸门（MainActivity 启动 / 设置页重新评分后调用）。 */
     fun syncFromScore(score: Int) {
         animationsEnabled = score >= ANIMATION_FLOOR_SCORE
+        advancedAnimationsEnabled = score > ADVANCED_ANIMATION_FLOOR_SCORE
     }
 
     /** 动画时长：关闭时返回 0（tween(0) 会在下一帧直接落终值）。 */

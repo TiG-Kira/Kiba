@@ -9,9 +9,14 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.kira.kiba.core.db.entity.ChuniSongWithCharts
@@ -22,6 +27,7 @@ import com.kira.kiba.ui.common.chuniDifficultyColor
 import com.kira.kiba.ui.common.chuniDifficultyLabel
 import com.kira.kiba.ui.common.kibaPressScale
 import com.kira.kiba.ui.common.rememberSongCardMenuState
+import com.kira.kiba.ui.navigation.PageTransitionSource
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Text
@@ -43,6 +49,12 @@ fun ChuniSongCard(
     modifier: Modifier = Modifier,
 ) {
     val menu = rememberSongCardMenuState()
+    // 展开式转场来源：记住卡片自身的窗口矩形，点击时上报给 pushPage 消费（高级动画闸门另控）
+    var cardCoords by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
+    val openDetail = {
+        cardCoords?.let { PageTransitionSource.offer(it.boundsInWindow()) }
+        onClick()
+    }
 
     Box(modifier = modifier.fillMaxWidth()) {
         // 按压缩放 + 单击 / 长按共用一个 interactionSource（miuix Card 的 onClick
@@ -51,13 +63,14 @@ fun ChuniSongCard(
         Card(
             modifier = Modifier
                 .fillMaxWidth()
+                .onGloballyPositioned { cardCoords = it }
                 .kibaPressScale(interaction)
                 .combinedClickable(
                     interactionSource = interaction,
                     indication = null,
-                    onClick = onClick,
+                    onClick = openDetail,
                     onLongClick = {
-                        menu.show(song.song.id, song.song.title) { onClick() }
+                        menu.show(song.song.id, song.song.title) { openDetail() }
                     },
                 ),
         ) {

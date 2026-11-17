@@ -598,7 +598,7 @@ private fun PlateItemRow(
             }
         }
     }
-    SongCardMenuHost(menu)
+    SongCardMenuHost(menu, centeredOnScreen = true)
 }
 
 /** 明细条目（网格）：封面铺满格子（难度描边）+ 底部 scrim + 牌子达成角标或「未达成」。 */
@@ -662,7 +662,7 @@ private fun PlateGridCell(
             }
         }
     }
-    SongCardMenuHost(menu)
+    SongCardMenuHost(menu, centeredOnScreen = true)
 }
 
 /** 细进度条（与曲目页同步进度条同款视觉；颜色 / 粗细可调）。 */
