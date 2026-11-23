@@ -1,6 +1,7 @@
 package com.kira.kiba.ui.navigation
 
-import androidx.activity.compose.BackHandler
+import androidx.activity.BackEventCompat
+import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedContentScope
 import androidx.compose.animation.AnimatedContentTransitionScope
@@ -8,6 +9,8 @@ import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -18,6 +21,7 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -27,6 +31,7 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -123,6 +128,7 @@ import com.kira.kiba.ui.material.liquid.LocalLiquidBackdrop
 import com.kira.kiba.ui.common.coverCandidateUrls
 import com.kira.kiba.ui.songs.SongsScreen
 import com.kira.kiba.ui.theme.KibaMotion
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -375,6 +381,9 @@ sealed interface KibaSubPage {
     data object About : KibaSubPage {
         override val title: String = "关于"
     }
+
+    /** 本地扩展宿主页面（扩展模块经宿主导航打开；无扩展注册时内容为空占位）。 */
+    data class ExtPage(val id: String, override val title: String) : KibaSubPage
 }
 
 /**
@@ -556,6 +565,12 @@ fun KibaMainScreen() {
     var subStack by remember { mutableStateOf<List<KibaSubPage>>(emptyList()) }
     // 导航方向：true=前进入栈，false=后退出栈（驱动页面切换动画方向）
     var navForward by remember { mutableStateOf(true) }
+    // ── 预测性返回手势（predictive back）──
+    // 系统把返回手势的进度事件流推给 PredictiveBackHandler：手势进行中当前二级页随
+    // 进度缩小 / 贴边 / 出圆角（见外层 Scaffold 的 graphicsLayer），松手提交才真正出栈，
+    // 取消则弹回原位——普通 BackHandler 没有进度流，表现为提交前零反馈、松手瞬切。
+    val predictiveBackProgress = remember { Animatable(0f) }
+    var predictiveBackEdge by remember { mutableIntStateOf(BackEventCompat.EDGE_LEFT) }
     // 本次 push 携带的曲目卡片矩形（卡片 onClick 时 offer、pushPage 里 take）：
     // 非空且评分达标时详情页做卡片展开式转场；其他入口 push 取到 null，同时清掉陈旧值
     var expandSourceRect by remember { mutableStateOf<Rect?>(null) }
@@ -741,6 +756,37 @@ fun KibaMainScreen() {
         pushPage(KibaSubPage.SongPlayer)
     }
 
+    // ── 本地扩展宿主装配：扩展页导航 + 宿主级对话框（无扩展注册时两者从不被触发）──
+    var extHostDialog by remember { mutableStateOf<Pair<String, String>?>(null) }
+    DisposableEffect(Unit) {
+        com.kira.kiba.core.host.AppExtensions.pageOpener = { id, title ->
+            pushPage(KibaSubPage.ExtPage(id, title))
+        }
+        com.kira.kiba.core.host.AppExtensions.hostDialog = { title, message ->
+            extHostDialog = title to message
+        }
+        onDispose {
+            com.kira.kiba.core.host.AppExtensions.pageOpener = null
+            com.kira.kiba.core.host.AppExtensions.hostDialog = null
+        }
+    }
+    extHostDialog?.let { (dialogTitle, dialogMessage) ->
+        com.kira.kiba.ui.material.KibaGlassDialog(
+            show = true,
+            title = dialogTitle,
+            summary = dialogMessage,
+            onDismissRequest = { extHostDialog = null },
+        ) {
+            Row(modifier = Modifier.fillMaxWidth()) {
+                Spacer(Modifier.weight(1f))
+                top.yukonga.miuix.kmp.basic.TextButton(
+                    text = "知道了",
+                    onClick = { extHostDialog = null },
+                )
+            }
+        }
+    }
+
     LaunchedEffect(Unit) {
         if (ChartPreviewPlayer.consumePendingReopen()) reopenChartPreview()
         ChartPreviewPlayer.reopenFlow.collect { reopenChartPreview() }
@@ -783,9 +829,30 @@ fun KibaMainScreen() {
     // 顶栏与底栏共用的取景层（miuix-blur）
     val glassNavBackdrop = rememberLayerBackdrop()
 
-    // 系统返回：先退二级页面（出栈），清空后再放行给 Activity
-    BackHandler(enabled = subStack.isNotEmpty()) {
-        popPage()
+    // 系统返回：先退二级页面（出栈），清空后再放行给 Activity。
+    // PredictiveBackHandler 替代普通 BackHandler 适配预测性返回手势：
+    // - 手势进行中：progress 持续写入 predictiveBackProgress，页面随之缩小贴边；
+    // - 手势提交：事件流正常结束 → 清进度、popPage()（走 AnimatedContent 的返回转场）；
+    // - 手势取消：collect 被 cancel → spring 弹回 0，页面恢复原样；
+    // - API 33 等不支持进度回调的设备：事件流无进度直接完成，行为退化为普通返回出栈。
+    PredictiveBackHandler(enabled = subStack.isNotEmpty()) { events ->
+        try {
+            events.collect { event ->
+                predictiveBackEdge = event.swipeEdge
+                predictiveBackProgress.snapTo(event.progress)
+            }
+            predictiveBackProgress.snapTo(0f)
+            popPage()
+        } catch (e: CancellationException) {
+            // 弹回动画要活过本协程的取消，交给界面作用域跑
+            frameScope.launch {
+                predictiveBackProgress.animateTo(
+                    0f,
+                    spring(stiffness = Spring.StiffnessMediumLow),
+                )
+            }
+            throw e
+        }
     }
 
     CompositionLocalProvider(
@@ -794,7 +861,23 @@ fun KibaMainScreen() {
         LocalLiquidBackdrop provides if (isLiquid) liquidBackdrop else null,
     ) {
       Scaffold(
-          modifier = Modifier.fillMaxSize(),
+          modifier = Modifier
+              .fillMaxSize()
+              // 预测性返回手势：进度驱动整页（顶栏 + 内容 + 底栏）缩小 / 朝手势侧贴边 /
+              // 圆角出现，近似系统预测性返回的形态。进度 = 0 时不改写任何变换，
+              // 平时零绘制开销；读的都是 state（Animatable value / edge），手势中逐帧重绘。
+              .graphicsLayer {
+                  val p = predictiveBackProgress.value
+                  if (p > 0f) {
+                      val eased = p * p
+                      val dir = if (predictiveBackEdge == BackEventCompat.EDGE_RIGHT) 1f else -1f
+                      scaleX = lerp(1f, 0.92f, eased)
+                      scaleY = lerp(1f, 0.92f, eased)
+                      translationX = dir * eased * size.width * 0.02f
+                      shape = RoundedCornerShape(lerp(0.dp, 32.dp, eased))
+                      clip = true
+                  }
+              },
           // 关键：禁用默认 contentWindowInsets，让内容满高铺开
           contentWindowInsets = WindowInsets(0, 0, 0, 0),
           topBar = {
@@ -879,12 +962,15 @@ fun KibaMainScreen() {
                               onRefresh = {
                                   // 顶栏刷新按当前游戏分流：中二走 ChuniRecordSync，
                                   // 舞萌走原 KibaState.refreshRecords
-                                  if (gameType == GameType.CHUNITHM) {
-                                      // 必须走应用级作用域：frameScope 是 UI 作用域，
-                                      // 离开页面/重组被取消会把同步掐死在半路
-                                      ChuniRecordSync.refreshAsync()
-                                  } else {
-                                      KibaState.refreshRecords()
+                                  // 本地扩展宿主优先接管（无扩展注册时恒 false，行为不变）
+                                  if (!com.kira.kiba.core.host.AppExtensions.consumeRecordsRefresh(gameType)) {
+                                      if (gameType == GameType.CHUNITHM) {
+                                          // 必须走应用级作用域：frameScope 是 UI 作用域，
+                                          // 离开页面/重组被取消会把同步掐死在半路
+                                          ChuniRecordSync.refreshAsync()
+                                      } else {
+                                          KibaState.refreshRecords()
+                                      }
                                   }
                               },
                           )
@@ -1473,6 +1559,16 @@ fun KibaMainScreen() {
                               is KibaSubPage.DeviceScore -> DeviceScoreScreen(scrollBehavior = scrollBehavior)
                               is KibaSubPage.AvatarCrop -> AvatarCropScreen(onDone = { popPage() })
                               is KibaSubPage.About -> AboutScreen(scrollBehavior = scrollBehavior)
+                              is KibaSubPage.ExtPage -> {
+                                  // 本地扩展宿主页面：内容完全由扩展提供（未授权 / 未知 id 时空占位）
+                                  val extContent = com.kira.kiba.core.host.AppExtensions
+                                      .extPageContent(target.id)
+                                  if (extContent != null) {
+                                      extContent(scrollBehavior)
+                                  } else {
+                                      Box(modifier = Modifier.fillMaxSize())
+                                  }
+                              }
                               is KibaSubPage.ListenPlaylist -> PlaylistDetailScreen(
                                   playlistId = target.playlistId,
                                   scrollBehavior = scrollBehavior,

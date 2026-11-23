@@ -64,8 +64,8 @@ android {
         // miuix 0.9.4 各模块（blur/ui/icons/preference）要求 minSdk >= 33
         minSdk = 33
         targetSdk = 37
-        versionCode = 141
-        versionName = "3.5.1"
+        versionCode = 142
+        versionName = "3.5.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
@@ -288,6 +288,21 @@ configurations.all {
 }
 
 dependencies {
+    // ── 可选本地模块（settings.gradle.kts 依 local.properties 的 kiba.extraModules 注入）──
+    // 无配置时为空集合，依赖关系与公开仓库完全一致。
+    val extraModulesRaw = (localProps.getProperty("kiba.extraModules") ?: "").toString()
+    val extraModules = extraModulesRaw.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+        .filter { entry ->
+            val parts = entry.split('=')
+            parts.size == 2 && rootProject.file(parts[0].trim()).resolve("build.gradle.kts").exists()
+        }.map { it.split('=')[1].trim() }
+    extraModules.filterIsInstance<String>().forEach { name ->
+        implementation(project(":$name"))
+    }
+
+    // ── 宿主公共契约层（模型枚举 + 中性扩展挂接点）──
+    implementation(project(":core-host"))
+
     // ── miuix（Termux Ultra 视觉体系 / miuix-glass）──
     val miuixVersion = "0.9.4"
     implementation("top.yukonga.miuix.kmp:miuix-ui-android:$miuixVersion")

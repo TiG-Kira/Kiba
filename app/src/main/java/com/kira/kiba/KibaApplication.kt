@@ -30,6 +30,9 @@ class KibaApplication : Application(), ImageLoaderFactory {
         KibaState.bootstrap(this)
         // 空闲时定期清理图片类 transient 缓存（分享图 / 生成图 / 更新包），避免长期堆积造成异常占用
         CacheCleaner.schedule(this)
+        // 本地扩展宿主：装配默认宿主能力后通知可选本地模块（未注册任何扩展时为空操作）
+        com.kira.kiba.core.host.HostDefaults.install()
+        com.kira.kiba.core.host.AppExtensions.notifyApplicationInit(this)
     }
 
     /**

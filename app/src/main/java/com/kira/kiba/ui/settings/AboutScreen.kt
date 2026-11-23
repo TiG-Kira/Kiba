@@ -3,6 +3,7 @@ package com.kira.kiba.ui.settings
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -193,7 +194,15 @@ fun AboutScreen(scrollBehavior: ScrollBehavior) {
                             animationTime = aboutTime,
                             dark = darkTheme,
                             logoSize = 156.dp,
-                            modifier = Modifier.heroEnter(enterLogo),
+                            // 本地扩展宿主：Logo 点击原样转发（无扩展注册时恒返回 false，无任何行为变化）
+                            modifier = Modifier
+                                .heroEnter(enterLogo)
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                ) {
+                                    com.kira.kiba.core.host.AppExtensions.onAboutLogoTap(context)
+                                },
                         )
                     }
                     Spacer(modifier = Modifier.height(10.dp))

@@ -256,7 +256,11 @@ fun MeScreen(
                     // 免得用户在两个源之间反复怀疑自己点错了。唯一的例外是「退出登录」——
                     // 另一个源可能还挂着凭据，必须留个地方退。
                     val src = if (isChunithm) chuniSource else maimaiSource
-                    if (src == ScoreSource.WATER_FISH) {
+                    // 本地扩展宿主：扩展源生效时遮蔽常规源的登录 / 更新入口（无扩展时恒 false）
+                    val extMasked = com.kira.kiba.core.host.AppExtensions.regularSourceMasked(
+                        if (isChunithm) GameType.CHUNITHM else GameType.MAIMAI
+                    )
+                    if (src == ScoreSource.WATER_FISH && !extMasked) {
                         ArrowPreference(
                             // 水鱼卡只看**水鱼凭据**：落雪源下 account.bound / account.nickname /
                             // account.rating 会被落雪数据覆盖，若直接读 account 就会把落雪账户
@@ -274,7 +278,7 @@ fun MeScreen(
                             onClick = onOpenLogin,
                         )
                     }
-                    if (src == ScoreSource.LXNS) {
+                    if (src == ScoreSource.LXNS && !extMasked) {
                         ArrowPreference(
                             title = when {
                                 lxnsBound -> "管理落雪账户"
@@ -291,19 +295,20 @@ fun MeScreen(
                         )
                     }
                     // ── 查分器工具（2.3.0 起从设置页整组迁到这里：登录态与工具入口同一屏）──
-                    ArrowPreference(
-                        title = "机台成绩更新（VPN）",
-                        summary = when (src) {
-                            ScoreSource.LXNS -> "在机台 WiFi 下抓包，解析后上传落雪（与「落雪官方同步」二选一）"
-                            ScoreSource.WATER_FISH -> "在机台 WiFi 下抓包，解析后上传水鱼"
-                        },
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Update, com.kira.kiba.ui.common.KibaIconTint.GREEN) },
-                        onClick = onOpenMachineUpdate,
-                    )
-                    // 二维码导入是**舞萌 + 水鱼**专用通道（官方登录二维码 + 水鱼导入令牌）：
+                    if (!extMasked) {
+                        ArrowPreference(
+                            title = "机台成绩更新（VPN）",
+                            summary = when (src) {
+                                ScoreSource.LXNS -> "在机台 WiFi 下抓包，解析后上传落雪（与「落雪官方同步」二选一）"
+                                ScoreSource.WATER_FISH -> "在机台 WiFi 下抓包，解析后上传水鱼"
+                            },
+                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Update, com.kira.kiba.ui.common.KibaIconTint.GREEN) },
+                            onClick = onOpenMachineUpdate,
+                        )
+                    }                    // 二维码导入是**舞萌 + 水鱼**专用通道（官方登录二维码 + 水鱼导入令牌）：
                     // 中二节奏既没有对应二维码体系、也没有水鱼导入通道，切到中二时整行隐藏；
                     // 数据源选落雪时同理 —— 落雪走官方服务端解析，这条路的终点是水鱼。
-                    if (!isChunithm && src == ScoreSource.WATER_FISH) {
+                    if (!isChunithm && src == ScoreSource.WATER_FISH && !extMasked) {
                         ArrowPreference(
                             title = "二维码导入成绩",
                             summary = "仅舞萌 DX：免 VPN —— 先在「工具箱 → 接入 Easymai 账号」登录，" +
@@ -312,7 +317,7 @@ fun MeScreen(
                             onClick = onOpenQrImport,
                         )
                     }
-                    if (src == ScoreSource.LXNS) {
+                    if (src == ScoreSource.LXNS && !extMasked) {
                         // 落雪官方的同步方式是「代理同步」：把 WLAN 代理指向他们的服务器，
                         // 由落雪代抓。它和本 App 的本地 VPN 抢同一块网络接管，只能二选一，
                         // 所以这里只做备选入口 —— App 内抓包走不通时用户还有路可走。
@@ -322,6 +327,16 @@ fun MeScreen(
                                 "由落雪服务器代抓（与 App 的 VPN 不能同时开）",
                             startAction = { PrefIcon(MiuixGlassIcons.Regular.CloudFill, com.kira.kiba.ui.common.KibaIconTint.CYAN) },
                             onClick = { BrowserJump.openUrl(context, LxnsAccount.SYNC_URL) },
+                        )
+                    }
+                    // ── 本地扩展宿主条目：扩展注册后追加在查分器组尾部（无扩展时为空）──
+                    val extGame = if (isChunithm) GameType.CHUNITHM else GameType.MAIMAI
+                    com.kira.kiba.core.host.AppExtensions.meEntries(extGame).forEach { entry ->
+                        ArrowPreference(
+                            title = entry.title,
+                            summary = entry.summary,
+                            enabled = entry.enabled,
+                            onClick = { com.kira.kiba.core.host.AppExtensions.onMeEntry(extGame, entry.id) },
                         )
                     }
                     if (!isChunithm) {

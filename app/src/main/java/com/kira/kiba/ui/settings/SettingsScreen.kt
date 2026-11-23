@@ -303,33 +303,62 @@ fun SettingsScreen(
             item(key = "source_title") { SectionTitle("查分器数据源") }
             item(key = "source_card") {
                 Card(modifier = (Modifier.fillMaxWidth())) {
+                    // 本地扩展宿主：常规源之后可能追加扩展源选项（无扩展注册时为空，行为不变）
+                    val extSources = com.kira.kiba.core.host.AppExtensions.extraScoreSources(GameType.MAIMAI)
+                    val extMaimai = com.kira.kiba.core.host.AppExtensions.activeExtraSource(GameType.MAIMAI)
                     OverlaySpinnerPreference(
-                        items = ScoreSource.entries.map { DropdownItem(text = it.label) },
-                        selectedIndex = maimaiSource.ordinal,
+                        items = (ScoreSource.entries.map { DropdownItem(text = it.label) } +
+                            extSources.map { DropdownItem(text = it.label) }),
+                        selectedIndex = if (extMaimai != null) ScoreSource.entries.size + extSources.indexOfFirst { it.key == extMaimai.key } else maimaiSource.ordinal,
                         title = "舞萌成绩源",
-                        summary = scoreSourceSummary(maimaiSource, lxnsState.bound, GameType.MAIMAI),
+                        summary = if (extMaimai != null) {
+                            extMaimai.summary
+                        } else {
+                            scoreSourceSummary(maimaiSource, lxnsState.bound, GameType.MAIMAI)
+                        },
                         startAction = { PrefIcon(MiuixGlassIcons.Regular.CloudFill, com.kira.kiba.ui.common.KibaIconTint.BLUE) },
                         onSelectedIndexChange = { index ->
-                            ScoreSource.entries.getOrNull(index)?.let { picked ->
-                                maimaiSource = picked
-                                SpUtil.setScoreSource(GameType.MAIMAI, picked)
-                                // 切源后立刻按新源刷新一次；用应用级作用域触发，
-                                // 避免离开设置页（UI 协程取消）把刷新掐死在半路、Rating 卡卡在「正在获取成绩…」
-                                DivingFishAccount.refreshRecordsAsync()
+                            val extIndex = index - ScoreSource.entries.size
+                            if (extIndex >= 0 && extIndex < extSources.size) {
+                                maimaiSource = ScoreSource.WATER_FISH
+                                com.kira.kiba.core.host.AppExtensions.onExtraSourcePicked(GameType.MAIMAI, extIndex)
+                            } else {
+                                ScoreSource.entries.getOrNull(index)?.let { picked ->
+                                    maimaiSource = picked
+                                    SpUtil.setScoreSource(GameType.MAIMAI, picked)
+                                    com.kira.kiba.core.host.AppExtensions.onRegularSourcePicked(GameType.MAIMAI)
+                                    // 切源后立刻按新源刷新一次；用应用级作用域触发，
+                                    // 避免离开设置页（UI 协程取消）把刷新掐死在半路、Rating 卡卡在「正在获取成绩…」
+                                    DivingFishAccount.refreshRecordsAsync()
+                                }
                             }
                         },
                     )
+                    val extSourcesChuni = com.kira.kiba.core.host.AppExtensions.extraScoreSources(GameType.CHUNITHM)
+                    val extChuni = com.kira.kiba.core.host.AppExtensions.activeExtraSource(GameType.CHUNITHM)
                     OverlaySpinnerPreference(
-                        items = ScoreSource.entries.map { DropdownItem(text = it.label) },
-                        selectedIndex = chuniSource.ordinal,
+                        items = (ScoreSource.entries.map { DropdownItem(text = it.label) } +
+                            extSourcesChuni.map { DropdownItem(text = it.label) }),
+                        selectedIndex = if (extChuni != null) ScoreSource.entries.size + extSourcesChuni.indexOfFirst { it.key == extChuni.key } else chuniSource.ordinal,
                         title = "中二成绩源",
-                        summary = scoreSourceSummary(chuniSource, lxnsState.bound, GameType.CHUNITHM),
+                        summary = if (extChuni != null) {
+                            extChuni.summary
+                        } else {
+                            scoreSourceSummary(chuniSource, lxnsState.bound, GameType.CHUNITHM)
+                        },
                         startAction = { PrefIcon(MiuixGlassIcons.Regular.CloudFill, com.kira.kiba.ui.common.KibaIconTint.BLUE) },
                         onSelectedIndexChange = { index ->
-                            ScoreSource.entries.getOrNull(index)?.let { picked ->
-                                chuniSource = picked
-                                SpUtil.setScoreSource(GameType.CHUNITHM, picked)
-                                ChuniRecordSync.refreshAsync()
+                            val extIndex = index - ScoreSource.entries.size
+                            if (extIndex >= 0 && extIndex < extSourcesChuni.size) {
+                                chuniSource = ScoreSource.WATER_FISH
+                                com.kira.kiba.core.host.AppExtensions.onExtraSourcePicked(GameType.CHUNITHM, extIndex)
+                            } else {
+                                ScoreSource.entries.getOrNull(index)?.let { picked ->
+                                    chuniSource = picked
+                                    SpUtil.setScoreSource(GameType.CHUNITHM, picked)
+                                    com.kira.kiba.core.host.AppExtensions.onRegularSourcePicked(GameType.CHUNITHM)
+                                    ChuniRecordSync.refreshAsync()
+                                }
                             }
                         },
                     )

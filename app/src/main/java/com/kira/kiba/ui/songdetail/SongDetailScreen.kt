@@ -459,13 +459,17 @@ private fun ChartCard(
             }
             VGap(8.dp)
 
-            // BREAK 扣分线（上游口径：权重 5/总分 + 1% 达成修正）
+            // BREAK 扣分线（上游口径，与谱面详情页 BreakLossCard 同一套公式：
+            // 50/100 落 = BREAK 保底/满判定的达成占比，大 G = 权重损失 + 加成修正）
             if (chart.notesBreak > 0) {
-                val breakMiss = 5.0 / totalScore + 0.01 / chart.notesBreak
-                val breakGreat4x = 5.0 / totalScore * 0.2 + 0.01 / chart.notesBreak * 0.6
+                val fix = 0.01 / chart.notesBreak
+                val loss50 = fix * 0.25
+                val loss100 = fix * 0.5
+                val breakGreat4x = 5.0 / totalScore * 0.2 + fix * 0.6
                 Text(
-                    text = "断 1 个 BREAK ≈ -${"%.2f".format(breakMiss * 100)}%" +
-                        "　BREAK 大 G ≈ -${"%.2f".format(breakGreat4x * 100)}%",
+                    text = "50 落 ≈ -${"%.4f".format(loss50 * 100)}%" +
+                        "　100 落 ≈ -${"%.4f".format(loss100 * 100)}%" +
+                        "　BREAK 大 G ≈ -${"%.4f".format(breakGreat4x * 100)}%",
                     style = MiuixTheme.textStyles.footnote2,
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                 )

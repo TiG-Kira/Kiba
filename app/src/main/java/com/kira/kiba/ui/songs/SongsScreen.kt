@@ -286,10 +286,13 @@ fun SongsScreen(
     }
     val grouping = groupMode in availableGroupModes &&
         groupMode != SongGroupMode.NONE && query.isBlank()
-    val groups = remember(sortedSongs, groupMode, grouping) {
+    // gameType 必须进 remember 键：切游戏后 sortedSongs / groupMode / grouping 都可能
+    // 原样不变（按版本归类对两游戏同时生效），缺了它分组会停留在上一个游戏的计算结果
+    // ——舞萌切中二后 chuniGroups 还是「当时 gameType=MAIMAI 算出的空表」，列表一片空白。
+    val groups = remember(sortedSongs, groupMode, grouping, gameType) {
         if (grouping && gameType == GameType.MAIMAI) buildSongGroups(sortedSongs, groupMode) else emptyList()
     }
-    val chuniGroups = remember(sortedChuniSongs, groupMode, grouping) {
+    val chuniGroups = remember(sortedChuniSongs, groupMode, grouping, gameType) {
         if (grouping && gameType == GameType.CHUNITHM) {
             buildChuniSongGroups(sortedChuniSongs, groupMode)
         } else {

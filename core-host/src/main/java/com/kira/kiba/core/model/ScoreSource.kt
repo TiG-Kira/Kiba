@@ -3,8 +3,7 @@ package com.kira.kiba.core.model
 /**
  * 成绩查分器数据源。
  *
- * **两个游戏各自独立选择**（舞萌选水鱼、中二选落雪完全合法），因此偏好键也分开存，
- * 见 [com.kira.kiba.core.utils.SpUtil.getScoreSource] / [com.kira.kiba.core.utils.SpUtil.setScoreSource]。
+ * **两个游戏各自独立选择**（舞萌选水鱼、中二选落雪完全合法），因此偏好键也分开存。
  *
  * ## 两源的本质差异（决定了为什么必须能切）
  * - **水鱼 DivingFish**：舞萌侧最全（全量 records、机台更新链路）；中二侧只有账号密码 jwt

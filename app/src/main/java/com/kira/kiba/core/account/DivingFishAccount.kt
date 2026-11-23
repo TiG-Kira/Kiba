@@ -492,6 +492,10 @@ object DivingFishAccount {
     }
 
     private suspend fun refreshRecordsBody() {
+        // 本地扩展宿主优先接管（无扩展注册时恒 false，行为不变）
+        if (com.kira.kiba.core.host.AppExtensions.consumeRecordsRefresh(GameType.MAIMAI)) {
+            return
+        }
         // 数据源分发：舞萌侧选的是落雪就直接走落雪（与本类的水鱼凭据无关），
         // 两游戏的数据源各自独立，互不影响。
         if (SpUtil.getScoreSource(GameType.MAIMAI) == ScoreSource.LXNS) {
@@ -574,6 +578,86 @@ object DivingFishAccount {
                 error = "成绩获取失败：${e.message}（将展示本地缓存）",
             )
         }
+    }
+
+    /**
+     * 外部成绩通道发布：供本地导入 / 扩展数据源（本地模块）复用与水鱼/落雪完全相同的
+     * 落库与账户状态管线（Room record 表 + B50 本地计算 + Rating 历史曲线 + 账户状态）。
+     *
+     * 与 refreshRecords 一样必须在协程中调用；落库 / SP / 状态更新内部 runCatching 兜底。
+     *
+     * @param records 全量成绩（与本地 record 表字段一一对应）
+     * @param nickname 当前账户昵称（顶栏大标题 / Best 50 卡展示用；空串则沿用缓存值）
+     * @param historySource Rating 历史曲线记入的分桶（null 则不记历史）
+     */
+    suspend fun publishExternalRecords(
+        records: List<com.kira.kiba.core.host.AppExtensions.ExtRecord>,
+        nickname: String,
+        historySource: ScoreSource? = null,
+    ) {
+        runCatching {
+            val entities = records.map {
+                RecordEntity(
+                    achievements = it.achievements,
+                    ds = it.ds,
+                    dxScore = it.dxScore,
+                    fc = it.fc,
+                    fs = it.fs,
+                    level = it.level,
+                    levelIndex = it.levelIndex,
+                    levelLabel = "",
+                    ra = it.ra,
+                    rate = it.rate,
+                    songId = it.songId,
+                    title = it.title,
+                    type = it.type,
+                )
+            }
+            RecordRepository.getInstance(
+                AppDataBase.getInstance().recordDao()
+            ).replaceAllRecord(entities)
+            recordsCache = entities
+            val isNewBySongId = withContext(Dispatchers.IO) {
+                runCatching {
+                    AppDataBase.getInstance().songDao().getAllSongsList()
+                        .associate { it.id to it.isNew }
+                }.getOrDefault(emptyMap())
+            }
+            val sorted = entities.sortedByDescending { it.ra }
+            best50Cache = Best50(
+                old = sorted.filter { isNewBySongId[it.songId] != true }.take(35),
+                new = sorted.filter { isNewBySongId[it.songId] == true }.take(15),
+            )
+            SpUtil.saveDivingFishRating(best50Cache.rating)
+            historySource?.let {
+                RatingHistory.record(GameType.MAIMAI, it, best50Cache.rating.toDouble())
+            }
+            _state.value = AccountState(
+                bound = true,
+                nickname = nickname.ifBlank {
+                    _state.value.nickname.ifBlank { SpUtil.getDivingFishOAuthNickname() }
+                },
+                rating = best50Cache.rating,
+                additionalRating = 0,
+                recordCount = entities.size,
+                loading = false,
+                error = null,
+            )
+        }.onFailure { e ->
+            Log.w(TAG, "publish external records failed", e)
+            _state.value = _state.value.copy(
+                loading = false,
+                error = "成绩发布失败：${e.message ?: e.javaClass.simpleName}",
+            )
+        }
+    }
+
+    /**
+     * 外部成绩通道的失败上报：只更新账户状态（loading 复位 + error 文案），
+     * 不触碰任何本地数据。
+     */
+    fun publishExternalError(message: String) {
+        _state.value = _state.value.copy(loading = false, error = message)
     }
 
     /**
