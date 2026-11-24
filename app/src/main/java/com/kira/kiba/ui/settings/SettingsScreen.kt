@@ -110,6 +110,10 @@ fun SettingsScreen(
     var clearingCovers by remember { mutableStateOf(false) }
     var showCoverClearConfirm by remember { mutableStateOf(false) }
 
+    // ── 插件安装结果（设置页尾部统一弹窗提示成功 / 失败）──
+    var installResult by remember { mutableStateOf<String?>(null) }
+    var installOk by remember { mutableStateOf(false) }
+
     // ── 查分器数据源（舞萌 / 中二各自独立） ──
     var maimaiSource by remember { mutableStateOf(SpUtil.getScoreSource(GameType.MAIMAI)) }
     var chuniSource by remember { mutableStateOf(SpUtil.getScoreSource(GameType.CHUNITHM)) }
@@ -444,37 +448,69 @@ fun SettingsScreen(
             }
 
             // ── 插件 ──
-            // 插件由独立模块提供（安装后经 ContentProvider 自动注册）：
-            // 开启开关时插件会立即执行自身的验证逻辑，验证不通过插件有权拒绝启用。
+            // 插件以 zip 包形式经系统文件选择器导入（zip + dex，DexClassLoader 动态加载），
+            // 支持多插件并存；官方签名插件开放全部接口，社区插件功能受限（数据流类挂接点不参与）。
             item(key = "plugin_title") { SectionTitle("插件") }
             item(key = "plugin_card") {
-                val plugin = com.kira.kiba.core.host.AppExtensions.pluginInfo()
-                Card(modifier = (Modifier.fillMaxWidth())) {
-                    if (plugin == null) {
-                        ArrowPreference(
-                            title = "插件管理",
-                            summary = "暂无已安装的插件 · 插件由独立模块提供，安装后在此启用与配置",
-                            enabled = false,
-                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Tune, com.kira.kiba.ui.common.KibaIconTint.PURPLE) },
+                val plugins = com.kira.kiba.core.host.AppExtensions.pluginInfos()
+                val appCtx = context.applicationContext as android.app.Application
+                val pluginPicker = androidx.activity.compose.rememberLauncherForActivityResult(
+                    androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
+                ) { uri ->
+                    if (uri != null) {
+                        runCatching {
+                            com.kira.kiba.core.host.PluginLoader.install(context, uri, appCtx)
+                        }.fold(
+                            onSuccess = { info ->
+                                installOk = true
+                                installResult = "插件「${info.name}」安装成功（${info.version}）" +
+                                    if (info.trusted) " · 官方签名" else " · 社区插件（功能受限）"
+                            },
+                            onFailure = { e ->
+                                installOk = false
+                                installResult = e.message ?: "安装失败：未知错误"
+                            },
                         )
-                    } else {
-                        // enabledTick：启用/关闭走插件回调（无 StateFlow），用计数触发重组重读状态
-                        var enabledTick by remember { mutableIntStateOf(0) }
+                    }
+                }
+                Card(modifier = (Modifier.fillMaxWidth())) {
+                    ArrowPreference(
+                        title = "导入插件",
+                        summary = "选择插件包（.zip）进行安装；安装成功或失败均有提示",
+                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Add, com.kira.kiba.ui.common.KibaIconTint.PURPLE) },
+                        onClick = {
+                            pluginPicker.launch(
+                                arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream"),
+                            )
+                        },
+                    )
+                    plugins.forEach { plugin ->
+                        // tick：启停走插件回调（无 StateFlow），计数触发重组重读状态
+                        var enabledTick by remember(plugin.id) { mutableIntStateOf(0) }
                         val enabled = remember(enabledTick) {
-                            com.kira.kiba.core.host.AppExtensions.pluginEnabled()
+                            com.kira.kiba.core.host.AppExtensions.pluginEnabled(plugin.id)
                         }
                         SwitchPreference(
                             checked = enabled,
                             onCheckedChange = { want ->
                                 if (want) {
-                                    com.kira.kiba.core.host.AppExtensions.onPluginEnableRequested(context)
+                                    // 插件可能拒绝启用（验证未通过）并自行打开验证页面
+                                    com.kira.kiba.core.host.AppExtensions.onPluginEnableRequested(plugin.id, context)
                                 } else {
-                                    com.kira.kiba.core.host.AppExtensions.onPluginDisabled(context)
+                                    com.kira.kiba.core.host.AppExtensions.onPluginDisabled(plugin.id, context)
                                 }
                                 enabledTick++
                             },
-                            title = plugin.name,
+                            title = plugin.name + if (plugin.trusted) "" else "（社区）",
                             summary = "v${plugin.version} · " + if (enabled) "已启用" else "未启用（开启将进行激活验证）",
+                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Tune, com.kira.kiba.ui.common.KibaIconTint.PURPLE) },
+                        )
+                    }
+                    if (plugins.isEmpty()) {
+                        ArrowPreference(
+                            title = "暂无已安装的插件",
+                            summary = "插件由独立包提供，点击上方「导入插件」安装",
+                            enabled = false,
                             startAction = { PrefIcon(MiuixGlassIcons.Regular.Tune, com.kira.kiba.ui.common.KibaIconTint.PURPLE) },
                         )
                     }
@@ -491,6 +527,24 @@ fun SettingsScreen(
                         startAction = { PrefIcon(MiuixGlassIcons.Regular.Info, com.kira.kiba.ui.common.KibaIconTint.CYAN) },
                         onClick = onOpenAbout,
                     )
+                }
+            }
+        }
+    }
+
+    if (installResult != null) {
+        KibaGlassDialog(
+            show = true,
+            title = if (installOk) "插件安装成功" else "插件安装失败",
+            summary = installResult!!,
+            onDismissRequest = { installResult = null },
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                Button(onClick = { installResult = null }, colors = ButtonDefaults.buttonColorsPrimary()) {
+                    Text(text = "知道了")
                 }
             }
         }

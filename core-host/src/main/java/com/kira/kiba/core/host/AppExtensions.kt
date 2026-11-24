@@ -9,23 +9,26 @@ import com.kira.kiba.core.model.ScoreSource
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 
 /**
- * 应用本地扩展宿主（公共契约层，纯接口无实现）。
+ * 插件宿主（公共契约层，纯接口无实现）。
  *
- * 设计目标：为「本地模块」（见 settings.gradle.kts 中由 local.properties 的
- * `kiba.extraModules` 注入的可选模块）提供一组**完全中性**的挂接点。
+ * 设计目标：为**运行时动态加载的插件**（zip 包 + dex，见 PluginLoader）提供一组
+ * 完全中性的挂接点。第三方开发者实现 [Provider] 并打包为插件即可接入。
  *
  * 铁律：
- * - 本文件与各挂接点**不得出现任何具体功能语义**——宿主只知道「有没有扩展注册进来」，
- *   不知道扩展会做什么；没有扩展注册时所有入口返回空/否/false，应用行为与不装时完全一致。
- * - 扩展通过 Android ContentProvider 自动初始化机制在进程启动时调用 [register]，
- *   宿主不做任何主动发现、不持久化任何扩展信息。
- * - 一切能力协商都是运行时的：签名 / 环境 / 授权校验完全由扩展自行决定并静默处理，
- *   宿主对扩展的「拒绝服务」不做任何提示（无弹窗、无日志、无 UI 残留）。
+ * - 本文件与各挂接点**不得出现任何具体功能语义**——宿主只知道「有没有插件注册进来」，
+ *   不知道插件会做什么；没有插件注册时所有入口返回空/否/false，应用行为与不装时完全一致。
+ * - **信任分级**：官方签名的插件（trusted=true，由安装时的签名校验决定）开放全部挂接点
+ *   与完整 [HostServices]；非官方插件走防范路径——数据流类挂接点（成绩源 / 刷新接管 /
+ *   常规源遮蔽）一概不参与，[HostServices] 只注入只读裁剪版（发布类方法静默 no-op）。
+ * - 插件通过 [Provider.onHostReady] 接收宿主服务注入；本对象**不公开**宿主服务实例，
+ *   插件不得绕过注入路径获取完整服务。
+ * - 注册时机：宿主在 Application.onCreate（PluginLoader 批量加载）与插件导入时调用
+ *   [register]，注册过程内同步回调 [Provider.onApplicationInit] 与 [Provider.onHostReady]。
  * - 宿主内置实现（曲库检索 / 成绩发布等）由 app 模块的 `HostDefaults` 装配，本层不含实现。
  */
 object AppExtensions {
 
-    // ==================== 数据传输对象（宿主 ↔ 扩展 的中性 DTO） ====================
+    // ==================== 数据传输对象（宿主 ↔ 插件 的中性 DTO） ====================
 
     /** 成绩条目（与本地 Room record 表字段一一对应，便于宿主直接落库）。 */
     data class ExtRecord(
@@ -61,29 +64,27 @@ object AppExtensions {
         val level: String,
     )
 
-    // ==================== 扩展注册与生命周期 ====================
-
-    /**
-     * 扩展提供方。扩展模块在自身 ContentProvider.onCreate 里调用 [register] 注册。
-     * 所有方法都必须容错（宿主不 catch，扩展自己兜底），并且**必须在未授权时返回空值**。
-     */
-    // ==================== 插件元信息与启停（设置页插件管理） ====================
-
     /** 插件元信息（设置页「插件管理」列表展示用）。 */
     data class PluginInfo(
         val id: String,
         val name: String,
         val version: String,
         val summary: String,
+        /** 官方签名插件 = true（由宿主安装时验签结果覆盖，插件自行填的值会被忽略）。 */
+        val trusted: Boolean = false,
     )
 
     interface Provider {
-        /** Application.onCreate 末尾回调（SpUtil / DB 均已就绪）。 */
+        /** 注册完成后由宿主回调（SpUtil / DB 均已就绪）。 */
         fun onApplicationInit(app: Application) {}
 
         /**
-         * 插件元信息。返回 null 表示插件不参与「插件管理」（不出现在设置页列表）。
+         * 宿主服务注入。trusted 插件收到完整服务；非官方插件收到只读裁剪版
+         * （发布类方法静默 no-op）。插件应保存该引用，之后经它调用宿主能力。
          */
+        fun onHostReady(host: HostServices) {}
+
+        /** 插件元信息（设置页「插件管理」）。返回 null 表示不参与插件管理列表。 */
         fun pluginInfo(): PluginInfo? = null
 
         /** 插件当前是否已启用（启用态由插件自行持久化与复验）。 */
@@ -106,10 +107,10 @@ object AppExtensions {
         /** 当前生效的额外成绩源；null 表示无（常规源生效）。 */
         fun activeExtraSource(game: GameType): ExtSource? = null
 
-        /** 用户在源选择器里选了第 [index] 个额外源。 */
+        /** 用户在源选择器里选了本插件的第 [index] 个额外源。 */
         fun onExtraSourcePicked(game: GameType, index: Int) {}
 
-        /** 用户选回了常规源（扩展源被切出，扩展应停用自身的替代模式）。 */
+        /** 用户选回了常规源（扩展源被切出，插件应停用自身的替代模式）。 */
         fun onRegularSourcePicked(game: GameType) {}
 
         /**
@@ -118,19 +119,19 @@ object AppExtensions {
         fun regularSourceMasked(game: GameType): Boolean = false
 
         /**
-         * 成绩刷新分发：返回 true 表示本游戏的成绩刷新由扩展接管（宿主跳过自身逻辑）。
+         * 成绩刷新分发：返回 true 表示本游戏的成绩刷新由本插件接管（宿主跳过自身逻辑）。
          */
         fun consumeRecordsRefresh(game: GameType): Boolean = false
 
-        /** 账户页查分器组的扩展条目。未授权返回空列表。 */
+        /** 账户页查分器组的插件条目。未授权返回空列表。 */
         fun meEntries(game: GameType): List<ExtEntry> = emptyList()
 
-        /** 账户页扩展条目点击。 */
+        /** 账户页插件条目点击（广播给全部插件，由插件自行判断 id 归属）。 */
         fun onMeEntry(game: GameType, id: String) {}
 
         /**
-         * 扩展页面内容。[ExtPage(id)] 渲染时回调；返回 null（未授权 / 未知 id）时
-         * 宿主渲染空占位。返回的 composable 由扩展全屏自管（含顶栏返回行为）。
+         * 插件页面内容。[ExtPage(id)] 渲染时回调；返回 null（未授权 / 未知 id）时
+         * 宿主渲染空占位。返回的 composable 由插件全屏自管（含顶栏返回行为）。
          */
         fun extPageContent(id: String): (@Composable (ScrollBehavior) -> Unit)? = null
     }
@@ -149,20 +150,9 @@ object AppExtensions {
         val enabled: Boolean = true,
     )
 
-    @Volatile
-    private var provider: Provider? = null
+    // ==================== 宿主能力（应用 → 插件 单向供给） ====================
 
-    /** 扩展注册（幂等：后注册者覆盖前者，进程内只会有一个扩展提供方）。 */
-    fun register(p: Provider) {
-        provider = p
-    }
-
-    private inline fun <T> call(default: T, block: Provider.() -> T): T =
-        runCatching { provider?.block() }.getOrNull() ?: default
-
-    // ==================== 宿主能力（应用 → 扩展 单向供给） ====================
-
-    /** 宿主向扩展开放的通用能力（全部可选，未设置即不可用）。 */
+    /** 宿主向插件开放的通用能力（全部可选，未设置即不可用）。 */
     interface HostServices {
         /** 曲库按标题检索（score 查询用）。 */
         suspend fun songSearch(query: String, limit: Int = 50): List<ExtSong> = emptyList()
@@ -175,6 +165,7 @@ object AppExtensions {
 
         /**
          * 发布外部成绩（宿主实现：走与常规源相同的落库 / B50 / 账户状态管线）。
+         * 仅官方签名插件可用；非官方注入实例上此方法静默 no-op。
          * @param historySourceKey Rating 历史分桶的源 key（null 不记历史）
          */
         suspend fun publishRecords(
@@ -184,7 +175,7 @@ object AppExtensions {
         ) {
         }
 
-        /** 外部通道失败上报（宿主实现：只更新账户状态错误文案）。 */
+        /** 外部通道失败上报（宿主实现：只更新账户状态错误文案）。仅官方插件可用。 */
         fun publishError(message: String) {}
 
         /** 当前常规成绩源的持久化 key（扩展源切换前记录用）；null 表示不可用。 */
@@ -196,66 +187,160 @@ object AppExtensions {
         }
     }
 
-    @Volatile
-    var host: HostServices? = null
+    /**
+     * 只读裁剪版宿主服务（注入给非官方签名插件）：
+     * 只读查询与提示原样透传，发布 / 写入类方法全部静默 no-op。
+     */
+    private class SafeHostServices(private val base: HostServices?) : HostServices {
+        override suspend fun songSearch(query: String, limit: Int): List<ExtSong> =
+            base?.songSearch(query, limit) ?: emptyList()
 
-    /** 页面导航：扩展请求打开扩展子页（宿主自行映射到内部路由）。 */
+        override suspend fun songById(songId: Int): ExtSong? = base?.songById(songId)
+
+        override suspend fun chartInfo(songId: Int, levelIndex: Int): ExtChartInfo? =
+            base?.chartInfo(songId, levelIndex)
+
+        override suspend fun publishRecords(
+            records: List<ExtRecord>,
+            nickname: String,
+            historySourceKey: String?,
+        ) {
+            // 非官方插件：发布类能力禁用（静默 no-op）
+        }
+
+        override fun publishError(message: String) {
+            // 非官方插件：禁用
+        }
+
+        override fun rawScoreSourceKey(game: GameType): String? = null
+    }
+
+    /** 完整宿主服务（HostDefaults 装配；仅注入给官方签名插件）。宿主装配入口 [attachHost]。 */
+    @Volatile
+    private var fullHost: HostServices? = null
+
+    /** 宿主（app 模块 HostDefaults）装配完整服务；注册插件时按信任级别分发。 */
+    fun attachHost(services: HostServices) {
+        if (fullHost == null) fullHost = services
+    }
+
+    /** 页面导航：插件请求打开插件子页（宿主自行映射到内部路由）。 */
     @Volatile
     var pageOpener: ((id: String, title: String) -> Unit)? = null
 
-    /** 宿主级对话框（扩展在非 UI 场景请求弹窗，如刷新失败引导）。 */
+    /** 宿主级对话框（插件在非 UI 场景请求弹窗，如刷新失败引导）。 */
     @Volatile
     var hostDialog: ((title: String, message: String) -> Unit)? = null
 
-    // ==================== 挂接点（应用代码调用） ====================
+    // ==================== 插件注册表 ====================
 
-    fun notifyApplicationInit(app: Application) {
-        call(Unit) { onApplicationInit(app) }
-    }
+    private class Entry(val provider: Provider, val id: String, val trusted: Boolean)
 
-    /** 插件元信息（设置页插件管理）；null 表示无插件参与。 */
-    fun pluginInfo(): PluginInfo? = call(null) { pluginInfo() }
-
-    /** 插件是否已启用（实时复验后的结果）。 */
-    fun pluginEnabled(): Boolean = call(false) { pluginEnabled() }
+    @Volatile
+    private var entries: List<Entry> = emptyList()
 
     /**
-     * 用户请求启用插件；返回 false 表示插件拒绝（宿主保持关闭，
-     * 插件可能已自行打开验证页面）。
+     * 注册插件（注册过程内同步回调 onApplicationInit 与 onHostReady）。
+     * 同 id 已注册时先移除旧条目（覆盖安装）。
+     *
+     * @param trusted 官方签名插件 = true（由 PluginLoader 安装时验签决定）
      */
-    fun onPluginEnableRequested(context: Context): Boolean =
-        call(false) { onPluginEnableRequested(context) }
-
-    /** 用户关闭插件。 */
-    fun onPluginDisabled(context: Context) {
-        call(Unit) { onPluginDisabled(context) }
+    fun register(p: Provider, app: Application, trusted: Boolean) {
+        val id = runCatching { p.pluginInfo()?.id }.getOrNull() ?: p.javaClass.name
+        entries = entries.filterNot { it.id == id } + Entry(p, id, trusted)
+        runCatching { p.onApplicationInit(app) }
+        val host = if (trusted) (fullHost ?: SafeHostServices(null)) else SafeHostServices(fullHost)
+        runCatching { p.onHostReady(host) }
     }
 
-    fun extraScoreSources(game: GameType): List<ExtSource> =
-        call(emptyList()) { extraScoreSources(game) }
+    /** 注销插件（卸载时调用）。 */
+    fun unregister(id: String) {
+        entries = entries.filterNot { it.id == id }
+    }
 
-    fun activeExtraSource(game: GameType): ExtSource? = call(null) { activeExtraSource(game) }
+    private fun trustedEntries(): List<Entry> = entries.filter { it.trusted }
+
+    // ==================== 挂接点（应用代码调用） ====================
+
+    /** 全部已注册插件的元信息（trusted 由宿主按验签结果覆盖）。 */
+    fun pluginInfos(): List<PluginInfo> = entries.mapNotNull { e ->
+        runCatching {
+            e.provider.pluginInfo()?.copy(trusted = e.trusted)
+        }.getOrNull()
+    }
+
+    /** 指定插件是否已启用（实时复验后的结果）。 */
+    fun pluginEnabled(id: String): Boolean = byId(id)?.let { e ->
+        runCatching { e.provider.pluginEnabled() }.getOrDefault(false)
+    } ?: false
+
+    /**
+     * 用户请求启用指定插件；返回 false 表示插件拒绝（宿主保持关闭，
+     * 插件可能已自行打开验证页面）。
+     */
+    fun onPluginEnableRequested(id: String, context: Context): Boolean = byId(id)?.let { e ->
+        runCatching { e.provider.onPluginEnableRequested(context) }.getOrDefault(false)
+    } ?: false
+
+    /** 用户关闭指定插件。 */
+    fun onPluginDisabled(id: String, context: Context) {
+        byId(id)?.let { e -> runCatching { e.provider.onPluginDisabled(context) } }
+    }
+
+    /** 额外成绩源聚合（仅官方插件参与；非官方插件不进入数据流）。 */
+    fun extraScoreSources(game: GameType): List<ExtSource> =
+        trustedEntries().fold(emptyList()) { acc, e ->
+            acc + (runCatching { e.provider.extraScoreSources(game) }.getOrDefault(emptyList()))
+        }
+
+    fun activeExtraSource(game: GameType): ExtSource? =
+        trustedEntries().firstNotNullOfOrNull { e ->
+            runCatching { e.provider.activeExtraSource(game) }.getOrNull()
+        }
 
     fun onExtraSourcePicked(game: GameType, index: Int) {
-        call(Unit) { onExtraSourcePicked(game, index) }
+        var remaining = index
+        for (e in trustedEntries()) {
+            val size = runCatching { e.provider.extraScoreSources(game) }.getOrDefault(emptyList()).size
+            if (remaining < size) {
+                runCatching { e.provider.onExtraSourcePicked(game, remaining) }
+                return
+            }
+            remaining -= size
+        }
     }
 
     fun onRegularSourcePicked(game: GameType) {
-        call(Unit) { onRegularSourcePicked(game) }
+        trustedEntries().forEach { e ->
+            runCatching { e.provider.onRegularSourcePicked(game) }
+        }
     }
 
     fun regularSourceMasked(game: GameType): Boolean =
-        call(false) { regularSourceMasked(game) }
+        trustedEntries().any { e -> runCatching { e.provider.regularSourceMasked(game) }.getOrDefault(false) }
 
     fun consumeRecordsRefresh(game: GameType): Boolean =
-        call(false) { consumeRecordsRefresh(game) }
+        trustedEntries().any { e ->
+            runCatching { e.provider.consumeRecordsRefresh(game) }.getOrDefault(false)
+        }
 
-    fun meEntries(game: GameType): List<ExtEntry> = call(emptyList()) { meEntries(game) }
+    /** 账户页插件条目聚合（全部插件均可参与展示类挂接点）。 */
+    fun meEntries(game: GameType): List<ExtEntry> =
+        entries.fold(emptyList()) { acc, e ->
+            acc + (runCatching { e.provider.meEntries(game) }.getOrDefault(emptyList()))
+        }
 
     fun onMeEntry(game: GameType, id: String) {
-        call(Unit) { onMeEntry(game, id) }
+        entries.forEach { e -> runCatching { e.provider.onMeEntry(game, id) } }
     }
 
-    fun extPageContent(id: String): (@Composable (ScrollBehavior) -> Unit)? =
-        call(null) { extPageContent(id) }
+    fun extPageContent(id: String): (@Composable (ScrollBehavior) -> Unit)? {
+        entries.forEach { e ->
+            val content = runCatching { e.provider.extPageContent(id) }.getOrNull()
+            if (content != null) return content
+        }
+        return null
+    }
+
+    private fun byId(id: String): Entry? = entries.firstOrNull { it.id == id }
 }

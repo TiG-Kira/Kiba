@@ -87,8 +87,8 @@ object HostDefaults {
         }.getOrNull()
     }
 
-    /** KibaApplication.onCreate 装配；常规源判定工具一并供给扩展复用。 */
+    /** KibaApplication.onCreate 装配；完整服务仅经 onHostReady 注入官方签名插件。 */
     fun install() {
-        if (AppExtensions.host == null) AppExtensions.host = DefaultHostServices()
+        AppExtensions.attachHost(DefaultHostServices())
     }
 }

@@ -92,3 +92,8 @@
 -keepclasseswithmembers class com.kira.kiba.core.maimai.** {
     kotlinx.serialization.KSerializer serializer(...);
 }
+
+# ── 插件动态加载：接口契约对第三方插件 dex 保持稳定（反射 cast 与注入路径） ──
+-keep class com.kira.kiba.core.host.AppExtensions { *; }
+-keep class com.kira.kiba.core.host.AppExtensions$* { *; }
+-keep class com.kira.kiba.core.host.PluginLoader { *; }
