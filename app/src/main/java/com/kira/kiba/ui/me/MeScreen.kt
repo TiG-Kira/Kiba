@@ -156,6 +156,12 @@ fun MeScreen(
     var showLogoutDialog by remember { mutableStateOf(false) }
     var logoutWaterFish by remember { mutableStateOf(false) }
     var logoutLxns by remember { mutableStateOf(false) }
+    var logoutMachine by remember { mutableStateOf(false) }
+    // 直连源生效中（插件扩展源；版本号 collect 触发重组，切源 / 登录态变化都会推新）
+    val directVersion by com.kira.kiba.core.host.AppExtensions.directAccountVersion.collectAsState()
+    val directActive = remember(directVersion, maimaiSource) {
+        com.kira.kiba.core.host.AppExtensions.activeExtraSource(GameType.MAIMAI) != null
+    }
 
     Scaffold(
         modifier = Modifier
@@ -376,24 +382,26 @@ fun MeScreen(
                             onClick = onOpenPlateQuery,
                         )
                     }
-                    // ── 退出登录（水鱼 / 落雪合并成一个入口）──
+                    // ── 退出登录（水鱼 / 落雪 / 机台直连合并成一个入口）──
                     // 两行分开挂的做法在只登一边时信息量尚可，两边都登录后就是两块「退出」，
-                    // 用户得先判断点哪个。合并成一次弹层、勾选要退的查分器，一眼看清。
-                    if (account.dfLoggedIn || lxnsBound) {
+                    // 用户得先判断点哪个。合并成一次弹层、勾选要退的账户，一眼看清。
+                    if (account.dfLoggedIn || lxnsBound || directActive) {
                         ArrowPreference(
                             title = "退出登录",
                             summary = buildString {
                                 val logged = buildList {
+                                    if (directActive) add("机台（直连）")
                                     if (account.dfLoggedIn) add("水鱼")
                                     if (lxnsBound) add("落雪")
                                 }
                                 append("当前登录：")
                                 append(logged.joinToString(" / "))
-                                append(" · 点击选择要退出的查分器")
+                                append(" · 点击选择要退出的账户")
                             },
                             startAction = { PrefIcon(MiuixGlassIcons.Regular.Unlock, com.kira.kiba.ui.common.KibaIconTint.RED) },
                             onClick = {
                                 // 默认全选「已登录的那几项」，用户取消勾选即可保留
+                                logoutMachine = directActive
                                 logoutWaterFish = account.dfLoggedIn
                                 logoutLxns = lxnsBound
                                 showLogoutDialog = true
@@ -435,15 +443,28 @@ fun MeScreen(
 
     // ── 退出登录弹层：按查分器多选 ──
     if (showLogoutDialog) {
-        val nothingSelected = !logoutWaterFish && !logoutLxns
+        val nothingSelected = !logoutWaterFish && !logoutLxns && !logoutMachine
         KibaGlassDialog(
             show = true,
             title = "退出登录",
-            summary = "勾选要退出登录的查分器。退出只会清除本机的登录凭据与账号缓存，" +
+            summary = "勾选要退出登录的账户。退出只会清除本机的登录凭据与账号缓存，" +
                 "已同步到本地的成绩与收藏不会删除。",
             onDismissRequest = { showLogoutDialog = false },
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
+                if (directActive) {
+                    LogoutChoiceRow(
+                        label = "机台账户（直连）",
+                        detail = if (logoutMachine) {
+                            "将向机台服务器发送登出请求并清除本机二维码凭据；" +
+                                "已同步到本地的查分器数据全部保留"
+                        } else {
+                            "保留机台登录"
+                        },
+                        checked = logoutMachine,
+                        onToggle = { logoutMachine = !logoutMachine },
+                    )
+                }
                 if (account.dfLoggedIn) {
                     LogoutChoiceRow(
                         label = "水鱼查分器",
@@ -479,9 +500,25 @@ fun MeScreen(
                         text = "确认退出",
                         enabled = !nothingSelected,
                         onClick = {
+                            if (logoutMachine) {
+                                showLogoutDialog = false
+                                // 机台真实登出（服务器侧会话结束）；回调可能来自子线程，
+                                // 切主线程弹提示。本地查分器数据由插件保留，不受影响。
+                                com.kira.kiba.core.host.AppExtensions.requestDirectLogout(
+                                    GameType.MAIMAI,
+                                ) { err ->
+                                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                        android.widget.Toast.makeText(
+                                            context,
+                                            err ?: "机台账户已退出登录",
+                                            android.widget.Toast.LENGTH_SHORT,
+                                        ).show()
+                                    }
+                                }
+                            }
                             if (logoutWaterFish) DivingFishAccount.unbind()
                             if (logoutLxns) LxnsAccount.logout()
-                            showLogoutDialog = false
+                            if (!logoutMachine) showLogoutDialog = false
                         },
                     )
                 }

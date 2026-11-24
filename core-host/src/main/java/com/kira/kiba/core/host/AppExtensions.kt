@@ -151,7 +151,41 @@ object AppExtensions {
          * 宿主渲染空占位。返回的 composable 由插件全屏自管（含顶栏返回行为）。
          */
         fun extPageContent(id: String): (@Composable (ScrollBehavior) -> Unit)? = null
+
+        /**
+         * 直连源账户页顶栏状态（舞萌成绩源为本插件的扩展源时，账户页大标题 / 副标题
+         * 由此提供）。返回 null = 不覆盖默认展示（宿主昵称 / 「当前登录：xx查分器」）。
+         *
+         * 实现要求：**同步快照读**（组合期安全，禁止网络 IO）；动态数据由插件缓存，
+         * 变化后调用 [AppExtensions.notifyDirectAccountChanged] 推送 UI 刷新。
+         */
+        fun directAccountState(game: GameType): ExtDirectAccount? = null
+
+        /**
+         * 宿主请求刷新直连账户状态（昵称 / 登录态）。异步执行，完成后插件应调用
+         * [AppExtensions.notifyDirectAccountChanged]；失败静默（保留旧缓存值）。
+         */
+        fun refreshDirectAccount(game: GameType) {}
+
+        /**
+         * 请求退出直连账户（真实登出：向服务器发送登出请求并清除本机凭据）。
+         * 本地已同步的查分器数据与成绩**不受影响**。
+         *
+         * @param onResult 完成回调（可能来自任意线程，宿主自行切主线程）：
+         *   null = 成功；非 null = 错误文案
+         */
+        fun requestDirectLogout(game: GameType, onResult: (String?) -> Unit) {}
     }
+
+    /**
+     * 直连源账户页顶栏状态（[Provider.directAccountState] 的返回值）。
+     */
+    data class ExtDirectAccount(
+        /** 大标题：机台昵称（未取到时为空串，宿主回落「账户」）。 */
+        val title: String,
+        /** 副标题：直连登录态描述。 */
+        val subtitle: String,
+    )
 
     data class ExtSource(
         val key: String,
@@ -364,6 +398,43 @@ object AppExtensions {
             if (content != null) return content
         }
         return null
+    }
+
+    // ==================== 直连账户顶栏（账户页 ↔ 插件） ====================
+
+    /**
+     * 直连账户状态版本号：插件在昵称 / 登录态变化后递增，账户页顶栏 collect 触发重组。
+     * （ Provider 接口是同步快照读，没有 Flow 通道，用版本号做轻量重组信号。）
+     */
+    val directAccountVersion: kotlinx.coroutines.flow.MutableStateFlow<Int> =
+        kotlinx.coroutines.flow.MutableStateFlow(0)
+
+    /** 插件调用：直连账户状态已变化（昵称 / 登录态 / 源切换），宿主 UI 刷新。 */
+    fun notifyDirectAccountChanged() {
+        directAccountVersion.value = directAccountVersion.value + 1
+    }
+
+    /** 直连源账户页顶栏状态（仅官方插件参与；无插件提供时返回 null = 不覆盖默认展示）。 */
+    fun directAccountState(game: GameType): ExtDirectAccount? =
+        trustedEntries().firstNotNullOfOrNull { e ->
+            runCatching { e.provider.directAccountState(game) }.getOrNull()
+        }
+
+    /** 请求插件刷新直连账户状态（广播给全部官方插件，插件自行判断归属并静默失败）。 */
+    fun refreshDirectAccount(game: GameType) {
+        trustedEntries().forEach { e ->
+            runCatching { e.provider.refreshDirectAccount(game) }
+        }
+    }
+
+    /**
+     * 请求退出直连账户（广播语义：由提供直连源的插件处理并回调；
+     * 无插件响应时不回调——UI 只在 directAccountState != null 时展示该入口）。
+     */
+    fun requestDirectLogout(game: GameType, onResult: (String?) -> Unit) {
+        trustedEntries().forEach { e ->
+            runCatching { e.provider.requestDirectLogout(game, onResult) }
+        }
     }
 
     private fun byId(id: String): Entry? = entries.firstOrNull { it.id == id }

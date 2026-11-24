@@ -121,6 +121,20 @@ fun MeTopBarSlot(
     val isChuni = gameType == GameType.CHUNITHM
     val source = if (isChuni) chuniSource else maimaiSource
 
+    // ── 直连源（舞萌机台协议）顶栏状态 ──
+    // 标题 = 机台真实昵称（插件缓存，refreshNickname 异步取回后经版本号推送重组），
+    // 副标题 = 直连登录态；插件未提供（非直连 / 未启用）时回落常规展示。
+    val directVersion by com.kira.kiba.core.host.AppExtensions.directAccountVersion.collectAsState()
+    val isDirect = !isChuni &&
+        com.kira.kiba.core.host.AppExtensions.activeExtraSource(GameType.MAIMAI) != null
+    val directState = remember(directVersion, isDirect, source) {
+        if (isDirect) com.kira.kiba.core.host.AppExtensions.directAccountState(GameType.MAIMAI) else null
+    }
+    // 进页 / 切到直连源时拉一次最新昵称（GetUserPreviewApi 免登录，失败静默保留旧值）
+    LaunchedEffect(isDirect, directVersion) {
+        if (isDirect) com.kira.kiba.core.host.AppExtensions.refreshDirectAccount(GameType.MAIMAI)
+    }
+
     val nickname = if (isChuni) {
         remember(chuniState) { ChuniRecordSync.getLocalNickname() }
     } else {
@@ -132,8 +146,10 @@ fun MeTopBarSlot(
         dfAccount.bound
     }
     val avatarUrl = avatars.forAccount(gameType, source)
-    val largeTitle = nickname.ifBlank { "账户" }
-    val subtitle = if (loggedIn) "当前登录：${source.shortLabel}查分器" else "当前未登录查分器"
+    val largeTitle = directState?.title?.takeIf { it.isNotBlank() }
+        ?: nickname.ifBlank { "账户" }
+    val subtitle = directState?.subtitle
+        ?: if (loggedIn) "当前登录：${source.shortLabel}查分器" else "当前未登录查分器"
 
     // 取图优先级：自定义 > 自动抓取 > 默认。自定义命中时不再触发远程解码。
     val customVersion = if (customAvatar.hasImage) customAvatar.version else 0L
@@ -236,7 +252,16 @@ fun MeTopBarSlot(
                 },
                 navigationIcon = {},
                 actions = {
-                    MeRefreshAction(onClick = onRefresh, tint = actionColor)
+                    MeRefreshAction(
+                        onClick = {
+                            onRefresh()
+                            // 直连源时顺带刷新机台昵称 / 登录态（免登录轻量接口）
+                            if (isDirect) {
+                                com.kira.kiba.core.host.AppExtensions.refreshDirectAccount(GameType.MAIMAI)
+                            }
+                        },
+                        tint = actionColor,
+                    )
                 },
                 background = {
                     Box(modifier = Modifier.fillMaxSize()) {
