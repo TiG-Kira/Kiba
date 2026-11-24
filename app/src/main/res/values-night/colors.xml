@@ -1,0 +1,5 @@
+<resources>
+    <!-- 页面底色守则：窗口背景 = miuix surface 暗色值（miuix darkColorScheme.background
+         ≈ #242424；Compose 侧 KibaTheme 根 Box 会用运行时主题色接管） -->
+    <color name="kiba_window_background">#242424</color>
+</resources>

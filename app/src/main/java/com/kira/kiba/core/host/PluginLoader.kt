@@ -40,6 +40,19 @@ object PluginLoader {
     class InstallException(message: String) : Exception(message)
 
     /**
+     * 安装结果。同 id 导入已安装的插件 = **升级**（覆盖安装：旧 dex/so 目录被替换，
+     * 插件的持久化数据（shared_prefs 等）不在安装目录内，天然保留——激活态、
+     * 协议配置跨升级不丢）。
+     */
+    data class InstallResult(
+        val info: AppExtensions.PluginInfo,
+        /** true = 同 id 已存在旧版本，本次为覆盖升级（versionCode/目录已替换）。 */
+        val upgraded: Boolean,
+        /** 升级前的版本号（upgraded=false 时为 null）。 */
+        val oldVersion: String?,
+    )
+
+    /**
      * 官方插件签名公钥（EC P-256，X.509 SubjectPublicKeyInfo，Base64）。
      * 由 tools/signing/gen_keys.py 生成官方密钥对后填入。
      * 空串 = 官方校验未配置（所有插件一律按社区插件对待）。
@@ -64,10 +77,11 @@ object PluginLoader {
     // ==================== 安装 ====================
 
     /**
-     * 从系统文件选择器返回的 [uri] 安装插件；成功返回插件元信息，
+     * 从系统文件选择器返回的 [uri] 安装插件；同 id 已存在时执行**升级**
+     * （覆盖安装，插件持久化数据保留）。成功返回 [InstallResult]（含升级语义），
      * 失败抛 [InstallException]（UI 层提示用户）。
      */
-    fun install(context: Context, uri: Uri, app: Application): AppExtensions.PluginInfo {
+    fun install(context: Context, uri: Uri, app: Application): InstallResult {
         android.util.Log.i("KibaPluginLoader", "install from uri=$uri")
         val tmp = File(context.cacheDir, "plugin_install_${System.currentTimeMillis()}")
         try {
@@ -81,19 +95,29 @@ object PluginLoader {
                 throw InstallException("安装失败：插件包缺少 classes.dex")
             }
             val trusted = verifyOfficial(root, manifest)
-            // 覆盖安装：同 id 先注销旧实例并清空旧目录
+            // 覆盖安装：同 id 先注销旧实例并清空旧目录。
+            // 升级语义：旧目录存在 = 升级（读旧版本号用于提示）——注意不能走
+            // uninstall()（那会连插件目录一起删，这里只替换代码目录，SP 天然保留）。
             val dest = File(pluginsRoot(context), manifest.id)
+            val upgraded = dest.isDirectory && dest.listFiles()?.isNotEmpty() == true
+            val oldVersion = if (upgraded) {
+                runCatching { parseManifest(File(dest, "plugin.xml")).version }.getOrNull()
+            } else null
             AppExtensions.unregister(manifest.id)
             if (dest.exists()) dest.deleteRecursively()
             dest.mkdirs()
             copyDir(root, dest)
             loadAndRegister(context, dest, manifest, app, trusted)
-            return AppExtensions.PluginInfo(
-                id = manifest.id,
-                name = manifest.name,
-                version = manifest.version,
-                summary = manifest.summary,
-                trusted = trusted,
+            return InstallResult(
+                info = AppExtensions.PluginInfo(
+                    id = manifest.id,
+                    name = manifest.name,
+                    version = manifest.version,
+                    summary = manifest.summary,
+                    trusted = trusted,
+                ),
+                upgraded = upgraded,
+                oldVersion = oldVersion,
             )
         } catch (e: InstallException) {
             throw e

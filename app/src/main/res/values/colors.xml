@@ -38,4 +38,6 @@
     <color name="remaster_border">#EDD2F1</color>
     <color name="mmd_color_red">#FF4646</color>
     <color name="mmd_color_green">#2FCA4C</color>
+    <!-- 页面底色守则：窗口背景 = miuix surface 亮色值（暗色见 values-night） -->
+    <color name="kiba_window_background">#F7F7F7</color>
 </resources>

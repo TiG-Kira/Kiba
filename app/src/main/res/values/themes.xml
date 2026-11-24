@@ -1,10 +1,15 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
     <!-- Compose 全屏无 ActionBar 主题；miuix 自带主题接管界面，这里仅作窗口外壳。
          edge-to-edge 由 MainActivity 显式 enableEdgeToEdge() 开启（不复写 windowOptOut），
-         系统栏透明 + 图标明暗跟随主题。 -->
+         系统栏透明 + 图标明暗跟随主题。
+         windowBackground 覆盖为 miuix 页面底色守则值（surface：亮 #F7F7F7 / 暗色
+         values-night #242424）——parent 是 Material3，默认底色暗色偏紫，冷启动首帧
+         与 Compose 未铺满的空隙都会露出 material3 底色；Compose 侧 KibaTheme 根
+         Box 动态铺 miuix surface 接管后续渲染。 -->
     <style name="Theme.Kiba" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">?attr/isLightTheme</item>
+        <item name="android:windowBackground">@color/kiba_window_background</item>
     </style>
 </resources>

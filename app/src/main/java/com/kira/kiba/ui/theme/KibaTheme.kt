@@ -1,5 +1,6 @@
 package com.kira.kiba.ui.theme
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -37,7 +38,15 @@ fun KibaTheme(content: @Composable () -> Unit) {
         // colorSchemeMode 只读，切换必须重建实例
         controller = remember(colorSchemeMode) { ThemeController(colorSchemeMode = colorSchemeMode) },
         content = {
-            Box(modifier = Modifier.fillMaxSize()) {
+            // 页面底色守则：根层铺 miuix colorScheme.surface（亮 #F7F7F7 / 暗色对应
+            // miuix 暗色底）。此前没有根底色，窗口背景暴露的是 XML 主题
+            // Theme.Material3.DayNight 的底（暗色偏紫）——预测性返回手势缩小页面、
+            // 页面转场露底时都能看到。在这里动态跟随 miuix 取色。
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MiuixTheme.colorScheme.surface),
+            ) {
                 content()
             }
         },

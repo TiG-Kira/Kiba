@@ -4,6 +4,8 @@ import android.app.Application
 import android.content.Context
 import android.widget.Toast
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.unit.Dp
 import com.kira.kiba.core.model.GameType
 import com.kira.kiba.core.model.ScoreSource
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
@@ -27,6 +29,21 @@ import top.yukonga.miuix.kmp.basic.ScrollBehavior
  * - 宿主内置实现（曲库检索 / 成绩发布等）由 app 模块的 `HostDefaults` 装配，本层不含实现。
  */
 object AppExtensions {
+
+    // ==================== 插件页布局契约（宿主 → 插件 单向供给） ====================
+
+    /**
+     * 宿主当前页面的顶栏遮挡量（topBar 实测高度，含塌缩联动）。
+     *
+     * Kiba 守则：内容满高铺开、顶栏浮在内容之上（玻璃取景需要内容延伸到顶栏下方），
+     * 页面必须自己用这个值做列表 contentPadding 顶部留白——插件页照做才能「不顶进
+     * topbar」。宿主在渲染插件页（[extPageContent] 的返回值）时 provide 实测值；
+     * 插件页脚手架读取它，取不到（宿主未 provide / 旧宿主）时回落各自的安全值。
+     *
+     * 定义在 core-host 的意义：宿主与插件分属不同 classloader，但 core-host 类走
+     * 双亲委派由宿主提供——这个对象是同一个实例，CompositionLocal 才能跨层传递。
+     */
+    val LocalExtPageTopClearance = staticCompositionLocalOf { Dp.Unspecified }
 
     // ==================== 数据传输对象（宿主 ↔ 插件 的中性 DTO） ====================
 

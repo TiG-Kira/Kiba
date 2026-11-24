@@ -166,6 +166,7 @@
 -keep class androidx.compose.ui.text.style.TextAlign { *; }
 -keep class androidx.compose.ui.text.style.TextDecoration { *; }
 -keep class androidx.compose.ui.unit.Dp { *; }
+-keep class androidx.compose.ui.unit.Dp$Companion { *; }
 -keep class androidx.compose.ui.unit.TextUnitKt { *; }
 -keep class com.google.zxing.Binarizer { *; }
 -keep class com.google.zxing.BinaryBitmap { *; }

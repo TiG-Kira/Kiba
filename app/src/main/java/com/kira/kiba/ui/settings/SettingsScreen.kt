@@ -467,10 +467,19 @@ fun SettingsScreen(
                         runCatching {
                             com.kira.kiba.core.host.PluginLoader.install(context, uri, appCtx)
                         }.fold(
-                            onSuccess = { info ->
+                            onSuccess = { result ->
+                                val info = result.info
                                 installOk = true
-                                installResult = "插件「${info.name}」安装成功（${info.version}）" +
-                                    if (info.trusted) " · 官方签名" else " · 社区插件（功能受限）"
+                                // 升级语义：同 id 导入 = 覆盖升级（数据保留），提示与首装区分
+                                installResult = if (result.upgraded) {
+                                    val from = result.oldVersion?.takeIf { it.isNotBlank() } ?: "未知版本"
+                                    "插件「${info.name}」已升级（$from → ${info.version}），" +
+                                        "激活状态与配置已保留" +
+                                        if (info.trusted) " · 官方签名" else " · 社区插件（功能受限）"
+                                } else {
+                                    "插件「${info.name}」安装成功（${info.version}）" +
+                                        if (info.trusted) " · 官方签名" else " · 社区插件（功能受限）"
+                                }
                             },
                             onFailure = { e ->
                                 installOk = false

@@ -19,6 +19,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -474,7 +475,7 @@ private val ExpandAccelerateEasing = CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f)
  * @param shrinkOnExit  退场目的地是否是列表（subStack 已空 → 回到 Tab）
  */
 @Composable
-private fun AnimatedContentScope.SongDetailExpandHost(
+private fun SongDetailExpandHost(
     sourceRect: Rect?,
     enteredByPush: Boolean,
     isActive: Boolean,
@@ -799,6 +800,276 @@ fun KibaMainScreen() {
     val chuniSyncState by ChuniSongSync.state.collectAsState()
     val chuniSyncing = chuniSyncState is ChuniSongSync.SyncState.Syncing
 
+    // 系统返回：先退二级页面（出栈），清空后再放行给 Activity。
+    // PredictiveBackHandler 替代普通 BackHandler 适配预测性返回手势：
+    // - 手势进行中：progress 持续写入 predictiveBackProgress，页面随之缩小贴边；
+    //   同时 predictiveBackTarget 记录「将要回到的页面」（栈下层或当前 Tab），
+    //   内容区在缩小层之下渲染它的真实内容（下层预览）——与系统预测性返回一致，
+    //   而非露出纯色底。提交/取消后清掉。
+    // - 手势提交：事件流正常结束 → 清预览、popPage()（走 AnimatedContent 的返回转场）；
+    // - 手势取消：collect 被 cancel → spring 弹回 0，页面恢复原样；预览层保留到
+    //   弹回动画结束再收走（弹回过程中下层内容可见，观感连续）；
+    // - API 33 等不支持进度回调的设备：事件流无进度直接完成，行为退化为普通返回出栈。
+    // 顶栏实测遮挡量（Scaffold padding 现算后写入）：renderPage（页面统一渲染入口）
+    // 需要它给插件页 provide 布局契约——renderPage 定义在 Scaffold content 之外，
+    // 拿不到 content lambda 的局部 padding，所以用这个函数级状态中转。
+    // Scaffold content 每次重组写入最新值（值不变不触发额外重组）。
+    var topBarClearanceDp by remember { mutableStateOf(0.dp) }
+
+    // ── 页面内容统一渲染入口 ──
+    // AnimatedContent 的当前页与预测性返回的下层预览共用同一套页面分发
+    // （预览层复用真实内容：手势中缩小层露出下层页面而非纯色底，
+    //   对齐系统预测性返回「露出上一层预览」的形态）。
+    // 注意：SaveableStateProvider 由调用方包裹（当前页 / 预览层 key 不同，不冲突）。
+    val renderPage: @Composable (Any) -> Unit = { target ->
+        when (target) {
+            is KibaSubPage -> when (target) {
+            is KibaSubPage.SongDetail -> SongDetailExpandHost(
+                sourceRect = expandSourceRect,
+                enteredByPush = navForward,
+                isActive = subStack.lastOrNull() == target,
+                shrinkOnExit = subStack.isEmpty(),
+            ) {
+                SongDetailScreen(
+                    songId = target.songId,
+                    scrollBehavior = scrollBehavior,
+                    onOpenChart = { songId, difficultyOrdinal ->
+                        pushPage(KibaSubPage.ChartDetail(songId, difficultyOrdinal))
+                    },
+                    onOpenPlayer = { pushPage(KibaSubPage.SongPlayer) },
+                )
+            }
+            is KibaSubPage.SongPlayer -> {
+                // 返回下沉时播放页必须压在下层页面之上，否则
+                // 一返回就被目标页盖住，下沉动画看不见
+                // （注意不能用 AnimatedVisibilityScope.transition 判方向，
+                //  那是子转场 Transition<EnterExitState>，与页面无关）
+                val playerOnTop = subStack.lastOrNull() != target
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .zIndex(if (playerOnTop) 1f else 0f),
+                ) {
+                    SongPlayerScreen(
+                        scrollBehavior = scrollBehavior,
+                        onBack = { popPage() },
+                    )
+                }
+            }
+            is KibaSubPage.ChartDetail -> ChartDetailScreen(
+                songId = target.songId,
+                difficultyOrdinal = target.difficultyOrdinal,
+                scrollBehavior = scrollBehavior,
+                onOpenPreview = { url, t, s, id, img ->
+                    pushPage(KibaSubPage.ChartPreview(url, t, s, id, img))
+                },
+            )
+            is KibaSubPage.ChartPreview -> ChartPreviewScreen(
+                url = target.url,
+                title = target.songTitle,
+                subtitle = target.songSubtitle,
+                songId = target.songId,
+                songImageUrl = target.songImageUrl,
+                onBack = { popPage() },
+            )
+            is KibaSubPage.ChuniSongDetail -> SongDetailExpandHost(
+                sourceRect = expandSourceRect,
+                enteredByPush = navForward,
+                isActive = subStack.lastOrNull() == target,
+                shrinkOnExit = subStack.isEmpty(),
+            ) {
+                ChuniSongDetailScreen(
+                    songId = target.songId,
+                    scrollBehavior = scrollBehavior,
+                    onOpenChart = { songId, difficultyOrdinal ->
+                        pushPage(KibaSubPage.ChuniChartDetail(songId, difficultyOrdinal))
+                    },
+                )
+            }
+            is KibaSubPage.ChuniChartDetail -> ChuniChartDetailScreen(
+                songId = target.songId,
+                difficultyOrdinal = target.difficultyOrdinal,
+                scrollBehavior = scrollBehavior,
+            )
+            is KibaSubPage.Best50 -> Best50Screen(
+                scrollBehavior = scrollBehavior,
+                onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
+            )
+            is KibaSubPage.ChuniBest -> ChuniBestScreen(
+                scrollBehavior = scrollBehavior,
+                onOpenSong = { songId -> pushPage(KibaSubPage.ChuniSongDetail(songId)) },
+            )
+            is KibaSubPage.ScoreQuery -> ScoreQueryScreen(
+                scrollBehavior = scrollBehavior,
+                onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
+            )
+            is KibaSubPage.PlateQuery -> PlateQueryScreen(
+                scrollBehavior = scrollBehavior,
+                onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
+            )
+            is KibaSubPage.Toolbox -> ToolboxScreen(
+                scrollBehavior = scrollBehavior,
+                gameType = gameType,
+                onOpenRatingCalc = { pushPage(KibaSubPage.RatingCalc) },
+                onOpenDxConverter = { pushPage(KibaSubPage.DxConverter) },
+                onOpenHotCharts = { pushPage(KibaSubPage.HotCharts) },
+                onOpenVersionMap = { pushPage(KibaSubPage.VersionMap) },
+                onOpenFriendQuery = { pushPage(KibaSubPage.FriendQuery) },
+                onOpenGatewayAccount = { pushPage(KibaSubPage.GatewayAccount) },
+                onOpenMachineLogin = { WeChatJump.openOfficialAccount(context) },
+            )
+            is KibaSubPage.RatingCalc -> RatingCalcScreen(scrollBehavior = scrollBehavior)
+            is KibaSubPage.VersionMap -> VersionMapScreen(scrollBehavior = scrollBehavior)
+            is KibaSubPage.HotCharts -> HotChartsScreen(
+                scrollBehavior = scrollBehavior,
+                onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
+            )
+            is KibaSubPage.FriendQuery -> FriendQueryScreen(
+                scrollBehavior = scrollBehavior,
+                onOpenSong = { songId, chuni ->
+                    pushPage(
+                        if (chuni) KibaSubPage.ChuniSongDetail(songId)
+                        else KibaSubPage.SongDetail(songId)
+                    )
+                },
+            )
+            is KibaSubPage.LlmConfig -> LlmConfigScreen(scrollBehavior = scrollBehavior)
+            is KibaSubPage.AgentMemory -> AgentMemoryScreen(scrollBehavior = scrollBehavior)
+            is KibaSubPage.Login -> LoginScreen(
+                scrollBehavior = scrollBehavior,
+                onLoginSuccess = { popPage() },
+            )
+            is KibaSubPage.LxnsLogin -> LxnsLoginScreen(
+                scrollBehavior = scrollBehavior,
+                onLoginSuccess = { popPage() },
+            )
+            is KibaSubPage.SongGroup -> SongGroupScreen(
+                mode = target.mode,
+                groupKey = target.key,
+                scrollBehavior = scrollBehavior,
+                onSongClick = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
+                onChuniSongClick = { song ->
+                    pushPage(KibaSubPage.ChuniSongDetail(song.song.id))
+                },
+                showDisplayPicker = songGroupShowDisplayPicker,
+                onDismissDisplayPicker = { songGroupShowDisplayPicker = false },
+            )
+            is KibaSubPage.DxConverter -> DxConverterScreen(scrollBehavior = scrollBehavior)
+            is KibaSubPage.MachineUpdate -> MachineUpdateScreen(scrollBehavior = scrollBehavior)
+            is KibaSubPage.QrImport -> QrImportScreen(scrollBehavior = scrollBehavior)
+            is KibaSubPage.GatewayAccount -> EasyMaiAccountScreen(scrollBehavior = scrollBehavior)
+            is KibaSubPage.Favorites -> FavoritesScreen(
+                scrollBehavior = scrollBehavior,
+                onOpenSong = { song -> pushPage(KibaSubPage.SongDetail(song.songData.id)) },
+                onOpenChuniSong = { chuni ->
+                    pushPage(KibaSubPage.ChuniSongDetail(chuni.song.id))
+                },
+                onOpenPlayer = { pushPage(KibaSubPage.SongPlayer) },
+            )
+            is KibaSubPage.DeviceScore -> DeviceScoreScreen(scrollBehavior = scrollBehavior)
+            is KibaSubPage.AvatarCrop -> AvatarCropScreen(onDone = { popPage() })
+            is KibaSubPage.About -> AboutScreen(scrollBehavior = scrollBehavior)
+            is KibaSubPage.ExtPage -> {
+                // 本地扩展宿主页面：内容完全由扩展提供（未授权 / 未知 id 时空占位）
+                val extContent = com.kira.kiba.core.host.AppExtensions
+                    .extPageContent(target.id)
+                if (extContent != null) {
+                    // 布局契约：把顶栏实测遮挡量传给插件页（core-host 的
+                    // LocalExtPageTopClearance 经双亲委派共享同一实例），
+                    // 插件页据此做列表顶部留白——守则「页面顶不进 topbar」
+                    CompositionLocalProvider(
+                        com.kira.kiba.core.host.AppExtensions.LocalExtPageTopClearance
+                            provides topBarClearanceDp,
+                    ) {
+                        extContent(scrollBehavior)
+                    }
+                } else {
+                    Box(modifier = Modifier.fillMaxSize())
+                }
+            }
+            is KibaSubPage.ListenPlaylist -> PlaylistDetailScreen(
+                playlistId = target.playlistId,
+                scrollBehavior = scrollBehavior,
+                onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
+                onBack = { popPage() },
+            )
+            is KibaSubPage.ListenAgentPlaylist -> AgentPlaylistDetailScreen(
+                playlistId = target.id,
+                scrollBehavior = scrollBehavior,
+                onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
+            )
+            is KibaSubPage.ListenDownloads -> DownloadsScreen(
+                scrollBehavior = scrollBehavior,
+                onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
+            )
+        }
+
+        else -> when (target) {
+            KibaTab.Songs -> SongsScreen(
+                scrollBehavior = scrollBehavior,
+                searchTrigger = songsSearchTrigger,
+                gameType = gameType,
+                showGroupPicker = songsShowGroupPicker,
+                onDismissGroupPicker = { songsShowGroupPicker = false },
+                onSongClick = { song ->
+                    pushPage(KibaSubPage.SongDetail(song.songData.id))
+                },
+                onChuniSongClick = { chuni ->
+                    pushPage(KibaSubPage.ChuniSongDetail(chuni.song.id))
+                },
+                onOpenGroup = { mode, key ->
+                    pushPage(KibaSubPage.SongGroup(mode, key))
+                },
+            )
+            KibaTab.Agent -> AgentScreen(
+                scrollBehavior = scrollBehavior,
+                showFunctionPopup = agentShowFunctionPopup,
+                onDismissFunctionPopup = { agentShowFunctionPopup = false },
+                onOpenSong = { songId, game ->
+                    pushPage(
+                        if (game == KibaAgent.GAME_CHUNITHM) {
+                            KibaSubPage.ChuniSongDetail(songId)
+                        } else {
+                            KibaSubPage.SongDetail(songId)
+                        }
+                    )
+                },
+            )
+            KibaTab.Listen -> ListenScreen(
+                scrollBehavior = scrollBehavior,
+                onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
+                onOpenPlaylist = { id -> pushPage(KibaSubPage.ListenPlaylist(id)) },
+                onOpenAgentPlaylist = { id -> pushPage(KibaSubPage.ListenAgentPlaylist(id)) },
+                onOpenDownloads = { pushPage(KibaSubPage.ListenDownloads) },
+            )
+            KibaTab.Me -> MeScreen(
+                scrollBehavior = scrollBehavior,
+                onOpenLogin = { pushPage(KibaSubPage.Login) },
+                onOpenLxnsLogin = { pushPage(KibaSubPage.LxnsLogin) },
+                onOpenBest50 = { pushPage(KibaSubPage.Best50) },
+                onOpenScoreQuery = { pushPage(KibaSubPage.ScoreQuery) },
+                onOpenPlateQuery = { pushPage(KibaSubPage.PlateQuery) },
+                onOpenFavorites = { pushPage(KibaSubPage.Favorites) },
+                // 2.3.0：设置页「查分器工具」组整组迁入账户页查分器组
+                onOpenMachineUpdate = { pushPage(KibaSubPage.MachineUpdate) },
+                onOpenQrImport = { pushPage(KibaSubPage.QrImport) },
+                // 2.6.0：工具箱合并成单入口（站外 + 本地工具都在子页里）
+                onOpenToolbox = { pushPage(KibaSubPage.Toolbox) },
+                onOpenChuniBest = { pushPage(KibaSubPage.ChuniBest) },
+            )
+            KibaTab.Settings -> SettingsScreen(
+                scrollBehavior = scrollBehavior,
+                onOpenLlmConfig = { pushPage(KibaSubPage.LlmConfig) },
+                onOpenAgentMemory = { pushPage(KibaSubPage.AgentMemory) },
+                onOpenAbout = { pushPage(KibaSubPage.About) },
+                onOpenDeviceScore = { pushPage(KibaSubPage.DeviceScore) },
+                onOpenAvatarCrop = { pushPage(KibaSubPage.AvatarCrop) },
+            )
+        }
+        }
+    }
+
+
     val density = LocalDensity.current
     // 隐藏手势提示线后 navigationBars inset 可能为 0，保底 12dp 贴屏幕底边
     val systemNavBarsHeight = with(density) {
@@ -813,18 +1084,15 @@ fun KibaMainScreen() {
     // 顶栏与底栏共用的取景层（miuix-blur）
     val glassNavBackdrop = rememberLayerBackdrop()
 
-    // 系统返回：先退二级页面（出栈），清空后再放行给 Activity。
-    // PredictiveBackHandler 替代普通 BackHandler 适配预测性返回手势：
-    // - 手势进行中：progress 持续写入 predictiveBackProgress，页面随之缩小贴边；
-    // - 手势提交：事件流正常结束 → 清进度、popPage()（走 AnimatedContent 的返回转场）；
-    // - 手势取消：collect 被 cancel → spring 弹回 0，页面恢复原样；
-    // - API 33 等不支持进度回调的设备：事件流无进度直接完成，行为退化为普通返回出栈。
+    var predictiveBackTarget by remember { mutableStateOf<Any?>(null) }
     PredictiveBackHandler(enabled = subStack.isNotEmpty()) { events ->
         try {
+            predictiveBackTarget = subStack.dropLast(1).lastOrNull() ?: selectedTab
             events.collect { event ->
                 predictiveBackEdge = event.swipeEdge
                 predictiveBackProgress.snapTo(event.progress)
             }
+            predictiveBackTarget = null
             predictiveBackProgress.snapTo(0f)
             popPage()
         } catch (e: CancellationException) {
@@ -834,6 +1102,7 @@ fun KibaMainScreen() {
                     0f,
                     spring(stiffness = Spring.StiffnessMediumLow),
                 )
+                predictiveBackTarget = null
             }
             throw e
         }
@@ -844,6 +1113,22 @@ fun KibaMainScreen() {
         // 液态玻璃弹层用同一条内容取景层的 kyant 版本；SOFT 时置 null，弹层回落 miuix glass
         LocalLiquidBackdrop provides if (isLiquid) liquidBackdrop else null,
     ) {
+      // 预测性返回下层预览：z 序在 Scaffold（缩小层）之下，手势中随缩小露出。
+      // 预览层渲染下层页面的真实内容（与正式页面同一 renderPage + 状态 holder），
+      // 底色铺 miuix surface（页面底色守则）。
+      Box(modifier = Modifier.fillMaxSize()) {
+          predictiveBackTarget?.let { preview ->
+              Box(
+                  modifier = Modifier
+                      .fillMaxSize()
+                      .background(MiuixTheme.colorScheme.surface),
+              ) {
+                  pageStateHolder.SaveableStateProvider(pageKey(preview)) {
+                      renderPage(preview)
+                  }
+              }
+          }
+      // ↓ Scaffold（缩小层）
       Scaffold(
           modifier = Modifier
               .fillMaxSize()
@@ -1283,6 +1568,8 @@ fun KibaMainScreen() {
           // 顶栏遮挡量从 Scaffold 自身 padding 现取：顶栏塌缩时测量高度同步收缩，
           // 常量会留下一条不透带（Termux Ultra GlassPageHost 同款做法）。
           val topBarClearance = padding.calculateTopPadding()
+          // 同步到函数级状态：renderPage 的 ExtPage 分支（预览层 / 转场层）需要
+          topBarClearanceDp = topBarClearance
           // 底栏实际占高（含系统导航栏）。二级页里底栏槽只有「正在播放」条，
           // 减掉系统导航栏就是页面该额外让出的净高；无播放条时底栏高 0 → 自然为 0。
           // 主页 Tab 恒为 0：那些页走 withNavBar=true 的留白口径（导航栏 + 播放条分别计），
@@ -1416,243 +1703,7 @@ fun KibaMainScreen() {
                       // 按页面隔离保存状态：push 子页时当前页 state 存入 holder，
                       // 返回时恢复（滚动位置/输入内容不丢）；切 Tab 时已在 onSelect 清空目标页。
                       pageStateHolder.SaveableStateProvider(pageKey(target)) {
-                          when (target) {
-                              is KibaSubPage -> when (target) {
-                              is KibaSubPage.SongDetail -> SongDetailExpandHost(
-                                  sourceRect = expandSourceRect,
-                                  enteredByPush = navForward,
-                                  isActive = subStack.lastOrNull() == target,
-                                  shrinkOnExit = subStack.isEmpty(),
-                              ) {
-                                  SongDetailScreen(
-                                      songId = target.songId,
-                                      scrollBehavior = scrollBehavior,
-                                      onOpenChart = { songId, difficultyOrdinal ->
-                                          pushPage(KibaSubPage.ChartDetail(songId, difficultyOrdinal))
-                                      },
-                                      onOpenPlayer = { pushPage(KibaSubPage.SongPlayer) },
-                                  )
-                              }
-                              is KibaSubPage.SongPlayer -> {
-                                  // 返回下沉时播放页必须压在下层页面之上，否则
-                                  // 一返回就被目标页盖住，下沉动画看不见
-                                  // （注意不能用 AnimatedVisibilityScope.transition 判方向，
-                                  //  那是子转场 Transition<EnterExitState>，与页面无关）
-                                  val playerOnTop = subStack.lastOrNull() != target
-                                  Box(
-                                      modifier = Modifier
-                                          .fillMaxSize()
-                                          .zIndex(if (playerOnTop) 1f else 0f),
-                                  ) {
-                                      SongPlayerScreen(
-                                          scrollBehavior = scrollBehavior,
-                                          onBack = { popPage() },
-                                      )
-                                  }
-                              }
-                              is KibaSubPage.ChartDetail -> ChartDetailScreen(
-                                  songId = target.songId,
-                                  difficultyOrdinal = target.difficultyOrdinal,
-                                  scrollBehavior = scrollBehavior,
-                                  onOpenPreview = { url, t, s, id, img ->
-                                      pushPage(KibaSubPage.ChartPreview(url, t, s, id, img))
-                                  },
-                              )
-                              is KibaSubPage.ChartPreview -> ChartPreviewScreen(
-                                  url = target.url,
-                                  title = target.songTitle,
-                                  subtitle = target.songSubtitle,
-                                  songId = target.songId,
-                                  songImageUrl = target.songImageUrl,
-                                  onBack = { popPage() },
-                              )
-                              is KibaSubPage.ChuniSongDetail -> SongDetailExpandHost(
-                                  sourceRect = expandSourceRect,
-                                  enteredByPush = navForward,
-                                  isActive = subStack.lastOrNull() == target,
-                                  shrinkOnExit = subStack.isEmpty(),
-                              ) {
-                                  ChuniSongDetailScreen(
-                                      songId = target.songId,
-                                      scrollBehavior = scrollBehavior,
-                                      onOpenChart = { songId, difficultyOrdinal ->
-                                          pushPage(KibaSubPage.ChuniChartDetail(songId, difficultyOrdinal))
-                                      },
-                                  )
-                              }
-                              is KibaSubPage.ChuniChartDetail -> ChuniChartDetailScreen(
-                                  songId = target.songId,
-                                  difficultyOrdinal = target.difficultyOrdinal,
-                                  scrollBehavior = scrollBehavior,
-                              )
-                              is KibaSubPage.Best50 -> Best50Screen(
-                                  scrollBehavior = scrollBehavior,
-                                  onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
-                              )
-                              is KibaSubPage.ChuniBest -> ChuniBestScreen(
-                                  scrollBehavior = scrollBehavior,
-                                  onOpenSong = { songId -> pushPage(KibaSubPage.ChuniSongDetail(songId)) },
-                              )
-                              is KibaSubPage.ScoreQuery -> ScoreQueryScreen(
-                                  scrollBehavior = scrollBehavior,
-                                  onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
-                              )
-                              is KibaSubPage.PlateQuery -> PlateQueryScreen(
-                                  scrollBehavior = scrollBehavior,
-                                  onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
-                              )
-                              is KibaSubPage.Toolbox -> ToolboxScreen(
-                                  scrollBehavior = scrollBehavior,
-                                  gameType = gameType,
-                                  onOpenRatingCalc = { pushPage(KibaSubPage.RatingCalc) },
-                                  onOpenDxConverter = { pushPage(KibaSubPage.DxConverter) },
-                                  onOpenHotCharts = { pushPage(KibaSubPage.HotCharts) },
-                                  onOpenVersionMap = { pushPage(KibaSubPage.VersionMap) },
-                                  onOpenFriendQuery = { pushPage(KibaSubPage.FriendQuery) },
-                                  onOpenGatewayAccount = { pushPage(KibaSubPage.GatewayAccount) },
-                                  onOpenMachineLogin = { WeChatJump.openOfficialAccount(context) },
-                              )
-                              is KibaSubPage.RatingCalc -> RatingCalcScreen(scrollBehavior = scrollBehavior)
-                              is KibaSubPage.VersionMap -> VersionMapScreen(scrollBehavior = scrollBehavior)
-                              is KibaSubPage.HotCharts -> HotChartsScreen(
-                                  scrollBehavior = scrollBehavior,
-                                  onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
-                              )
-                              is KibaSubPage.FriendQuery -> FriendQueryScreen(
-                                  scrollBehavior = scrollBehavior,
-                                  onOpenSong = { songId, chuni ->
-                                      pushPage(
-                                          if (chuni) KibaSubPage.ChuniSongDetail(songId)
-                                          else KibaSubPage.SongDetail(songId)
-                                      )
-                                  },
-                              )
-                              is KibaSubPage.LlmConfig -> LlmConfigScreen(scrollBehavior = scrollBehavior)
-                              is KibaSubPage.AgentMemory -> AgentMemoryScreen(scrollBehavior = scrollBehavior)
-                              is KibaSubPage.Login -> LoginScreen(
-                                  scrollBehavior = scrollBehavior,
-                                  onLoginSuccess = { popPage() },
-                              )
-                              is KibaSubPage.LxnsLogin -> LxnsLoginScreen(
-                                  scrollBehavior = scrollBehavior,
-                                  onLoginSuccess = { popPage() },
-                              )
-                              is KibaSubPage.SongGroup -> SongGroupScreen(
-                                  mode = target.mode,
-                                  groupKey = target.key,
-                                  scrollBehavior = scrollBehavior,
-                                  onSongClick = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
-                                  onChuniSongClick = { song ->
-                                      pushPage(KibaSubPage.ChuniSongDetail(song.song.id))
-                                  },
-                                  showDisplayPicker = songGroupShowDisplayPicker,
-                                  onDismissDisplayPicker = { songGroupShowDisplayPicker = false },
-                              )
-                              is KibaSubPage.DxConverter -> DxConverterScreen(scrollBehavior = scrollBehavior)
-                              is KibaSubPage.MachineUpdate -> MachineUpdateScreen(scrollBehavior = scrollBehavior)
-                              is KibaSubPage.QrImport -> QrImportScreen(scrollBehavior = scrollBehavior)
-                              is KibaSubPage.GatewayAccount -> EasyMaiAccountScreen(scrollBehavior = scrollBehavior)
-                              is KibaSubPage.Favorites -> FavoritesScreen(
-                                  scrollBehavior = scrollBehavior,
-                                  onOpenSong = { song -> pushPage(KibaSubPage.SongDetail(song.songData.id)) },
-                                  onOpenChuniSong = { chuni ->
-                                      pushPage(KibaSubPage.ChuniSongDetail(chuni.song.id))
-                                  },
-                                  onOpenPlayer = { pushPage(KibaSubPage.SongPlayer) },
-                              )
-                              is KibaSubPage.DeviceScore -> DeviceScoreScreen(scrollBehavior = scrollBehavior)
-                              is KibaSubPage.AvatarCrop -> AvatarCropScreen(onDone = { popPage() })
-                              is KibaSubPage.About -> AboutScreen(scrollBehavior = scrollBehavior)
-                              is KibaSubPage.ExtPage -> {
-                                  // 本地扩展宿主页面：内容完全由扩展提供（未授权 / 未知 id 时空占位）
-                                  val extContent = com.kira.kiba.core.host.AppExtensions
-                                      .extPageContent(target.id)
-                                  if (extContent != null) {
-                                      extContent(scrollBehavior)
-                                  } else {
-                                      Box(modifier = Modifier.fillMaxSize())
-                                  }
-                              }
-                              is KibaSubPage.ListenPlaylist -> PlaylistDetailScreen(
-                                  playlistId = target.playlistId,
-                                  scrollBehavior = scrollBehavior,
-                                  onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
-                                  onBack = { popPage() },
-                              )
-                              is KibaSubPage.ListenAgentPlaylist -> AgentPlaylistDetailScreen(
-                                  playlistId = target.id,
-                                  scrollBehavior = scrollBehavior,
-                                  onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
-                              )
-                              is KibaSubPage.ListenDownloads -> DownloadsScreen(
-                                  scrollBehavior = scrollBehavior,
-                                  onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
-                              )
-                          }
-
-                          else -> when (target) {
-                              KibaTab.Songs -> SongsScreen(
-                                  scrollBehavior = scrollBehavior,
-                                  searchTrigger = songsSearchTrigger,
-                                  gameType = gameType,
-                                  showGroupPicker = songsShowGroupPicker,
-                                  onDismissGroupPicker = { songsShowGroupPicker = false },
-                                  onSongClick = { song ->
-                                      pushPage(KibaSubPage.SongDetail(song.songData.id))
-                                  },
-                                  onChuniSongClick = { chuni ->
-                                      pushPage(KibaSubPage.ChuniSongDetail(chuni.song.id))
-                                  },
-                                  onOpenGroup = { mode, key ->
-                                      pushPage(KibaSubPage.SongGroup(mode, key))
-                                  },
-                              )
-                              KibaTab.Agent -> AgentScreen(
-                                  scrollBehavior = scrollBehavior,
-                                  showFunctionPopup = agentShowFunctionPopup,
-                                  onDismissFunctionPopup = { agentShowFunctionPopup = false },
-                                  onOpenSong = { songId, game ->
-                                      pushPage(
-                                          if (game == KibaAgent.GAME_CHUNITHM) {
-                                              KibaSubPage.ChuniSongDetail(songId)
-                                          } else {
-                                              KibaSubPage.SongDetail(songId)
-                                          }
-                                      )
-                                  },
-                              )
-                              KibaTab.Listen -> ListenScreen(
-                                  scrollBehavior = scrollBehavior,
-                                  onOpenSong = { songId -> pushPage(KibaSubPage.SongDetail(songId)) },
-                                  onOpenPlaylist = { id -> pushPage(KibaSubPage.ListenPlaylist(id)) },
-                                  onOpenAgentPlaylist = { id -> pushPage(KibaSubPage.ListenAgentPlaylist(id)) },
-                                  onOpenDownloads = { pushPage(KibaSubPage.ListenDownloads) },
-                              )
-                              KibaTab.Me -> MeScreen(
-                                  scrollBehavior = scrollBehavior,
-                                  onOpenLogin = { pushPage(KibaSubPage.Login) },
-                                  onOpenLxnsLogin = { pushPage(KibaSubPage.LxnsLogin) },
-                                  onOpenBest50 = { pushPage(KibaSubPage.Best50) },
-                                  onOpenScoreQuery = { pushPage(KibaSubPage.ScoreQuery) },
-                                  onOpenPlateQuery = { pushPage(KibaSubPage.PlateQuery) },
-                                  onOpenFavorites = { pushPage(KibaSubPage.Favorites) },
-                                  // 2.3.0：设置页「查分器工具」组整组迁入账户页查分器组
-                                  onOpenMachineUpdate = { pushPage(KibaSubPage.MachineUpdate) },
-                                  onOpenQrImport = { pushPage(KibaSubPage.QrImport) },
-                                  // 2.6.0：工具箱合并成单入口（站外 + 本地工具都在子页里）
-                                  onOpenToolbox = { pushPage(KibaSubPage.Toolbox) },
-                                  onOpenChuniBest = { pushPage(KibaSubPage.ChuniBest) },
-                              )
-                              KibaTab.Settings -> SettingsScreen(
-                                  scrollBehavior = scrollBehavior,
-                                  onOpenLlmConfig = { pushPage(KibaSubPage.LlmConfig) },
-                                  onOpenAgentMemory = { pushPage(KibaSubPage.AgentMemory) },
-                                  onOpenAbout = { pushPage(KibaSubPage.About) },
-                                  onOpenDeviceScore = { pushPage(KibaSubPage.DeviceScore) },
-                                  onOpenAvatarCrop = { pushPage(KibaSubPage.AvatarCrop) },
-                              )
-                          }
-                      }
+                          renderPage(target)
                       }
                   }
 
@@ -1662,6 +1713,7 @@ fun KibaMainScreen() {
           }
       }
     }
+      } // 预测性返回预览层 Box
 }
 
 /**
