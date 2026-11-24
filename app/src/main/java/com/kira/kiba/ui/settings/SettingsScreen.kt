@@ -312,8 +312,16 @@ fun SettingsScreen(
             item(key = "source_card") {
                 Card(modifier = (Modifier.fillMaxWidth())) {
                     // 本地扩展宿主：常规源之后可能追加扩展源选项（无扩展注册时为空，行为不变）
-                    val extSources = com.kira.kiba.core.host.AppExtensions.extraScoreSources(GameType.MAIMAI)
-                    val extMaimai = com.kira.kiba.core.host.AppExtensions.activeExtraSource(GameType.MAIMAI)
+                    // 必须在此收集直连账户版本号：选完扩展源后插件推版本号，本 item 立即重组刷新
+                    // spinner / summary——否则 maimaiSource 本来就是水鱼时没有任何状态变化，
+                    // 界面会一直停留在旧源显示（看起来像「选了没生效」）。
+                    val directVersion by com.kira.kiba.core.host.AppExtensions.directAccountVersion.collectAsState()
+                    val extSources = remember(directVersion) {
+                        com.kira.kiba.core.host.AppExtensions.extraScoreSources(GameType.MAIMAI)
+                    }
+                    val extMaimai = remember(directVersion) {
+                        com.kira.kiba.core.host.AppExtensions.activeExtraSource(GameType.MAIMAI)
+                    }
                     OverlaySpinnerPreference(
                         items = (ScoreSource.entries.map { DropdownItem(text = it.label) } +
                             extSources.map { DropdownItem(text = it.label) }),

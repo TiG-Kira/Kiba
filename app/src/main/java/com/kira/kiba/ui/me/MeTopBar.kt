@@ -146,8 +146,14 @@ fun MeTopBarSlot(
         dfAccount.bound
     }
     val avatarUrl = avatars.forAccount(gameType, source)
-    val largeTitle = directState?.title?.takeIf { it.isNotBlank() }
-        ?: nickname.ifBlank { "账户" }
+    // 直连模式大标题只认机台昵称；昵称还没取回（GetUserPreviewApi 异步 / 失败静默）
+    // 时显示「机台账户」占位——绝不能回落到查分器昵称，否则直连模式下顶栏
+    // 看起来仍是老查分器的名字，用户会以为切源没生效。
+    val largeTitle = if (isDirect) {
+        directState?.title?.takeIf { it.isNotBlank() } ?: "机台账户"
+    } else {
+        nickname.ifBlank { "账户" }
+    }
     val subtitle = directState?.subtitle
         ?: if (loggedIn) "当前登录：${source.shortLabel}查分器" else "当前未登录查分器"
 
