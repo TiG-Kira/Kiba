@@ -30,8 +30,9 @@ import java.util.zip.ZipInputStream
  *   → trusted 插件：开放全部挂接点与完整 HostServices。
  * - 无签名或验签失败 → 社区插件：数据流类挂接点不参与，HostServices 只注入只读裁剪版。
  *
- * 加载机制：解压到应用私有目录后用 [DexClassLoader] 加载（parent = 宿主 classloader，
- * 双亲委派使宿主类天然共享）；入口类必须无参构造且实现 [AppExtensions.Provider]。
+ * 加载机制：解压到应用私有目录后，把 classes.dex 打成 zip 容器交给 [DexClassLoader]
+ * （parent = 宿主 classloader，双亲委派使宿主类天然共享）；入口类必须无参构造且实现
+ * [AppExtensions.Provider]。
  */
 object PluginLoader {
 
@@ -67,11 +68,14 @@ object PluginLoader {
      * 失败抛 [InstallException]（UI 层提示用户）。
      */
     fun install(context: Context, uri: Uri, app: Application): AppExtensions.PluginInfo {
+        android.util.Log.i("KibaPluginLoader", "install from uri=$uri")
         val tmp = File(context.cacheDir, "plugin_install_${System.currentTimeMillis()}")
         try {
             extractZip(context, uri, tmp)
+            android.util.Log.i("KibaPluginLoader", "extracted: ${tmp.listFiles()?.joinToString { "${it.name}(${it.length()})" }}")
             val root = locateRoot(tmp)
                 ?: throw InstallException("安装失败：插件包内未找到 plugin.xml 清单文件")
+            android.util.Log.i("KibaPluginLoader", "root=$root, classes.dex isFile=${File(root, "classes.dex").isFile}")
             val manifest = parseManifest(File(root, "plugin.xml"))
             if (!File(root, "classes.dex").isFile) {
                 throw InstallException("安装失败：插件包缺少 classes.dex")
@@ -133,10 +137,20 @@ object PluginLoader {
         trusted: Boolean,
     ) {
         val dex = File(dir, "classes.dex")
+        if (!dex.isFile) throw InstallException("安装失败：插件包缺少 classes.dex")
+        // DexClassLoader 只保证支持 jar/apk/zip 容器；raw dex 路径在部分真机上打开失败
+        // 且异常会被 DexPathList 静默吞掉（元素退化为 directory → 只报「找不到类」）。
+        // 因此统一以 zip 容器加载：优先复用安装时落盘的 plugin.zip，老安装目录现场补建。
+        val container = File(dir, "plugin.zip")
+        if (!container.isFile || container.length() == 0L) {
+            writeDexContainer(dex, container)
+        }
+        // W^X 保护（targetSdk 29+）：ART 拒绝打开可写位置的 dex 容器，加载前必须置只读
+        container.setReadOnly()
         val optDir = File(context.codeCacheDir, "plugin_dexopt/${manifest.id}").apply { mkdirs() }
         val libDir = File(dir, "lib/${Build.SUPPORTED_ABIS[0]}")
         val loader = DexClassLoader(
-            dex.absolutePath,
+            container.absolutePath,
             optDir.absolutePath,
             if (libDir.isDirectory) libDir.absolutePath else null,
             app.classLoader,
@@ -228,6 +242,7 @@ object PluginLoader {
             ZipInputStream(raw.buffered()).use { zip ->
                 while (true) {
                     val entry = zip.nextEntry ?: break
+                    android.util.Log.i("KibaPluginLoader", "entry=[${entry.name}] dir=${entry.isDirectory} size=${entry.size}")
                     val out = File(targetDir, entry.name)
                     if (!out.canonicalPath.startsWith(targetDir.canonicalPath + File.separator) &&
                         out.canonicalPath != targetDir.canonicalPath
@@ -264,9 +279,28 @@ object PluginLoader {
         return null
     }
 
+    /** 把 classes.dex 打成 root 含 `classes.dex` 的 zip 容器（STORED 直读，ART 可直接 mmap）。 */
+    private fun writeDexContainer(dex: File, out: File) {
+        val bytes = dex.readBytes()
+        val checksum = java.util.zip.CRC32().apply { update(bytes) }
+        java.util.zip.ZipOutputStream(out.outputStream().buffered()).use { zip ->
+            val entry = java.util.zip.ZipEntry("classes.dex").apply {
+                method = java.util.zip.ZipEntry.STORED
+                size = bytes.size.toLong()
+                compressedSize = size
+                crc = checksum.value
+            }
+            zip.putNextEntry(entry)
+            zip.write(bytes)
+            zip.closeEntry()
+        }
+    }
+
     private fun copyDir(src: File, dest: File) {
         if (src.isFile) {
-            src.copyTo(File(dest, src.name), overwrite = true)
+            // dest 已是完整目标路径（递归时拼过 it.name），直接覆盖写入；
+            // 不可再拼 src.name——copyTo 会 mkdirs 父目录，导致同名目录套文件
+            src.copyTo(dest, overwrite = true)
             return
         }
         dest.mkdirs()
