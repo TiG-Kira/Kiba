@@ -158,12 +158,19 @@ object PluginLoader {
         val cls = try {
             loader.loadClass(manifest.entry)
         } catch (e: Throwable) {
-            throw InstallException("安装失败：入口类 ${manifest.entry} 无法加载（${e.message ?: "未知错误"}）")
+            val detail = e.cause?.let { "${it.javaClass.simpleName}: ${it.message ?: "无详情"}" }
+                ?: "${e.javaClass.simpleName}: ${e.message ?: "无详情"}"
+            throw InstallException("安装失败：入口类 ${manifest.entry} 无法加载（$detail）")
         }
         val provider = try {
             cls.getDeclaredConstructor().newInstance()
         } catch (e: Throwable) {
-            throw InstallException("安装失败：入口类 ${manifest.entry} 缺少无参构造")
+            // newInstance 可能抛 InvocationTargetException 包裹的初始化错误
+            // （如宿主 R8 改名导致插件 dex 引用解析失败），必须透出真实原因
+            val real = e.cause ?: e
+            throw InstallException(
+                "安装失败：入口类 ${manifest.entry} 初始化失败（${real.javaClass.simpleName}: ${real.message ?: "无详情"}）"
+            )
         }
         if (provider !is AppExtensions.Provider) {
             throw InstallException("安装失败：入口类未实现 Provider 插件接口")

@@ -97,3 +97,25 @@
 -keep class com.kira.kiba.core.host.AppExtensions { *; }
 -keep class com.kira.kiba.core.host.AppExtensions$* { *; }
 -keep class com.kira.kiba.core.host.PluginLoader { *; }
+
+# ── 插件动态加载：宿主侧被插件 dex 引用的类必须保持原名与成员 ──
+# 生成依据：kiba-extra/tools/gen_host_keep.py（插件 dex 外部引用 × mapping 比对）
+# 插件独立编译（compileOnly 宿主依赖），运行时按原名解析——任何被插件引用的
+# 宿主类/成员被 R8 改名或收缩，都会导致插件加载失败（NoClassDefFoundError）。
+
+# Kotlin 标准库整体保留——插件 dex 独立编译，凡它引用的宿主侧类都必须
+# 原名且带成员（lazy 工厂 LazyKt、协程 internals、反射元数据等无法逐一枚举）
+-keep class kotlin.** { *; }
+-keep class kotlinx.** { *; }
+
+# 网络（OkHttp 及其 okio 依赖）
+-keep class okhttp3.** { *; }
+-keep class okio.** { *; }
+
+# Compose / miuix / activity（插件 UI 契约面）
+-keep class androidx.compose.runtime.** { *; }
+-keep class androidx.compose.ui.Modifier { *; }
+-keep class androidx.compose.foundation.layout.** { *; }
+-keep class androidx.compose.foundation.lazy.** { *; }
+-keep class top.yukonga.miuix.kmp.basic.** { *; }
+-keep class androidx.activity.compose.ManagedActivityResultLauncher { *; }
