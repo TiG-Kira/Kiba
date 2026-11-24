@@ -1,5 +1,10 @@
 plugins {
     id("com.android.library")
+    // ⚠️ 必须启用 Compose 编译器插件：本模块公开 API 里有 @Composable 函数类型
+    // （Provider.extPageContent）。不开的话 Kotlin 把它编成 Function1，而启用了
+    // compose 的调用方（app / 插件）按 compose 规则生成 Function3 调用，
+    // 运行时 NoSuchMethodError（v3.6.3 真机打开插件页闪退的第二个根因）。
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

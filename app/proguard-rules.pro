@@ -113,9 +113,87 @@
 -keep class okio.** { *; }
 
 # Compose / miuix / activity（插件 UI 契约面）
+# ⚠️ v3.6.3→3.6.4 真机回归：R8 把插件 dex 引用的 31 个类改名、11 个类整体收缩
+# （Modifier$Companion / ComponentActivity / ToggleableState / zxing 等），
+# 插件页一进就 NoClassDefFoundError 闪退。之前 AVD E2E 走 debug 包（无 R8），
+# 此路径从未被 release 覆盖。
+# 修复不能走 -dontobfuscate（1.8.8 起混淆是 LxnsVault 防逆向的既定安全措施，
+# 实测 dontobfuscate 会让 dex 显著膨胀且破坏防逆向目标），
+# 改为外科手术式：gen_host_keep.py 校验出的缺口类带成员整体保留（防改名+防收缩），
+# 实测体积回归 ≈0（22.4→22.5MB）。插件外部引用变化时跑
+# kiba-extra/tools/gen_host_keep.py 复核并补规则（CI 可接退出码）。
+
 -keep class androidx.compose.runtime.** { *; }
 -keep class androidx.compose.ui.Modifier { *; }
 -keep class androidx.compose.foundation.layout.** { *; }
 -keep class androidx.compose.foundation.lazy.** { *; }
 -keep class top.yukonga.miuix.kmp.basic.** { *; }
 -keep class androidx.activity.compose.ManagedActivityResultLauncher { *; }
+
+# gen_host_keep.py 校准（2026-11-24，v3.6.3 mapping × 插件 dex 比对；dontobfuscate
+# 下改名类不会再现，这里主要是防收缩兜底）
+-keep class androidx.activity.ComponentActivity { *; }
+-keep class androidx.activity.compose.ActivityResultRegistryKt { *; }
+-keep class androidx.activity.result.contract.ActivityResultContract { *; }
+-keep class androidx.activity.result.contract.ActivityResultContracts$GetContent { *; }
+-keep class androidx.compose.foundation.ClickableKt { *; }
+-keep class androidx.compose.foundation.Indication { *; }
+-keep class androidx.compose.foundation.OverscrollEffect { *; }
+-keep class androidx.compose.foundation.gestures.FlingBehavior { *; }
+-keep class androidx.compose.foundation.interaction.InteractionSourceKt { *; }
+-keep class androidx.compose.foundation.interaction.MutableInteractionSource { *; }
+-keep class androidx.compose.foundation.text.KeyboardActions { *; }
+-keep class androidx.compose.foundation.text.KeyboardOptions { *; }
+-keep class androidx.compose.foundation.text.TextAutoSize { *; }
+-keep class androidx.compose.ui.Alignment { *; }
+-keep class androidx.compose.ui.Alignment$Companion { *; }
+-keep class androidx.compose.ui.Alignment$Horizontal { *; }
+-keep class androidx.compose.ui.Alignment$Vertical { *; }
+-keep class androidx.compose.ui.ComposedModifierKt { *; }
+-keep class androidx.compose.ui.Modifier$Companion { *; }
+-keep class androidx.compose.ui.graphics.Brush { *; }
+-keep class androidx.compose.ui.layout.MeasurePolicy { *; }
+-keep class androidx.compose.ui.node.ComposeUiNode { *; }
+-keep class androidx.compose.ui.node.ComposeUiNode$Companion { *; }
+-keep class androidx.compose.ui.semantics.Role { *; }
+-keep class androidx.compose.ui.state.ToggleableState { *; }
+-keep class androidx.compose.ui.state.ToggleableStateKt { *; }
+-keep class androidx.compose.ui.text.TextStyle { *; }
+-keep class androidx.compose.ui.text.font.FontFamily { *; }
+-keep class androidx.compose.ui.text.font.FontStyle { *; }
+-keep class androidx.compose.ui.text.font.FontWeight { *; }
+-keep class androidx.compose.ui.text.input.VisualTransformation { *; }
+-keep class androidx.compose.ui.text.style.TextAlign { *; }
+-keep class androidx.compose.ui.text.style.TextDecoration { *; }
+-keep class androidx.compose.ui.unit.Dp { *; }
+-keep class androidx.compose.ui.unit.TextUnitKt { *; }
+-keep class com.google.zxing.Binarizer { *; }
+-keep class com.google.zxing.BinaryBitmap { *; }
+-keep class com.google.zxing.LuminanceSource { *; }
+-keep class com.google.zxing.MultiFormatReader { *; }
+-keep class com.google.zxing.RGBLuminanceSource { *; }
+-keep class com.google.zxing.Result { *; }
+-keep class com.google.zxing.common.HybridBinarizer { *; }
+
+# gen_host_keep.py 成员级校准（2026-11-25 真机回归第二/三轮）：R8 会把宿主已
+# devirtualize 的 compose 接口/平台成员整体内联删掉（getLocalContext、Composer.changed(Object)），
+# 插件 dex 按原名引用即 NoSuchMethodError。以下为成员级校验出的缺口类。
+-keep class androidx.compose.ui.platform.AndroidCompositionLocals_androidKt { *; }
+-keep class androidx.compose.runtime.State { *; }
+-keep class androidx.compose.runtime.MutableState { *; }
+-keep class androidx.compose.runtime.ScopeUpdateScope { *; }
+-keep class androidx.compose.foundation.layout.ColumnScopeInstance { *; }
+-keep class androidx.compose.foundation.layout.RowScopeInstance { *; }
+# Composer 的 changed(Object)：R8 在无显式规则时会内联删除接口抽象方法
+-keepclassmembers class androidx.compose.runtime.Composer {
+    boolean changed(java.lang.Object);
+    boolean changedInstance(java.lang.Object);
+    java.lang.Object rememberedValue();
+    void updateRememberedValue(java.lang.Object);
+    boolean shouldExecute(boolean, int);
+    void startReplaceGroup(int);
+    void endReplaceGroup();
+    void startRestartGroup(int);
+    androidx.compose.runtime.Composer startRestartGroup(int);
+    androidx.compose.runtime.ScopeUpdateScope endRestartGroup();
+}
