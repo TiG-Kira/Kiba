@@ -70,6 +70,24 @@ private fun PrefIcon(
 }
 
 /**
+ * 插件账户条目的左侧图标（按 entry.id 映射；null = 无图标）。
+ *
+ * [com.kira.kiba.core.host.AppExtensions.ExtEntry] 是跨 dex 契约 DTO，
+ * **不加图标字段**（改构造器签名会让旧版本插件的 dex 二进制崩）——
+ * 图标由宿主按 id 约定映射，Kiba Extra 的三个入口已覆盖；
+ * 第三方插件未命中映射时退化为无图标（与 v3.6.5 及之前一致）。
+ */
+private fun extMeEntryIcon(
+    id: String,
+): Pair<androidx.compose.ui.graphics.vector.ImageVector, com.kira.kiba.ui.common.KibaIconTint>? =
+    when (id) {
+        "qr_info" -> MiuixGlassIcons.Regular.Scan to com.kira.kiba.ui.common.KibaIconTint.GREEN
+        "sync_upload" -> MiuixGlassIcons.Regular.CloudFill to com.kira.kiba.ui.common.KibaIconTint.CYAN
+        "advanced" -> MiuixGlassIcons.Regular.Tune to com.kira.kiba.ui.common.KibaIconTint.ORANGE
+        else -> null
+    }
+
+/**
  * 「账户」页面（原「我」页；miuix preference 规范 + miuix Card 分组包裹）：
  * - 置顶 [ArrowPreference]：已登录展示昵称 + DX Rating 段位徽章（官方色表），
  *   点击进 Best 50；未登录展示引导，点击进登录页；
@@ -332,10 +350,14 @@ fun MeScreen(
                     // ── 本地扩展宿主条目：扩展注册后追加在查分器组尾部（无扩展时为空）──
                     val extGame = if (isChunithm) GameType.CHUNITHM else GameType.MAIMAI
                     com.kira.kiba.core.host.AppExtensions.meEntries(extGame).forEach { entry ->
+                        val icon = extMeEntryIcon(entry.id)
                         ArrowPreference(
                             title = entry.title,
                             summary = entry.summary,
                             enabled = entry.enabled,
+                            startAction = if (icon != null) {
+                                { PrefIcon(icon.first, icon.second) }
+                            } else null,
                             onClick = { com.kira.kiba.core.host.AppExtensions.onMeEntry(extGame, entry.id) },
                         )
                     }

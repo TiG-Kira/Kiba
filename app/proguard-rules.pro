@@ -127,6 +127,10 @@
 -keep class androidx.compose.ui.Modifier { *; }
 -keep class androidx.compose.foundation.layout.** { *; }
 -keep class androidx.compose.foundation.lazy.** { *; }
+# nestedscroll：ScrollBehavior.nestedScrollConnection 的返回类型 NestedScrollConnection
+# 若被混淆（y92），宿主 dex 方法签名与插件 dex 编译期签名不匹配 → invokeinterface
+# resolution 失败 NoSuchMethodError（v3.6.6 AVD 实证，第 6 个契约缺口）
+-keep class androidx.compose.ui.input.nestedscroll.** { *; }
 -keep class top.yukonga.miuix.kmp.basic.** { *; }
 -keep class androidx.activity.compose.ManagedActivityResultLauncher { *; }
 
