@@ -763,6 +763,7 @@ fun KibaMainScreen() {
             pushPage(KibaSubPage.ExtPage(id, title))
         }
         com.kira.kiba.core.host.AppExtensions.hostDialog = { title, message ->
+            android.util.Log.d("KibaExt", "hostDialog: $title / $message")
             extHostDialog = title to message
         }
         onDispose {
@@ -770,23 +771,6 @@ fun KibaMainScreen() {
             com.kira.kiba.core.host.AppExtensions.hostDialog = null
         }
     }
-    extHostDialog?.let { (dialogTitle, dialogMessage) ->
-        com.kira.kiba.ui.material.KibaGlassDialog(
-            show = true,
-            title = dialogTitle,
-            summary = dialogMessage,
-            onDismissRequest = { extHostDialog = null },
-        ) {
-            Row(modifier = Modifier.fillMaxWidth()) {
-                Spacer(Modifier.weight(1f))
-                top.yukonga.miuix.kmp.basic.TextButton(
-                    text = "知道了",
-                    onClick = { extHostDialog = null },
-                )
-            }
-        }
-    }
-
     LaunchedEffect(Unit) {
         if (ChartPreviewPlayer.consumePendingReopen()) reopenChartPreview()
         ChartPreviewPlayer.reopenFlow.collect { reopenChartPreview() }
@@ -1156,6 +1140,26 @@ fun KibaMainScreen() {
                       )
                   }
               }
+              }
+
+              // 宿主级对话框（须在 Scaffold content 内渲染：弹层依赖的
+              // PopupHost / 取景层 CompositionLocal 在这个作用域才就绪；
+              // 放 KibaMainScreen 顶层会静默不渲染）
+              extHostDialog?.let { (dialogTitle, dialogMessage) ->
+                  com.kira.kiba.ui.material.KibaGlassDialog(
+                      show = true,
+                      title = dialogTitle,
+                      summary = dialogMessage,
+                      onDismissRequest = { extHostDialog = null },
+                  ) {
+                      Row(modifier = Modifier.fillMaxWidth()) {
+                          Spacer(Modifier.weight(1f))
+                          top.yukonga.miuix.kmp.basic.TextButton(
+                              text = "知道了",
+                              onClick = { extHostDialog = null },
+                          )
+                      }
+                  }
               }
           },
           bottomBar = {

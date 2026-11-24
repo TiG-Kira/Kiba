@@ -246,9 +246,11 @@ object AppExtensions {
      * @param trusted 官方签名插件 = true（由 PluginLoader 安装时验签决定）
      */
     fun register(p: Provider, app: Application, trusted: Boolean) {
+        // 先初始化再取元信息：插件的 pluginInfo() 可能依赖 onApplicationInit
+        // 注入的上下文（取反了会 NPE → id 兜底成类名，与后续按 id 路由错位）
+        runCatching { p.onApplicationInit(app) }
         val id = runCatching { p.pluginInfo()?.id }.getOrNull() ?: p.javaClass.name
         entries = entries.filterNot { it.id == id } + Entry(p, id, trusted)
-        runCatching { p.onApplicationInit(app) }
         val host = if (trusted) (fullHost ?: SafeHostServices(null)) else SafeHostServices(fullHost)
         runCatching { p.onHostReady(host) }
     }
@@ -262,10 +264,10 @@ object AppExtensions {
 
     // ==================== 挂接点（应用代码调用） ====================
 
-    /** 全部已注册插件的元信息（trusted 由宿主按验签结果覆盖）。 */
+    /** 全部已注册插件的元信息（id 以注册时记录的 Entry.id 为准；trusted 由宿主按验签结果覆盖）。 */
     fun pluginInfos(): List<PluginInfo> = entries.mapNotNull { e ->
         runCatching {
-            e.provider.pluginInfo()?.copy(trusted = e.trusted)
+            e.provider.pluginInfo()?.copy(id = e.id, trusted = e.trusted)
         }.getOrNull()
     }
 
@@ -278,9 +280,14 @@ object AppExtensions {
      * 用户请求启用指定插件；返回 false 表示插件拒绝（宿主保持关闭，
      * 插件可能已自行打开验证页面）。
      */
-    fun onPluginEnableRequested(id: String, context: Context): Boolean = byId(id)?.let { e ->
-        runCatching { e.provider.onPluginEnableRequested(context) }.getOrDefault(false)
-    } ?: false
+    fun onPluginEnableRequested(id: String, context: Context): Boolean {
+        val e = byId(id)
+        android.util.Log.d("KibaExt", "enable routing id=$id provider=${if (e == null) "MISSING" else e.provider.javaClass.simpleName}")
+        if (e == null) return false
+        return runCatching { e.provider.onPluginEnableRequested(context) }
+            .onFailure { android.util.Log.w("KibaExt", "provider enable threw", it) }
+            .getOrDefault(false)
+    }
 
     /** 用户关闭指定插件。 */
     fun onPluginDisabled(id: String, context: Context) {

@@ -1,5 +1,6 @@
 package com.kira.kiba.ui.settings
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -113,6 +114,9 @@ fun SettingsScreen(
     // ── 插件安装结果（设置页尾部统一弹窗提示成功 / 失败）──
     var installResult by remember { mutableStateOf<String?>(null) }
     var installOk by remember { mutableStateOf(false) }
+    // 插件卸载（顶层状态：确认对话框与列表刷新跨 item 作用域共享）
+    var uninstallTick by remember { mutableIntStateOf(0) }
+    var pendingDelete by remember { mutableStateOf<Pair<String, String>?>(null) }
 
     // ── 查分器数据源（舞萌 / 中二各自独立） ──
     var maimaiSource by remember { mutableStateOf(SpUtil.getScoreSource(GameType.MAIMAI)) }
@@ -452,7 +456,9 @@ fun SettingsScreen(
             // 支持多插件并存；官方签名插件开放全部接口，社区插件功能受限（数据流类挂接点不参与）。
             item(key = "plugin_title") { SectionTitle("插件") }
             item(key = "plugin_card") {
-                val plugins = com.kira.kiba.core.host.AppExtensions.pluginInfos()
+                val plugins = remember(uninstallTick, installResult) {
+                    com.kira.kiba.core.host.AppExtensions.pluginInfos()
+                }
                 val appCtx = context.applicationContext as android.app.Application
                 val pluginPicker = androidx.activity.compose.rememberLauncherForActivityResult(
                     androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
@@ -504,6 +510,17 @@ fun SettingsScreen(
                             title = plugin.name + if (plugin.trusted) "" else "（社区）",
                             summary = "v${plugin.version} · " + if (enabled) "已启用" else "未启用（开启将进行激活验证）",
                             startAction = { PrefIcon(MiuixGlassIcons.Regular.Tune, com.kira.kiba.ui.common.KibaIconTint.PURPLE) },
+                            endActions = {
+                                // 卸载入口：点击弹确认对话框，确认后注销运行时实例并删除安装目录
+                                androidx.compose.foundation.layout.Box(
+                                    modifier = Modifier.clickable(
+                                        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                                        indication = null,
+                                    ) { pendingDelete = plugin.id to plugin.name },
+                                ) {
+                                    PrefIcon(MiuixGlassIcons.Regular.Delete, com.kira.kiba.ui.common.KibaIconTint.RED)
+                                }
+                            },
                         )
                     }
                     if (plugins.isEmpty()) {
@@ -545,6 +562,36 @@ fun SettingsScreen(
             ) {
                 Button(onClick = { installResult = null }, colors = ButtonDefaults.buttonColorsPrimary()) {
                     Text(text = "知道了")
+                }
+            }
+        }
+    }
+
+    // 插件卸载确认：注销运行时实例并删除安装目录（插件启用态随目录一起消失）
+    pendingDelete?.let { (id, name) ->
+        KibaGlassDialog(
+            show = true,
+            title = "卸载插件",
+            summary = "将从 Kiba 中移除「$name」，其全部数据（启用状态、激活信息、协议配置）一并删除。此操作不可撤销。",
+            onDismissRequest = { pendingDelete = null },
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextButton(text = "取消", onClick = { pendingDelete = null })
+                Spacer(Modifier.width(12.dp))
+                Button(
+                    onClick = {
+                        runCatching {
+                            com.kira.kiba.core.host.PluginLoader.uninstall(context, id)
+                        }
+                        pendingDelete = null
+                        uninstallTick++
+                    },
+                    colors = ButtonDefaults.buttonColorsPrimary(),
+                ) {
+                    Text(text = "卸载")
                 }
             }
         }
