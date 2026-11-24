@@ -443,6 +443,44 @@ fun SettingsScreen(
                 }
             }
 
+            // ── 插件 ──
+            // 插件由独立模块提供（安装后经 ContentProvider 自动注册）：
+            // 开启开关时插件会立即执行自身的验证逻辑，验证不通过插件有权拒绝启用。
+            item(key = "plugin_title") { SectionTitle("插件") }
+            item(key = "plugin_card") {
+                val plugin = com.kira.kiba.core.host.AppExtensions.pluginInfo()
+                Card(modifier = (Modifier.fillMaxWidth())) {
+                    if (plugin == null) {
+                        ArrowPreference(
+                            title = "插件管理",
+                            summary = "暂无已安装的插件 · 插件由独立模块提供，安装后在此启用与配置",
+                            enabled = false,
+                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Tune, com.kira.kiba.ui.common.KibaIconTint.PURPLE) },
+                        )
+                    } else {
+                        // enabledTick：启用/关闭走插件回调（无 StateFlow），用计数触发重组重读状态
+                        var enabledTick by remember { mutableIntStateOf(0) }
+                        val enabled = remember(enabledTick) {
+                            com.kira.kiba.core.host.AppExtensions.pluginEnabled()
+                        }
+                        SwitchPreference(
+                            checked = enabled,
+                            onCheckedChange = { want ->
+                                if (want) {
+                                    com.kira.kiba.core.host.AppExtensions.onPluginEnableRequested(context)
+                                } else {
+                                    com.kira.kiba.core.host.AppExtensions.onPluginDisabled(context)
+                                }
+                                enabledTick++
+                            },
+                            title = plugin.name,
+                            summary = "v${plugin.version} · " + if (enabled) "已启用" else "未启用（开启将进行激活验证）",
+                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Tune, com.kira.kiba.ui.common.KibaIconTint.PURPLE) },
+                        )
+                    }
+                }
+            }
+
             // ── 关于 ──
             item(key = "about_title") { SectionTitle("关于") }
             item(key = "about_card") {

@@ -67,15 +67,38 @@ object AppExtensions {
      * 扩展提供方。扩展模块在自身 ContentProvider.onCreate 里调用 [register] 注册。
      * 所有方法都必须容错（宿主不 catch，扩展自己兜底），并且**必须在未授权时返回空值**。
      */
+    // ==================== 插件元信息与启停（设置页插件管理） ====================
+
+    /** 插件元信息（设置页「插件管理」列表展示用）。 */
+    data class PluginInfo(
+        val id: String,
+        val name: String,
+        val version: String,
+        val summary: String,
+    )
+
     interface Provider {
         /** Application.onCreate 末尾回调（SpUtil / DB 均已就绪）。 */
         fun onApplicationInit(app: Application) {}
 
         /**
-         * 关于页 Logo 点击。返回 true 表示本次点击被消费（宿主不再处理）。
-         * 连点计数等状态由扩展自持。
+         * 插件元信息。返回 null 表示插件不参与「插件管理」（不出现在设置页列表）。
          */
-        fun onAboutLogoTap(context: Context): Boolean = false
+        fun pluginInfo(): PluginInfo? = null
+
+        /** 插件当前是否已启用（启用态由插件自行持久化与复验）。 */
+        fun pluginEnabled(): Boolean = false
+
+        /**
+         * 用户请求启用插件。插件应**立即**执行自身验证逻辑（激活 / 环境 / 完整性）：
+         * 通过则自行持久化启用态并返回 true；拒绝则返回 false（宿主保持关闭），
+         * 插件可自行打开验证页面引导用户完成验证。
+         * 宿主允许插件拒绝启用——关闭与否最终由插件说了算。
+         */
+        fun onPluginEnableRequested(context: Context): Boolean = false
+
+        /** 用户关闭插件：插件停用自身全部能力并持久化停用态。 */
+        fun onPluginDisabled(context: Context) {}
 
         /** 额外的成绩源选项（追加在 [ScoreSource.entries] 之后）。未授权返回空列表。 */
         fun extraScoreSources(game: GameType): List<ExtSource> = emptyList()
@@ -190,8 +213,23 @@ object AppExtensions {
         call(Unit) { onApplicationInit(app) }
     }
 
-    /** 关于页 Logo 点击；返回 true 表示被扩展消费。 */
-    fun onAboutLogoTap(context: Context): Boolean = call(false) { onAboutLogoTap(context) }
+    /** 插件元信息（设置页插件管理）；null 表示无插件参与。 */
+    fun pluginInfo(): PluginInfo? = call(null) { pluginInfo() }
+
+    /** 插件是否已启用（实时复验后的结果）。 */
+    fun pluginEnabled(): Boolean = call(false) { pluginEnabled() }
+
+    /**
+     * 用户请求启用插件；返回 false 表示插件拒绝（宿主保持关闭，
+     * 插件可能已自行打开验证页面）。
+     */
+    fun onPluginEnableRequested(context: Context): Boolean =
+        call(false) { onPluginEnableRequested(context) }
+
+    /** 用户关闭插件。 */
+    fun onPluginDisabled(context: Context) {
+        call(Unit) { onPluginDisabled(context) }
+    }
 
     fun extraScoreSources(game: GameType): List<ExtSource> =
         call(emptyList()) { extraScoreSources(game) }
