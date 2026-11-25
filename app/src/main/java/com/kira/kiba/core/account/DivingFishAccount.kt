@@ -594,6 +594,7 @@ object DivingFishAccount {
         records: List<com.kira.kiba.core.host.AppExtensions.ExtRecord>,
         nickname: String,
         historySource: ScoreSource? = null,
+        historyKey: String? = null,
     ) {
         runCatching {
             val entities = records.map {
@@ -629,8 +630,13 @@ object DivingFishAccount {
                 new = sorted.filter { isNewBySongId[it.songId] == true }.take(15),
             )
             SpUtil.saveDivingFishRating(best50Cache.rating)
-            historySource?.let {
-                RatingHistory.record(GameType.MAIMAI, it, best50Cache.rating.toDouble())
+            if (historyKey != null) {
+                // 自由桶键（机台直连源等无枚举值的源）
+                RatingHistory.recordByKey(historyKey, best50Cache.rating.toDouble())
+            } else {
+                historySource?.let {
+                    RatingHistory.record(GameType.MAIMAI, it, best50Cache.rating.toDouble())
+                }
             }
             _state.value = AccountState(
                 bound = true,

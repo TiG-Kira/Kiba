@@ -333,10 +333,22 @@ object NamePlateRenderer {
                 cell = nameRect.width() / n
                 size = minOf(size, cell)
             }
+            val foundAny = nick.any { nameFont.find(it.code) != null }
             val ink = nameFont.inkBounds(nick, size)
-            val baselineY = nameRect.centerY() + (ink[0] + ink[1]) / 2f
+            // 整串都没有 TMP 字形（如纯拉丁且 Liberation 加载失败）时 inkBounds
+            // 返回 [0,0]，直接按它居中会让系统字体兜底字浮在槽位中线上——
+            // 手动补一个近似基线（系统字体 baseline 约在 0.8 行高处）。
+            val baselineY = if (foundAny) {
+                nameRect.centerY() + (ink[0] + ink[1]) / 2f
+            } else {
+                nameRect.centerY() + size * 0.35f
+            }
             val namePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF1A1A1E.toInt() }
-            nameFont.draw(canvas, nick, nameRect.left, baselineY, size, namePaint, cell)
+            val systemPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = 0xFF1A1A1E.toInt()
+                typeface = Typeface.SANS_SERIF
+            }
+            nameFont.draw(canvas, nick, nameRect.left, baselineY, size, namePaint, cell, systemPaint)
         }
 
         // ── 9. 外框：上青下蓝，对应游戏里那圈描边 ──

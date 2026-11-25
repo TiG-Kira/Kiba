@@ -68,6 +68,35 @@ object RatingHistory {
     fun keyOf(game: GameType, source: ScoreSource): String =
         "${game.name.lowercase(Locale.ROOT)}:${source.key}"
 
+    /**
+     * 自定义桶键订阅（不走 [ScoreSource] 枚举的桶）——机台直连源的 Rating 曲线
+     * 用 `"maimai:direct"` 独立分桶：直连与水鱼 / 落雪是三套完全不同的口径，
+     * 且直连没有对应的 [ScoreSource] 枚举值，只能走自由键。
+     */
+    fun entriesByKey(key: String): StateFlow<List<Entry>> {
+        ensureLoaded()
+        return perKey.getOrPut(key) { MutableStateFlow(_all.value[key].orEmpty()) }
+    }
+
+    /** 自定义桶键记录（语义与 [record] 完全一致，只是键不限于枚举源）。 */
+    fun recordByKey(
+        key: String,
+        rating: Double,
+        now: Long = System.currentTimeMillis(),
+    ): Boolean {
+        if (rating <= 0.0) return false
+        ensureLoaded()
+        val list = _all.value[key].orEmpty()
+        val last = list.lastOrNull()
+        if (last != null && kotlin.math.abs(last.rating - rating) < 0.005) return false
+        val entry = Entry(ts = now, rating = rating, dropped = last != null && rating < last.rating)
+        val next = (list + entry).takeLast(MAX_ENTRIES)
+        _all.value = _all.value + (key to next)
+        perKey[key]?.value = next
+        persist()
+        return true
+    }
+
     /** 订阅某一桶的历史（首次访问会自动加载并做旧数据迁移）。 */
     fun entries(game: GameType, source: ScoreSource): StateFlow<List<Entry>> {
         ensureLoaded()

@@ -71,11 +71,20 @@ object HostDefaults {
             nickname: String,
             historySourceKey: String?,
         ) {
-            com.kira.kiba.core.account.DivingFishAccount.publishExternalRecords(
-                records,
-                nickname,
-                historySourceKey?.let { ScoreSource.fromKey(it) },
-            )
+            if (historySourceKey == "direct") {
+                // 机台直连源：独立 Rating 历史桶（与水鱼 / 落雪口径互不相干）
+                com.kira.kiba.core.account.DivingFishAccount.publishExternalRecords(
+                    records,
+                    nickname,
+                    historyKey = "maimai:direct",
+                )
+            } else {
+                com.kira.kiba.core.account.DivingFishAccount.publishExternalRecords(
+                    records,
+                    nickname,
+                    historySourceKey?.let { ScoreSource.fromKey(it) },
+                )
+            }
         }
 
         override fun publishError(message: String) {

@@ -175,6 +175,13 @@ object AppExtensions {
          *   null = 成功；非 null = 错误文案
          */
         fun requestDirectLogout(game: GameType, onResult: (String?) -> Unit) {}
+
+        /**
+         * 直连源最近一次成功更新数据的时间（epoch ms；0 = 从未更新或旧版插件未提供）。
+         * Best 50 页「上次更新」提示用。带默认实现——旧版插件不改此方法也能被加载
+         * （跨 dex 二进制兼容铁律：接口新增方法必须带默认实现）。
+         */
+        fun directLastUpdate(game: GameType): Long = 0L
     }
 
     /**
@@ -436,6 +443,12 @@ object AppExtensions {
             runCatching { e.provider.requestDirectLogout(game, onResult) }
         }
     }
+
+    /** 直连源最近一次成功更新数据的时间（无插件提供时为 0）。 */
+    fun directLastUpdate(game: GameType): Long =
+        trustedEntries().firstNotNullOfOrNull { e ->
+            runCatching { e.provider.directLastUpdate(game) }.getOrNull()
+        }?.takeIf { it > 0 } ?: 0L
 
     private fun byId(id: String): Entry? = entries.firstOrNull { it.id == id }
 }

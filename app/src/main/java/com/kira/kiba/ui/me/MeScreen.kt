@@ -256,15 +256,24 @@ fun MeScreen(
             item(key = "rating_trend") {
                 val trendGame = if (isChunithm) GameType.CHUNITHM else GameType.MAIMAI
                 val trendSource = if (isChunithm) chuniSource else maimaiSource
-                val history by RatingHistory.entries(trendGame, trendSource).collectAsState()
-                if (history.isNotEmpty()) {
+                // 机台直连源走独立桶（maimai:direct）——与水鱼 / 落雪口径互不相干
+                val history = if (directActive && trendGame == GameType.MAIMAI) {
+                    com.kira.kiba.core.account.RatingHistory.entriesByKey("maimai:direct")
+                } else {
+                    RatingHistory.entries(trendGame, trendSource)
+                }.collectAsState()
+                val sourceLabel = when {
+                    directActive && trendGame == GameType.MAIMAI -> "机台"
+                    else -> trendSource.shortLabel
+                }
+                if (history.value.isNotEmpty()) {
                     RatingTrendCard(
                         title = if (isChunithm) "中二 Rating 变化" else "最近 Rating 变化",
-                        entries = history.takeLast(10),
-                        subtitle = "${trendSource.shortLabel}源 · " + if (history.size > 10) {
-                            "最近 10 次 · 共 ${history.size} 次"
+                        entries = history.value.takeLast(10),
+                        subtitle = "${sourceLabel}源 · " + if (history.value.size > 10) {
+                            "最近 10 次 · 共 ${history.value.size} 次"
                         } else {
-                            "共 ${history.size} 次更新"
+                            "共 ${history.value.size} 次更新"
                         },
                         valueText = { formatRatingValue(trendGame, it) },
                     )

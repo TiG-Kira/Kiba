@@ -283,19 +283,45 @@ fun Best50Screen(
                     )
                 }
                 item(key = "trend", span = { GridItemSpan(maxLineSpan) }) {
-                    // Rating 历史曲线：**只画当前数据源自己的桶**——水鱼 / 落雪口径不同，
-                    // 混在一条线上会出现对不上的台阶。
+                    // Rating 历史曲线：**只画当前数据源自己的桶**——水鱼 / 落雪 / 机台直连
+                    // 三套口径不同，混在一条线上会出现对不上的台阶。
+                    // 机台直连源走独立桶 maimai:direct。
                     // 无记录（还没同步过成绩）不占位——空曲线卡只会让人困惑。
                     val maimaiSource by SpUtil.maimaiSourceFlow.collectAsState()
-                    val history by RatingHistory.entries(GameType.MAIMAI, maimaiSource)
-                        .collectAsState()
-                    if (history.isNotEmpty()) {
+                    val directActive = com.kira.kiba.core.host.AppExtensions
+                        .activeExtraSource(GameType.MAIMAI) != null
+                    val history = if (directActive) {
+                        com.kira.kiba.core.account.RatingHistory.entriesByKey("maimai:direct")
+                    } else {
+                        com.kira.kiba.core.account.RatingHistory.entries(GameType.MAIMAI, maimaiSource)
+                    }.collectAsState()
+                    if (history.value.isNotEmpty()) {
                         RatingTrendCard(
-                            title = "Rating 变化曲线（${maimaiSource.shortLabel}）",
-                            entries = history,
-                            subtitle = "本地记录 ${history.size} 次",
+                            title = "Rating 变化曲线（${if (directActive) "机台" else maimaiSource.shortLabel}）",
+                            entries = history.value,
+                            subtitle = "本地记录 ${history.value.size} 次",
                             valueText = { formatRatingValue(GameType.MAIMAI, it) },
                         )
+                    }
+                    // 机台直连源：上次更新时间提示（数据只在手动提供二维码刷新时更新）
+                    if (directActive) {
+                        val lastUpdate = com.kira.kiba.core.host.AppExtensions
+                            .directLastUpdate(GameType.MAIMAI)
+                        if (lastUpdate > 0) {
+                            Text(
+                                text = "机台数据上次更新：${
+                                    java.text.SimpleDateFormat(
+                                        "MM-dd HH:mm",
+                                        java.util.Locale.getDefault(),
+                                    ).format(java.util.Date(lastUpdate))
+                                }（每次更新需提供新的机台二维码）",
+                                style = MiuixTheme.textStyles.footnote2,
+                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 4.dp),
+                            )
+                        }
                     }
                 }
                 if (new.isNotEmpty()) {

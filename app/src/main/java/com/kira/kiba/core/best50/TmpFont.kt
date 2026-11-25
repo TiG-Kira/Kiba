@@ -97,6 +97,10 @@ class TmpFont private constructor(
     /**
      * 逐字绘制。[cell] > 0 时走等宽槽，否则按字形 advance 正常前进。
      * [paint] 只需要给 `color`：图集是 ALPHA_8 遮罩，颜色由 paint 决定。
+     *
+     * [systemFallback] 非 null 时，图集缺失的字形（拉丁 / 全角 / 生僻符号等
+     * Morisawa 与 Liberation 都没有的字符）用系统字体绘制——绝对不吞字：
+     * 曾因设备端 Liberation 图集加载失败导致昵称字母整段空白。
      */
     fun draw(
         canvas: Canvas,
@@ -106,7 +110,9 @@ class TmpFont private constructor(
         size: Float,
         paint: Paint,
         cell: Float = 0f,
+        systemFallback: Paint? = null,
     ) {
+        val fb = systemFallback?.let { Paint(it).apply { textSize = size } }
         var pen = x
         text.forEach { ch ->
             val hit = find(ch.code)
@@ -119,6 +125,9 @@ class TmpFont private constructor(
                 dst.set(gx, gy, gx + g.w * s, gy + g.h * s)
                 canvas.drawBitmap(f.atlas, src, dst, paint)
                 pen += if (cell > 0f) cell else g.adv * s
+            } else if (fb != null && !ch.isWhitespace()) {
+                canvas.drawText(ch.toString(), pen, baseline, fb)
+                pen += if (cell > 0f) cell else fb.measureText(ch.toString())
             } else if (cell > 0f) {
                 pen += cell
             } else {
@@ -130,14 +139,30 @@ class TmpFont private constructor(
     companion object {
         private const val MAGIC = 0x3146424B // "KBF1"
 
+        /** 进程级缓存；[name] 是 assets/font 下的文件名（不含扩展名）。 */
         private val cache = HashMap<String, TmpFont>()
 
-        /** 进程级缓存；[name] 是 assets/font 下的文件名（不含扩展名）。 */
+        /**
+         * 加载并缓存。[fallback] 只在首次加载时生效——缓存命中时忽略
+         * （调用方总是成对传入，语义一致）。加锁：B50 页面渲染（主线程）与
+         * 分享图生成（IO 线程）可能并发首次加载，HashMap 裸并发会出脏读。
+         * 加载失败打日志——图集缺失时 fallback 链断掉的表现是「某类字符整段
+         * 空白」，没有这行日志排查无从下手。
+         */
+        @Synchronized
         fun load(context: Context, name: String, fallback: TmpFont? = null): TmpFont? {
             cache[name]?.let { return it }
-            return runCatching { read(context, name, fallback) }
+            val font = runCatching { read(context, name, fallback) }
+                .onFailure {
+                    android.util.Log.w(
+                        "KibaB50",
+                        "TmpFont 加载失败: $name (fallback=${fallback != null})",
+                        it,
+                    )
+                }
                 .getOrNull()
-                ?.also { cache[name] = it }
+            font?.let { cache[name] = it }
+            return font
         }
 
         /** 姓名牌口径的字体：Morisawa 主字体 + LiberationSans fallback。 */
