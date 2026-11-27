@@ -249,6 +249,13 @@ object DivingFishAccount {
 
     /** 启动恢复：已登录（OAuth 绑定或原版 jwt）则静默拉一次成绩；否则展示未登录引导。 */
     suspend fun restore() {
+        // 直连（机台协议）源：数据以本地为准，启动不做任何网络刷新——官方二维码
+        // 一次性，自动刷新只会弹二维码页打扰启动。改为从 Room 回灌上次拉取的
+        // 机台数据（否则 B50 / 账户页内存缓存在冷启动后是空的，看起来像「数据被清空」）。
+        if (com.kira.kiba.core.host.AppExtensions.activeExtraSource(GameType.MAIMAI) != null) {
+            loadDirectFromDb()
+            return
+        }
         // 舞萌侧选了落雪：绑定状态与成绩都走落雪，不碰水鱼凭据
         if (SpUtil.getScoreSource(GameType.MAIMAI) == ScoreSource.LXNS) {
             if (LxnsAccount.isBound()) {
@@ -492,8 +499,11 @@ object DivingFishAccount {
     }
 
     private suspend fun refreshRecordsBody() {
-        // 本地扩展宿主优先接管（无扩展注册时恒 false，行为不变）
-        if (com.kira.kiba.core.host.AppExtensions.consumeRecordsRefresh(GameType.MAIMAI)) {
+        // 直连（机台协议）源：本地数据为准，一切自动/间接刷新不做任何事——
+        // 手动刷新已由账户页刷新按钮直达插件（consumeRecordsRefresh）。
+        // 此前的 consumeRecordsRefresh 拦截在这条链上会把启动恢复、切源等
+        // 自动路径也引到「机台数据更新」页（每次进 APP 自动弹二维码页的元凶）。
+        if (com.kira.kiba.core.host.AppExtensions.activeExtraSource(GameType.MAIMAI) != null) {
             return
         }
         // 数据源分发：舞萌侧选的是落雪就直接走落雪（与本类的水鱼凭据无关），
@@ -539,6 +549,7 @@ object DivingFishAccount {
             RecordRepository.getInstance(
                 AppDataBase.getInstance().recordDao()
             ).replaceAllRecord(records)
+            SpUtil.setLastMaimaiRecordSource("waterfish")
             recordsCache = records
             // B50 本地计算：需要曲库的 isNew 标记
             val isNewBySongId = withContext(Dispatchers.IO) {
@@ -617,6 +628,10 @@ object DivingFishAccount {
             RecordRepository.getInstance(
                 AppDataBase.getInstance().recordDao()
             ).replaceAllRecord(entities)
+            // 记录表最近来源：直连回灌守卫用（historyKey = maimai:direct 即机台数据）
+            SpUtil.setLastMaimaiRecordSource(
+                if (historyKey == "maimai:direct") "direct" else "external",
+            )
             recordsCache = entities
             val isNewBySongId = withContext(Dispatchers.IO) {
                 runCatching {
@@ -667,6 +682,56 @@ object DivingFishAccount {
     }
 
     /**
+     * 直连（机台协议）源冷启动回灌：从 Room record 表读回上次机台拉取的数据，
+     * 重建 recordsCache / best50Cache 与账户态。机台数据只在用户手动提供二维码时
+     * 更新，启动绝不联网——不回灌的话 B50 / 账户页在重启后就是空的（内存缓存丢失，
+     * 而数据明明还在 DB 里）。
+     */
+    suspend fun loadDirectFromDb() {
+        // record 表全源共用：只有上次写入确实是机台数据才回灌。
+        // 从水鱼/落雪切到直连但还没手动刷新过时，表里是老源的成绩，不能冒充机台数据。
+        if (SpUtil.getLastMaimaiRecordSource() != "direct") {
+            _state.value = AccountState()
+            return
+        }
+        runCatching {
+            val entities = withContext(Dispatchers.IO) {
+                AppDataBase.getInstance().recordDao().getAllRecordList()
+            }
+            if (entities.isEmpty()) {
+                // DB 也没有 → 从未拉取过机台数据：维持未登录引导，不假装有数据
+                _state.value = AccountState()
+                return
+            }
+            recordsCache = entities
+            val isNewBySongId = withContext(Dispatchers.IO) {
+                runCatching {
+                    AppDataBase.getInstance().songDao().getAllSongsList()
+                        .associate { it.id to it.isNew }
+                }.getOrDefault(emptyMap())
+            }
+            val sorted = entities.sortedByDescending { it.ra }
+            best50Cache = Best50(
+                old = sorted.filter { isNewBySongId[it.songId] != true }.take(35),
+                new = sorted.filter { isNewBySongId[it.songId] == true }.take(15),
+            )
+            _state.value = AccountState(
+                bound = true,
+                // 直连模式的顶栏标题由插件 directAccountState 提供（机台昵称），
+                // 这里不给查分器昵称，避免回落串味
+                nickname = "",
+                rating = best50Cache.rating,
+                additionalRating = 0,
+                recordCount = entities.size,
+                loading = false,
+                error = null,
+            )
+        }.onFailure { e ->
+            Log.w(TAG, "load direct from db failed", e)
+        }
+    }
+
+    /**
      * 应用级作用域触发刷新：**脱离 UI 协程作用域**，避免切源后用户从设置页返回「我」页、
      * 设置页的 `rememberCoroutineScope` 被取消，把刷新掐死在半路（[AccountState.loading]
      * 永远停在 true，Rating 卡卡在「正在获取成绩…」，只能重启 Activity 救活）。
@@ -697,6 +762,7 @@ object DivingFishAccount {
                 val result = MaimaiLxnsSync.fetch()
                 RecordRepository.getInstance(AppDataBase.getInstance().recordDao())
                     .replaceAllRecord(result.records)
+                SpUtil.setLastMaimaiRecordSource("lxns")
                 result
             }
         }

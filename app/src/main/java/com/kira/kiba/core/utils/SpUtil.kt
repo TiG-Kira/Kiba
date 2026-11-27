@@ -220,6 +220,20 @@ object SpUtil {
         userInfoPrefs.edit { putString(KEY_DF_IMPORT_TOKEN, token.trim()) }
     }
 
+    // ================= 舞萌 record 表最近来源标记 =================
+    // record 表全源共用（每次刷新整表替换），直连源冷启动回灌前必须确认表里
+    // 现在装的是机台数据——否则从水鱼切直连还没手动刷新时会把水鱼成绩当机台数据展示。
+
+    private const val KEY_LAST_RECORD_SOURCE = "last_maimai_record_source"
+
+    /** "direct" / "waterfish" / "lxns"；空 = 未知（旧版本写入，保守不回灌）。 */
+    fun getLastMaimaiRecordSource(): String =
+        userInfoPrefs.getString(KEY_LAST_RECORD_SOURCE, "") ?: ""
+
+    fun setLastMaimaiRecordSource(source: String) {
+        userInfoPrefs.edit { putString(KEY_LAST_RECORD_SOURCE, source) }
+    }
+
     // ================= 二维码取数网关账号（仅存本机） =================
 
     fun getQrGatewayUsername(): String =
