@@ -65,8 +65,9 @@ import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
-import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
-import top.yukonga.miuix.kmp.icon.glass.*
+import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.*
+import com.kira.kiba.ui.icon.*
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.utils.PressFeedbackType
 
@@ -201,7 +202,7 @@ fun SongDetailScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         androidx.compose.material3.Icon(
-                            imageVector = if (isPlayingThis) MiuixGlassIcons.Regular.Pause else MiuixGlassIcons.Regular.Play,
+                            imageVector = if (isPlayingThis) MiuixIcons.Pause else MiuixIcons.Play,
                             contentDescription = if (isPlayingThis) "正在播放" else "播放乐曲",
                             tint = com.kira.kiba.ui.common.kibaIconTint(com.kira.kiba.ui.common.KibaIconTint.GREEN),
                             modifier = Modifier.size(22.dp),
@@ -275,7 +276,7 @@ fun SongDetailScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         androidx.compose.material3.Icon(
-                            imageVector = MiuixGlassIcons.Regular.Add,
+                            imageVector = MiuixIcons.Add,
                             contentDescription = "加入歌单",
                             tint = com.kira.kiba.ui.common.kibaIconTint(com.kira.kiba.ui.common.KibaIconTint.PINK),
                             modifier = Modifier.size(22.dp),

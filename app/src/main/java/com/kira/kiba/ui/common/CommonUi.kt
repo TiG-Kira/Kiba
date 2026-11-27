@@ -42,7 +42,9 @@ import com.kira.kiba.ui.navigation.LocalSystemNavBarBottom
 import com.kira.kiba.ui.navigation.LocalTopBarClearance
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Icon
-import top.yukonga.miuix.kmp.icon.glass.*
+import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.*
+import com.kira.kiba.ui.icon.*
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
@@ -208,7 +210,7 @@ private fun CoverPlaceholder(
         contentAlignment = Alignment.Center,
     ) {
         Icon(
-            imageVector = MiuixGlassIcons.Regular.Music,
+            imageVector = MiuixIcons.Music,
             contentDescription = null,
             tint = stroke,
             modifier = Modifier.size(size / 2.6f),

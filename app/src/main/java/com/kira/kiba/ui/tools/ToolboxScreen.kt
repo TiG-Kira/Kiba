@@ -19,8 +19,9 @@ import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
-import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
-import top.yukonga.miuix.kmp.icon.glass.*
+import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.*
+import com.kira.kiba.ui.icon.*
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import androidx.compose.foundation.layout.size
@@ -71,7 +72,7 @@ fun ToolboxScreen(
                         ArrowPreference(
                             title = "水鱼中二节奏查分器",
                             summary = "本应用接口的本家，中二节奏成绩查询官网",
-                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Search, com.kira.kiba.ui.common.KibaIconTint.BLUE) },
+                            startAction = { PrefIcon(MiuixIcons.Search, com.kira.kiba.ui.common.KibaIconTint.BLUE) },
                             onClick = {
                                 BrowserJump.openUrl(
                                     context,
@@ -83,7 +84,7 @@ fun ToolboxScreen(
                         ArrowPreference(
                             title = "水鱼查分器",
                             summary = "本应用接口的本家，成绩上传与查询官网",
-                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Search, com.kira.kiba.ui.common.KibaIconTint.BLUE) },
+                            startAction = { PrefIcon(MiuixIcons.Search, com.kira.kiba.ui.common.KibaIconTint.BLUE) },
                             onClick = {
                                 BrowserJump.openUrl(
                                     context,
@@ -94,14 +95,14 @@ fun ToolboxScreen(
                         ArrowPreference(
                             title = "DXRating.net",
                             summary = "包含 ZXZR 曲目信息的查询网站",
-                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Layers, com.kira.kiba.ui.common.KibaIconTint.CYAN) },
+                            startAction = { PrefIcon(MiuixIcons.Layers, com.kira.kiba.ui.common.KibaIconTint.CYAN) },
                             onClick = { BrowserJump.openUrl(context, "https://dxrating.net/search") },
                         )
                     }
                     ArrowPreference(
                         title = "音游地图",
                         summary = "查查你地区的机台",
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.MapAlbum, com.kira.kiba.ui.common.KibaIconTint.CYAN) },
+                        startAction = { PrefIcon(MiuixIcons.MapAlbum, com.kira.kiba.ui.common.KibaIconTint.CYAN) },
                         onClick = { BrowserJump.openUrl(context, "https://map.bemanicn.com/") },
                     )
                 }
@@ -114,32 +115,32 @@ fun ToolboxScreen(
                         ArrowPreference(
                             title = "单曲 Rating 计算",
                             summary = "根据定数及达成率算出 Rating（附 RANK 系数表）",
-                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Tune, com.kira.kiba.ui.common.KibaIconTint.ORANGE) },
+                            startAction = { PrefIcon(MiuixIcons.Tune, com.kira.kiba.ui.common.KibaIconTint.ORANGE) },
                             onClick = onOpenRatingCalc,
                         )
                         ArrowPreference(
                             title = "热门乐曲排行",
                             summary = "按水鱼游玩样本数排序，看看最火爆的谱面是哪些",
-                            startAction = { PrefIcon(MiuixGlassIcons.Regular.TopDownloads, com.kira.kiba.ui.common.KibaIconTint.ORANGE) },
+                            startAction = { PrefIcon(MiuixIcons.TopDownloads, com.kira.kiba.ui.common.KibaIconTint.ORANGE) },
                             onClick = onOpenHotCharts,
                         )
                         ArrowPreference(
                             title = "版本名称对照表",
                             summary = "版本名称与牌子代号对照，妈妈再也不担心分不清版本",
-                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Album, com.kira.kiba.ui.common.KibaIconTint.CYAN) },
+                            startAction = { PrefIcon(MiuixIcons.Album, com.kira.kiba.ui.common.KibaIconTint.CYAN) },
                             onClick = onOpenVersionMap,
                         )
                         ArrowPreference(
                             title = "达成率计算",
                             summary = "由判定数量反推达成率与单曲 Rating",
-                            startAction = { PrefIcon(MiuixGlassIcons.Regular.ConvertFile, com.kira.kiba.ui.common.KibaIconTint.ORANGE) },
+                            startAction = { PrefIcon(MiuixIcons.ConvertFile, com.kira.kiba.ui.common.KibaIconTint.ORANGE) },
                             onClick = onOpenDxConverter,
                         )
                     }
                     ArrowPreference(
                         title = "查朋友",
                         summary = "输入好友码查看对方公开的落雪数据（玩家信息 / Best / 全量成绩统计）",
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.ContactsCircle, com.kira.kiba.ui.common.KibaIconTint.BLUE) },
+                        startAction = { PrefIcon(MiuixIcons.ContactsCircle, com.kira.kiba.ui.common.KibaIconTint.BLUE) },
                         onClick = onOpenFriendQuery,
                     )
                 }
@@ -151,14 +152,14 @@ fun ToolboxScreen(
                     ArrowPreference(
                         title = "登录机台",
                         summary = "打开微信「舞萌 | 中二」公众号，点底部「玩家二维码」菜单即可扫码上机",
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Phone, com.kira.kiba.ui.common.KibaIconTint.GREEN) },
+                        startAction = { PrefIcon(MiuixIcons.Phone, com.kira.kiba.ui.common.KibaIconTint.GREEN) },
                         onClick = onOpenMachineLogin,
                     )
                     if (!isChunithm) {
                         ArrowPreference(
                             title = "接入 Easymai 账号",
                             summary = "二维码导入成绩的前置账号：登录/注册、手动同步、注销",
-                            startAction = { PrefIcon(MiuixGlassIcons.Regular.ContactsBook, com.kira.kiba.ui.common.KibaIconTint.GREEN) },
+                            startAction = { PrefIcon(MiuixIcons.ContactsBook, com.kira.kiba.ui.common.KibaIconTint.GREEN) },
                             onClick = onOpenGatewayAccount,
                         )
                     }

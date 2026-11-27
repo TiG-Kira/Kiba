@@ -61,10 +61,10 @@ import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
-import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
-import top.yukonga.miuix.kmp.icon.glass.Delete
-import top.yukonga.miuix.kmp.icon.glass.Image
-import top.yukonga.miuix.kmp.icon.glass.Photos
+import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.Delete
+import top.yukonga.miuix.kmp.icon.extended.Image
+import top.yukonga.miuix.kmp.icon.extended.Photos
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import kotlin.math.max
@@ -222,7 +222,7 @@ private fun PreviewStage(
                 summary = "选图后按 1:1 裁切，可拖动 / 双指缩放",
                 startAction = {
                     Icon(
-                        imageVector = MiuixGlassIcons.Regular.Photos,
+                        imageVector = MiuixIcons.Photos,
                         contentDescription = null,
                         tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                         modifier = Modifier.size(26.dp),
@@ -235,7 +235,7 @@ private fun PreviewStage(
                 summary = if (hasImage) "移除自定义头像，回到默认头像" else "当前已是默认头像",
                 startAction = {
                     Icon(
-                        imageVector = MiuixGlassIcons.Regular.Delete,
+                        imageVector = MiuixIcons.Delete,
                         contentDescription = null,
                         tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                         modifier = Modifier.size(26.dp),
@@ -275,7 +275,7 @@ private fun AvatarPreview(version: Long, size: Dp) {
             )
         } else {
             Icon(
-                imageVector = MiuixGlassIcons.Regular.Image,
+                imageVector = MiuixIcons.Image,
                 contentDescription = null,
                 tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                 modifier = Modifier.size(size * 0.34f),

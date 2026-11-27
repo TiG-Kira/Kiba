@@ -58,10 +58,11 @@ import com.kira.kiba.ui.navigation.useLiquidBar
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.TopAppBarDefaults
-import top.yukonga.miuix.kmp.glass.GlassTopAppBar
-import top.yukonga.miuix.kmp.glass.GlassTopAppBarDefaults
-import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
-import top.yukonga.miuix.kmp.icon.glass.*
+import com.kira.kiba.ui.material.glass.GlassTopAppBar
+import com.kira.kiba.ui.material.glass.GlassTopAppBarDefaults
+import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.*
+import com.kira.kiba.ui.icon.*
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
@@ -180,6 +181,8 @@ fun ChuniSongDetailTopBarSlot(
             largeTitleColor = onCoverColor,
             subtitleColor = onCoverColor.copy(alpha = 0.72f),
             backdrop = if (liquidSkin) null else LocalGlassTopAppBarBackdrop.current,
+                progressiveBlur = !liquidSkin,
+                visualContentOffset = { scrollBehavior.state.visualContentOffset },
             scrollBehavior = scrollBehavior,
             bandBrush = if (liquidSkin) {
                 Brush.verticalGradient(listOf(Color.Transparent, Color.Transparent))
@@ -193,7 +196,7 @@ fun ChuniSongDetailTopBarSlot(
                     SpUtil.setFavorite(GameType.CHUNITHM, songId.toString(), favor)
                 }) {
                     Icon(
-                        if (favor) MiuixGlassIcons.Regular.Unstar else MiuixGlassIcons.Regular.Starred,
+                        if (favor) MiuixIcons.Unstar else MiuixIcons.Starred,
                         contentDescription = if (favor) "取消收藏" else "收藏",
                         tint = onCoverColor,
                     )

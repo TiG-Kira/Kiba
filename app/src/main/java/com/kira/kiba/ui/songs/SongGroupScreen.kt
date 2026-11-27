@@ -62,7 +62,9 @@ import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
 // 通配符导入：Regular.GridView 等为同包扩展属性，单导入 MiuixGlassIcons 无法解析
 // （ChuniSongCard 同款坑，UNRESOLVED_REFERENCE 'Info' 实证）
-import top.yukonga.miuix.kmp.icon.glass.*
+import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.*
+import com.kira.kiba.ui.icon.*
 import top.yukonga.miuix.kmp.overlay.OverlayListPopup
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
@@ -202,9 +204,9 @@ fun SongGroupScreen(
                                     icon = { m ->
                                         Icon(
                                             imageVector = if (mode_ == "grid") {
-                                                MiuixGlassIcons.Regular.GridView
+                                                MiuixIcons.GridView
                                             } else {
-                                                MiuixGlassIcons.Regular.Sort
+                                                MiuixIcons.Sort
                                             },
                                             contentDescription = null,
                                             tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,

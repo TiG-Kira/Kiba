@@ -39,10 +39,11 @@ import com.kira.kiba.ui.material.liquid.LocalInLiquidTopBar
 import com.kira.kiba.ui.material.liquid.LocalLiquidBackdrop
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
-import top.yukonga.miuix.kmp.glass.GlassIconButton
-import top.yukonga.miuix.kmp.glass.GlassTopAppBar
-import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
-import top.yukonga.miuix.kmp.icon.glass.*
+import com.kira.kiba.ui.material.glass.GlassIconButton
+import com.kira.kiba.ui.material.glass.GlassTopAppBar
+import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.*
+import com.kira.kiba.ui.icon.*
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import com.kira.kiba.ui.theme.KibaMotion
 
@@ -159,6 +160,8 @@ fun KibaTopBar(
             smallSubtitle = collapsedSubtitle,
             modifier = modifier,
             backdrop = LocalGlassTopAppBarBackdrop.current,
+            progressiveBlur = true,
+            visualContentOffset = { scrollBehavior.state.visualContentOffset },
             scrollBehavior = scrollBehavior,
             navigationIcon = navigationIcon,
             largeTitleTrailing = titleTrailing,
@@ -200,7 +203,7 @@ fun KibaBackAction(
 ) {
     KibaActionButton(onClick = onClick) {
         Icon(
-            MiuixGlassIcons.Regular.ChevronBackward,
+            MiuixIcons.ChevronBackward,
             contentDescription = "返回",
             modifier = Modifier.size(24.dp),
             tint = tint,
@@ -213,7 +216,7 @@ fun KibaBackAction(
 fun KibaSearchAction(onClick: () -> Unit) {
     KibaActionButton(onClick = onClick) {
         Icon(
-            MiuixGlassIcons.Regular.Search,
+            MiuixIcons.Search,
             contentDescription = "搜索",
             tint = MiuixTheme.colorScheme.onSurface,
         )
@@ -225,7 +228,7 @@ fun KibaSearchAction(onClick: () -> Unit) {
 fun KibaRefreshAction(onClick: () -> Unit) {
     KibaActionButton(onClick = onClick) {
         Icon(
-            MiuixGlassIcons.Regular.Refresh,
+            MiuixIcons.Refresh,
             contentDescription = "刷新",
             tint = MiuixTheme.colorScheme.onSurface,
         )
@@ -237,7 +240,7 @@ fun KibaRefreshAction(onClick: () -> Unit) {
 fun KibaSortAction(onClick: () -> Unit) {
     KibaActionButton(onClick = onClick) {
         Icon(
-            MiuixGlassIcons.Regular.Sort,
+            MiuixIcons.Sort,
             contentDescription = "排序与归类",
             tint = MiuixTheme.colorScheme.onSurface,
         )
@@ -249,7 +252,7 @@ fun KibaSortAction(onClick: () -> Unit) {
 fun KibaFunctionAction(onClick: () -> Unit) {
     KibaActionButton(onClick = onClick) {
         Icon(
-            MiuixGlassIcons.Regular.GridView,
+            MiuixIcons.GridView,
             contentDescription = "功能",
             tint = MiuixTheme.colorScheme.onSurface,
         )
@@ -261,7 +264,7 @@ fun KibaFunctionAction(onClick: () -> Unit) {
 fun KibaDisplayAction(onClick: () -> Unit) {
     KibaActionButton(onClick = onClick) {
         Icon(
-            MiuixGlassIcons.Regular.GridView,
+            MiuixIcons.GridView,
             contentDescription = "显示方式",
             tint = MiuixTheme.colorScheme.onSurface,
         )

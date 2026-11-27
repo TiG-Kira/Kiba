@@ -55,8 +55,9 @@ import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
-import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
-import top.yukonga.miuix.kmp.icon.glass.*
+import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.*
+import com.kira.kiba.ui.icon.*
 import com.kira.kiba.ui.material.KibaGlassDialog
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.OverlaySpinnerPreference
@@ -156,7 +157,7 @@ fun SettingsScreen(
                             KibaState.ThemeMode.Light -> "浅色"
                             KibaState.ThemeMode.Dark -> "深色"
                         },
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Theme, com.kira.kiba.ui.common.KibaIconTint.PURPLE) },
+                        startAction = { PrefIcon(MiuixIcons.Theme, com.kira.kiba.ui.common.KibaIconTint.PURPLE) },
                         onSelectedIndexChange = { index ->
                             KibaState.ThemeMode.values().getOrNull(index)
                                 ?.let { KibaState.setThemeMode(it) }
@@ -167,7 +168,7 @@ fun SettingsScreen(
                         onCheckedChange = { KibaState.setDynamicColor(it) },
                         title = "动态取色",
                         summary = if (dynamicColor) "已开启（跟随壁纸取色）" else "已关闭",
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Tune, com.kira.kiba.ui.common.KibaIconTint.PURPLE) },
+                        startAction = { PrefIcon(MiuixIcons.Tune, com.kira.kiba.ui.common.KibaIconTint.PURPLE) },
                     )
                     // 账户页右上角那张方形大图：自定义优先，没设就回落到自动抓取 / 默认头像。
                     ArrowPreference(
@@ -177,7 +178,7 @@ fun SettingsScreen(
                         } else {
                             "当前为默认头像 · 点击上传并裁切（1:1）"
                         },
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Image, com.kira.kiba.ui.common.KibaIconTint.CYAN) },
+                        startAction = { PrefIcon(MiuixIcons.Image, com.kira.kiba.ui.common.KibaIconTint.CYAN) },
                         onClick = onOpenAvatarCrop,
                     )
                 }
@@ -194,7 +195,7 @@ fun SettingsScreen(
                     ArrowPreference(
                         title = "设备性能评分",
                         summary = "点击了解设备性能",
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.MemoryFunction, com.kira.kiba.ui.common.KibaIconTint.ORANGE) },
+                        startAction = { PrefIcon(MiuixIcons.MemoryFunction, com.kira.kiba.ui.common.KibaIconTint.ORANGE) },
                         onClick = onOpenDeviceScore,
                     )
                     SwitchPreference(
@@ -213,7 +214,7 @@ fun SettingsScreen(
                             else -> "已关闭 · 沿用标准 miuix 质感"
                         },
                         enabled = passes,
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Layers, com.kira.kiba.ui.common.KibaIconTint.PURPLE) },
+                        startAction = { PrefIcon(MiuixIcons.Layers, com.kira.kiba.ui.common.KibaIconTint.PURPLE) },
                     )
                     // 风格选择：两档实现差异很大（液态是胶囊 + 透镜着色器，柔光是取景柔化），
                     // 都涉及全局 CompositionLocal，改完同样走 Activity 重启落地。
@@ -224,7 +225,7 @@ fun SettingsScreen(
                             .coerceAtLeast(0),
                         title = "材质风格",
                         summary = MaterialFamily.of(materialFamily).summary,
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Filter, com.kira.kiba.ui.common.KibaIconTint.PURPLE) },
+                        startAction = { PrefIcon(MiuixIcons.Filter, com.kira.kiba.ui.common.KibaIconTint.PURPLE) },
                         enabled = passes && advancedOn,
                         onSelectedIndexChange = { index ->
                             val picked = families.getOrNull(index) ?: return@OverlaySpinnerPreference
@@ -253,7 +254,7 @@ fun SettingsScreen(
                         } else {
                             "Agent 仅使用本地逻辑与网页搜索"
                         },
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Messages, com.kira.kiba.ui.common.KibaIconTint.PURPLE) },
+                        startAction = { PrefIcon(MiuixIcons.Messages, com.kira.kiba.ui.common.KibaIconTint.PURPLE) },
                     )
                     ArrowPreference(
                         title = "Agent 模型配置",
@@ -262,7 +263,7 @@ fun SettingsScreen(
                         } else {
                             "配置任意 OpenAI 兼容端点（官方 / 中转 / 本地 ollama）"
                         },
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.AiScan, com.kira.kiba.ui.common.KibaIconTint.PURPLE) },
+                        startAction = { PrefIcon(MiuixIcons.AiScan, com.kira.kiba.ui.common.KibaIconTint.PURPLE) },
                         onClick = onOpenLlmConfig,
                     )
                     // 摘要不能只 remember 一次：进编辑页改完回来，条数要跟着刷新。
@@ -278,7 +279,7 @@ fun SettingsScreen(
                                 else -> "跨会话记住你的偏好与要求 · 点击添加"
                             }
                         },
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Notes, com.kira.kiba.ui.common.KibaIconTint.PURPLE) },
+                        startAction = { PrefIcon(MiuixIcons.Notes, com.kira.kiba.ui.common.KibaIconTint.PURPLE) },
                         onClick = onOpenAgentMemory,
                     )
                     // 「畅听」页 Agent 歌单的自动更新间隔（进畅听时比对上次生成时间）
@@ -295,7 +296,7 @@ fun SettingsScreen(
                         // 没配 LLM 时不会触发，所以一并写进摘要，免得用户以为设置失效。
                         summary = "进「畅听」时若距上次生成超过 $agentInterval 小时，" +
                             "自动追加一张新歌单（旧的保留）；需先启用模型配置",
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Refresh, com.kira.kiba.ui.common.KibaIconTint.PURPLE) },
+                        startAction = { PrefIcon(MiuixIcons.Refresh, com.kira.kiba.ui.common.KibaIconTint.PURPLE) },
                         onSelectedIndexChange = { idx ->
                             val hours = intervalOptions.getOrElse(idx) { 24 }
                             agentInterval = hours
@@ -332,7 +333,7 @@ fun SettingsScreen(
                         } else {
                             scoreSourceSummary(maimaiSource, lxnsState.bound, GameType.MAIMAI)
                         },
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.CloudFill, com.kira.kiba.ui.common.KibaIconTint.BLUE) },
+                        startAction = { PrefIcon(MiuixIcons.CloudFill, com.kira.kiba.ui.common.KibaIconTint.BLUE) },
                         onSelectedIndexChange = { index ->
                             val extIndex = index - ScoreSource.entries.size
                             if (extIndex >= 0 && extIndex < extSources.size) {
@@ -362,7 +363,7 @@ fun SettingsScreen(
                         } else {
                             scoreSourceSummary(chuniSource, lxnsState.bound, GameType.CHUNITHM)
                         },
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.CloudFill, com.kira.kiba.ui.common.KibaIconTint.BLUE) },
+                        startAction = { PrefIcon(MiuixIcons.CloudFill, com.kira.kiba.ui.common.KibaIconTint.BLUE) },
                         onSelectedIndexChange = { index ->
                             val extIndex = index - ScoreSource.entries.size
                             if (extIndex >= 0 && extIndex < extSourcesChuni.size) {
@@ -394,7 +395,7 @@ fun SettingsScreen(
                     title = "自定义封面源",
                     summary = coverSource.ifBlank { "使用内置候选链（水鱼 CDN + 官网镜像）" }
                         .let { if (coverSource.isBlank()) it else coverSource },
-                    startAction = { PrefIcon(MiuixGlassIcons.Regular.Photos, com.kira.kiba.ui.common.KibaIconTint.CYAN) },
+                    startAction = { PrefIcon(MiuixIcons.Photos, com.kira.kiba.ui.common.KibaIconTint.CYAN) },
                     onClick = { showCoverSource = true },
                 )
                 // 版本号在同步结束（SyncState 变化）后重新读取：SpUtil 里的版本不是 snapshot state，
@@ -431,7 +432,7 @@ fun SettingsScreen(
                             }
                         )
                     },
-                    startAction = { PrefIcon(MiuixGlassIcons.Regular.Refresh, com.kira.kiba.ui.common.KibaIconTint.GREEN) },
+                    startAction = { PrefIcon(MiuixIcons.Refresh, com.kira.kiba.ui.common.KibaIconTint.GREEN) },
                     onClick = {
                         if (!maimaiBusy && !chuniBusy) {
                             // 两边一起更：舞萌沿用「有新版本才下载」，中二曲库小、直接全量刷新。
@@ -447,7 +448,7 @@ fun SettingsScreen(
                         coverCacheMsg != null -> coverCacheMsg
                         else -> "清空歌曲封面与分享图缓存，并删除 Agent 歌单已不再引用的历史封面；清理后离线封面需重新联网加载"
                     },
-                    startAction = { PrefIcon(MiuixGlassIcons.Clear, com.kira.kiba.ui.common.KibaIconTint.RED) },
+                    startAction = { PrefIcon(MiuixIcons.Clear, com.kira.kiba.ui.common.KibaIconTint.RED) },
                     onClick = {
                         if (!clearingCovers) {
                             coverCacheMsg = null
@@ -500,7 +501,7 @@ fun SettingsScreen(
                     ArrowPreference(
                         title = "导入插件",
                         summary = "选择插件包（.zip）进行安装；安装成功或失败均有提示",
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Add, com.kira.kiba.ui.common.KibaIconTint.PURPLE) },
+                        startAction = { PrefIcon(MiuixIcons.Add, com.kira.kiba.ui.common.KibaIconTint.PURPLE) },
                         onClick = {
                             pluginPicker.launch(
                                 arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream"),
@@ -526,7 +527,7 @@ fun SettingsScreen(
                             },
                             title = plugin.name + if (plugin.trusted) "" else "（社区）",
                             summary = "v${plugin.version} · " + if (enabled) "已启用" else "未启用（开启将进行激活验证）",
-                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Tune, com.kira.kiba.ui.common.KibaIconTint.PURPLE) },
+                            startAction = { PrefIcon(MiuixIcons.Tune, com.kira.kiba.ui.common.KibaIconTint.PURPLE) },
                             endActions = {
                                 // 卸载入口：点击弹确认对话框，确认后注销运行时实例并删除安装目录
                                 androidx.compose.foundation.layout.Box(
@@ -535,7 +536,7 @@ fun SettingsScreen(
                                         indication = null,
                                     ) { pendingDelete = plugin.id to plugin.name },
                                 ) {
-                                    PrefIcon(MiuixGlassIcons.Regular.Delete, com.kira.kiba.ui.common.KibaIconTint.RED)
+                                    PrefIcon(MiuixIcons.Delete, com.kira.kiba.ui.common.KibaIconTint.RED)
                                 }
                             },
                         )
@@ -545,7 +546,7 @@ fun SettingsScreen(
                             title = "暂无已安装的插件",
                             summary = "插件由独立包提供，点击上方「导入插件」安装",
                             enabled = false,
-                            startAction = { PrefIcon(MiuixGlassIcons.Regular.Tune, com.kira.kiba.ui.common.KibaIconTint.PURPLE) },
+                            startAction = { PrefIcon(MiuixIcons.Tune, com.kira.kiba.ui.common.KibaIconTint.PURPLE) },
                         )
                     }
                 }
@@ -558,7 +559,7 @@ fun SettingsScreen(
                     ArrowPreference(
                         title = "关于 Kiba",
                         summary = "版本 ${BuildConfig.VERSION_NAME}",
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Info, com.kira.kiba.ui.common.KibaIconTint.CYAN) },
+                        startAction = { PrefIcon(MiuixIcons.Info, com.kira.kiba.ui.common.KibaIconTint.CYAN) },
                         onClick = onOpenAbout,
                     )
                 }

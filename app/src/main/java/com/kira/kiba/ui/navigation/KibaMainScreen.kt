@@ -144,10 +144,11 @@ import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
 import com.kyant.backdrop.backdrops.layerBackdrop as liquidLayerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop as rememberLiquidLayerBackdrop
 import top.yukonga.miuix.kmp.glass.GlassNavigationBar
-import top.yukonga.miuix.kmp.glass.GlassNavigationItem
+import com.kira.kiba.ui.material.liquid.LiquidNavigationItem
 import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
-import top.yukonga.miuix.kmp.icon.glass.*
+import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.*
+import com.kira.kiba.ui.icon.*
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.graphics.Color
 import androidx.core.content.ContextCompat
@@ -417,11 +418,11 @@ private fun rememberPlayerBarSnapshot(): PlayerBarSnapshot {
 }
 
 private fun tabIcon(tab: KibaTab) = when (tab) {
-    KibaTab.Songs -> MiuixGlassIcons.Regular.Music
-    KibaTab.Listen -> MiuixGlassIcons.Regular.Album
-    KibaTab.Agent -> MiuixGlassIcons.Regular.AiScan
-    KibaTab.Me -> MiuixGlassIcons.Regular.Contacts
-    KibaTab.Settings -> MiuixGlassIcons.Regular.Settings
+    KibaTab.Songs -> MiuixIcons.Music
+    KibaTab.Listen -> MiuixIcons.Album
+    KibaTab.Agent -> MiuixIcons.AiScan
+    KibaTab.Me -> MiuixIcons.Contacts
+    KibaTab.Settings -> MiuixIcons.Settings
 }
 
 /**
@@ -1457,16 +1458,25 @@ fun KibaMainScreen() {
                   // Kiba 页产品 Logo：裁掉 adaptive-icon 留白并铺满 + 膨胀增粗 + 主题染色，
                   // 让它在 28dp 槽位里与其它线性图层级一致（详见 buildTintedNavLogo）。
                   val kibaLogoPainter = remember(darkTheme) { buildTintedNavLogo(context, darkTheme) }
-                  val navItems = tabs.map { tab ->
+                  // 两套底栏共用同一份目的地数据：官方 GlassNavigationItem 不支持 Painter 图标，
+                  // Kiba tab 的位图 Logo 只有液态底栏（Kiba 自有类型）能渲染；柔光底栏用官方 AiScan。
+                  val navDestinations = tabs.map { tab ->
                       if (tab == KibaTab.Agent) {
-                          GlassNavigationItem(
-                              icon = MiuixGlassIcons.Regular.AiScan, // 占位：logo painter 优先
+                          LiquidNavigationItem(
+                              icon = MiuixIcons.KibaLogo, // 柔光底栏用；液态底栏 logo painter 优先
                               label = tab.title,
                               iconPainter = kibaLogoPainter,
                           )
                       } else {
-                          GlassNavigationItem(icon = tabIcon(tab), label = tab.title)
+                          LiquidNavigationItem(icon = tabIcon(tab), label = tab.title)
                       }
+                  }
+                  val glassNavItems = navDestinations.map {
+                      top.yukonga.miuix.kmp.glass.GlassNavigationItem(
+                          icon = it.icon,
+                          label = it.label,
+                          contentDescription = it.contentDescription,
+                      )
                   }
                   val onSelectTab: (Int) -> Unit = { index ->
                       val target = tabs.getOrElse(index) { selectedTab }
@@ -1511,7 +1521,7 @@ fun KibaMainScreen() {
                       // Termux Ultra 悬浮底栏：左右各 24dp 内缩成浮动胶囊，贴系统导航栏上边缘
                       if (isLiquid) {
                           LiquidNavigationBar(
-                              items = navItems,
+                              items = navDestinations,
                               selectedIndex = selectedTab.ordinal,
                               onSelect = onSelectTab,
                               backdrop = liquidBackdrop,
@@ -1521,10 +1531,13 @@ fun KibaMainScreen() {
                           )
                       } else {
                           GlassNavigationBar(
-                              items = navItems,
+                              items = glassNavItems,
                               selectedIndex = selectedTab.ordinal,
                               onSelect = onSelectTab,
                               backdrop = glassNavBackdrop,
+                              // insets 已由外层 Column 的 bottom = systemNavBarsHeight 处理，
+                              // 官方默认还会再叠一层导航栏 insets → 底栏双重变高，必须关掉。
+                              defaultWindowInsetsPadding = false,
                               // 多彩选中态：selectedColor 只作用于当前选中的那一项，
                               // 未选中项继续走默认中性色——即「选中变色、每 tab 不同色」。
                               selectedColor = tabAccentColor(selectedTab, darkTheme),

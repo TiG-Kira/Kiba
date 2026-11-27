@@ -93,8 +93,9 @@ import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
-import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
-import top.yukonga.miuix.kmp.icon.glass.*
+import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.*
+import com.kira.kiba.ui.icon.*
 import top.yukonga.miuix.kmp.overlay.OverlayCascadingListPopup
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import com.kira.kiba.ui.theme.KibaMotion
@@ -614,7 +615,7 @@ fun AgentScreen(
                             // 玻璃图标库没有独立的 ArrowDown；拿右向 chevron 顺时针转 90°
                             // 得到干净的向下箭头，比语义为「下载」的 Download 更贴切。
                             Icon(
-                                MiuixGlassIcons.Regular.ChevronForward,
+                                MiuixIcons.ChevronForward,
                                 contentDescription = "回到对话底部",
                                 modifier = Modifier
                                     .size(22.dp)

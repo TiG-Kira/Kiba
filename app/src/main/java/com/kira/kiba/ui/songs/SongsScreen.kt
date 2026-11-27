@@ -118,7 +118,9 @@ import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
-import top.yukonga.miuix.kmp.icon.glass.*
+import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.*
+import com.kira.kiba.ui.icon.*
 import top.yukonga.miuix.kmp.overlay.OverlayListPopup
 import com.kira.kiba.ui.material.KibaGlassDialog
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -622,7 +624,7 @@ private fun SongGroupCard(
             summary = "$count 首",
             endActions = {
                 Icon(
-                    MiuixGlassIcons.Regular.ChevronForward,
+                    MiuixIcons.ChevronForward,
                     contentDescription = null,
                     tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                 )
@@ -1050,7 +1052,7 @@ private fun RefreshNoticeCard(
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    imageVector = MiuixGlassIcons.Regular.Close,
+                    imageVector = MiuixIcons.Close,
                     contentDescription = "关闭提示",
                     tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                     modifier = Modifier.size(16.dp),

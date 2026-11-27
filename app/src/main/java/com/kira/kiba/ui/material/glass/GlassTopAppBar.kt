@@ -1,0 +1,933 @@
+// Copyright 2026, compose-miuix-ui contributors
+// SPDX-License-Identifier: Apache-2.0
+//
+// Kiba 自有顶栏家族：官方 miuix-glass 0.9.5-rc01 没有大封面顶栏所需的扩展参数
+// （background 封面插槽 / minExpansionPx / onCollapsedHeightPx / smallSubtitle /
+// largeTitleTrailing / 三分色 / onBlankTap / 贴底加粗大标题），本文件将 Kiba
+// 0.9.4 快照定制版整体迁移为 Kiba 组件，渲染原语全部换成官方 artifact：
+//   - Modifier.glass / drawGlassRim → 官方 miuix-glass / miuix-material
+//   - drawGlassStroke → 官方 material drawEdgeStroke
+//   - 阴影（绘制期 alpha）→ KibaGlassShadowInternals（官方等价物是内部 Node）
+//   - bandBlurRadius 高斯模糊路径 → miuix-blur drawBackdrop+blur（原样）
+//   - 新增官方 0.9.5 语义的 progressiveBlur（渐变蒙版纹理模糊）与
+//     visualContentOffset（视觉内容偏移覆盖，默认读 state.visualContentOffset）
+
+package com.kira.kiba.ui.material.glass
+
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.updateTransition
+import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import top.yukonga.miuix.kmp.basic.ScrollBehavior
+import top.yukonga.miuix.kmp.blur.Backdrop
+import top.yukonga.miuix.kmp.blur.BlendColorEntry
+import top.yukonga.miuix.kmp.blur.BlurDefaults
+import top.yukonga.miuix.kmp.blur.ProgressiveBlur
+import top.yukonga.miuix.kmp.blur.blur
+import top.yukonga.miuix.kmp.blur.drawBackdrop
+import top.yukonga.miuix.kmp.blur.layerBackdrop
+import top.yukonga.miuix.kmp.blur.progressiveTextureBlur
+import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
+import top.yukonga.miuix.kmp.glass.GlassMotion
+import top.yukonga.miuix.kmp.glass.glass
+import top.yukonga.miuix.kmp.material.EdgeStroke
+import top.yukonga.miuix.kmp.material.GlassDefaults
+import top.yukonga.miuix.kmp.material.GlassEdgeStrokes
+import top.yukonga.miuix.kmp.material.GlassMaterial
+import top.yukonga.miuix.kmp.material.GlassMaterials
+import top.yukonga.miuix.kmp.material.GlassShadow
+import top.yukonga.miuix.kmp.material.GlassShadows
+import top.yukonga.miuix.kmp.material.GlassShape
+import top.yukonga.miuix.kmp.material.GlassStyle
+import top.yukonga.miuix.kmp.material.drawEdgeStroke
+import top.yukonga.miuix.kmp.material.drawGlassRim
+import top.yukonga.miuix.kmp.material.isRuntimeShaderSupported
+import top.yukonga.miuix.kmp.material.withUnderlayBlur
+import top.yukonga.miuix.kmp.theme.MiuixTheme
+
+/** Default values for [GlassTopAppBar] and [GlassIconButton]. */
+object GlassTopAppBarDefaults {
+
+    /** Start/end inset of the glass controls, aligned with the page's cards and tabs. */
+    val HorizontalPadding: Dp = 12.dp
+
+    /** Scroll threshold for the legacy shadow ramp. Material visibility is driven separately. */
+    val RampStart: Dp = 0.dp
+
+    /**
+     * Scroll distance for the retained Compose shadow ramp. The mask and button material use timed
+     * transitions independent of this distance.
+     */
+    val RampDistance: Dp = 32.dp
+
+    /** How far the large title blurs out as it collapses. */
+    val LargeTitleBlurRadius: Dp = 12.dp
+
+    /** Diameter of the glass pill behind a bar button. */
+    val ButtonSize: Dp = 44.dp
+
+    /** Icon opacity while an action-bar button is held. */
+    val PressedContentAlpha: Float = 0.6f
+
+    private val NESTED_BLUR_LIGHT: Dp = 44.72.dp
+    private val NESTED_BLUR_DARK: Dp = 63.25.dp
+
+    /**
+     * How far a bar has collapsed, in `[0, 1]`.
+     *
+     * @param scrollBehavior The behavior driving the bar. `null` reports a fully collapsed bar,
+     *   which is what a bar over content that does not scroll wants.
+     * @param visualContentOffset 官方 0.9.5 语义的视觉内容偏移覆盖（px，向上为负）。
+     *   `null`（默认）读 `state.visualContentOffset`（contentOffset + 弹性过滚）。
+     */
+    @Composable
+    fun collapseRamp(
+        scrollBehavior: ScrollBehavior?,
+        visualContentOffset: (() -> Float)? = null,
+    ): State<Float> {
+        val density = LocalDensity.current
+        val startPx = with(density) { RampStart.toPx() }
+        val rampPx = with(density) { RampDistance.toPx() }
+        val currentOffset = rememberUpdatedState(visualContentOffset)
+        return remember(scrollBehavior, startPx, rampPx) {
+            if (scrollBehavior == null) {
+                mutableFloatStateOf(1f)
+            } else {
+                derivedStateOf {
+                    val offset = currentOffset.value?.invoke()
+                        ?: scrollBehavior.state.visualContentOffset
+                    ((-offset - startPx) / rampPx).coerceIn(0f, 1f)
+                }
+            }
+        }
+    }
+
+    /**
+     * Like [collapseRamp] but driven by the caller's own overlap flag instead of scroll distance.
+     *
+     * Self-scrolling pages (`animateScrollTo` / `animateScrollToItem`) never feed `contentOffset`,
+     * so their [collapseRamp] sits at 0 and the pills keep no shadow even though the band and the
+     * button material have already turned on. Those pages carry the scroll state themselves as
+     * `isContentScrolled`; this rides that same flag on the same timed transition.
+     */
+    @Composable
+    fun overlayRamp(isContentScrolled: Boolean): State<Float> {
+        val transition = updateTransition(isContentScrolled, label = "glassTopBarOverlayRamp")
+        return transition.animateFloat(
+            transitionSpec = { GlassMotion.topBarButtonFloat() },
+            label = "glassTopBarOverlayRampValue",
+        ) { if (it) 1f else 0f }
+    }
+
+    /** The traditional fill used when backdrop material is unavailable. */
+    @Composable
+    fun buttonFill(): Color = if (isDarkTheme()) Color(0xFF2C2C2C) else Color.White
+
+    /** The `internal-pured-thin-glass` action-button material. */
+    @Composable
+    fun buttonMaterial(): GlassMaterial = GlassMaterials.puredThinGlass(isDarkTheme())
+
+    /** Effective blur of the action bar's parent mask and a child's own 20dp mask blur. */
+    @Composable
+    internal fun nestedMaterialBlurRadius(): Dp = if (isDarkTheme()) NESTED_BLUR_DARK else NESTED_BLUR_LIGHT
+
+    /** The parent material applied before child button and tab materials. */
+    @Composable
+    internal fun actionBarUnderlayMaterial(): GlassMaterial = GlassMaterials.actionBarMask(isDarkTheme())
+
+    /**
+     * Margin on each side of a bar button's pill, which becomes the gap between two adjacent
+     * buttons. Two pills 44dp across with 6dp of margin on both sit 12dp apart.
+     */
+    val ButtonPadding: Dp = 6.dp
+
+    /** The small bloom stroke paired with [buttonMaterial]. */
+    @Composable
+    fun buttonStroke(): EdgeStroke = GlassEdgeStrokes.forTheme(
+        isDark = isDarkTheme(),
+        light = GlassEdgeStrokes.SmallLight,
+        dark = GlassEdgeStrokes.SmallDark,
+    )
+
+    /** The state overlay painted behind a held action-bar icon. */
+    @Composable
+    fun buttonPressedOverlay(): Color = if (isDarkTheme()) {
+        Color.White.copy(alpha = 0.14f)
+    } else {
+        Color.Black.copy(alpha = 0.10f)
+    }
+
+    /**
+     * The band that dims the content as it passes under the bar: the page's own colour, laid back
+     * over it, solid at the top edge and gone by the bottom.
+     *
+     * @param color The page's background colour.
+     */
+    @Stable
+    fun bandBrush(color: Color): Brush = Brush.verticalGradient(
+        0.00f to color,
+        0.45f to color,
+        0.58f to color.copy(alpha = 0.82f),
+        0.72f to color.copy(alpha = 0.58f),
+        0.86f to color.copy(alpha = 0.34f),
+        1.00f to color.copy(alpha = 0f),
+    )
+
+    /** How far the band reaches past the bottom of the bar. */
+    val BandOverhang: Dp = 28.dp
+
+    /**
+     * 标题带本身的**渐进模糊**半径；0 = 关闭，只保留原有的 scrim 渐变。
+     *
+     * 默认 0；当未显式传入且「真·高级材质」开启（backdrop 存在）、设备支持运行时着色器时，
+     * 顶栏自动取 20.dp（超级柔光标准值，见 [GlassTopAppBar] 内部推导）。
+     */
+    var BandBlurRadius: Dp = 0.dp
+
+    /**
+     * 渐变底板整体上移量：把白色渐变的高光压到状态栏一带，避免它盖在标题高度上、
+     * 更不会延伸到顶栏下方的内容区形成「白雾」。0 = 原位（默认样式必须保持 0）。
+     * 真·高级材质开启时顶栏自动取 24.dp（超级柔光标准值）。
+     */
+    var BandScrimOffset: Dp = 0.dp
+
+    @Composable
+    private fun isDarkTheme(): Boolean = MiuixTheme.colorScheme.background.luminance() < 0.5f
+}
+
+internal data class GlassTopAppBarContext(
+    val backdrop: Backdrop?,
+    val material: GlassMaterial,
+    val underlayMaterial: GlassMaterial?,
+    val floating: Boolean,
+    val alpha: Float,
+    val ramp: State<Float>,
+    val materialProgress: State<Float>,
+    val keepMaterial: Boolean,
+    val style: GlassStyle,
+    val size: Dp,
+    val buttonPadding: Dp,
+    val shape: GlassShape,
+    val fill: Color,
+    val stroke: EdgeStroke?,
+    val shadow: GlassShadow?,
+    /** progressiveBlur = true 时按钮改从渲染后的 band 场景取样（官方 0.9.5 语义）。 */
+    val buttonBackdropOverride: Backdrop? = null,
+)
+
+internal val LocalGlassTopAppBarContext = staticCompositionLocalOf<GlassTopAppBarContext?> { null }
+
+/** 官方 0.9.5 渐进模糊带的蒙版渐变（与官方 GlassTopAppBar 一致的曲线）。 */
+private val TopBarProgressiveGradient = ProgressiveBlur.Top.copy(curve = 0.25f)
+
+/**
+ * A top bar the content scrolls *under*, deriving material visibility from [ScrollBehavior].
+ * For an exact page-top signal, use the overload with `isContentScrolled` and pass the list's
+ * `canScrollBackward` value. Both overloads retain the same public visual parameters.
+ *
+ * @param title The compact title, centred once the bar has collapsed.
+ * @param backdrop The page behind the action bar. `null` uses [fill].
+ * @param modifier The modifier applied to the bar.
+ * @param largeTitle The title shown large before the content scrolls. Defaults to [title].
+ * @param subtitle Optional line under the title.
+ * @param largeTitleBlurRadius How far the large title blurs out as it collapses.
+ * @param scrollBehavior The behavior driving the collapse. Without one the bar stays at full
+ *   strength, which is what a bar over non-scrolling content wants.
+ * @param bandBrush The band that dims the content passing under the bar.
+ * @param bandOverhang How far the band reaches past the bottom of the bar.
+ * @param style Compatibility style forwarded to the renderer. The default button body uses
+ *   [GlassTopAppBarDefaults.buttonMaterial] with bionic shading disabled.
+ * @param alpha Opacity multiplier for the button pills, on top of their floating transition.
+ * @param buttonShape Silhouette of the button pills. Defaults to a circle of [buttonSize].
+ * @param buttonSize Diameter of the button pills.
+ * @param buttonShadow The shadow under the button pills. `null` removes it.
+ * @param fill Traditional fill behind the button pills when runtime shaders are unavailable.
+ * @param stroke Optional bloom stroke on the button pills. The default is the
+ *   small action-button stroke.
+ * @param defaultWindowInsetsPadding Whether to inset the bar for the status bar.
+ * @param contentModifier Applied to the foreground bar, leaving its background band stationary.
+ * @param titleAlpha Draw-phase opacity of the compact and large title containers.
+ * @param navigationIcon The leading control. Use [GlassIconButton] for the same glass surface and
+ *   press feedback as trailing controls; the slot adds no surface of its own.
+ * @param actions Trailing controls. Wrap them in [GlassIconButton] to give them the same pill.
+ * @param bottomContent Content pinned under the title, inside the bar. A tab row goes here.
+ * @param progressiveBlur 官方 0.9.5 语义：把 band 换成**渐变蒙版纹理模糊**（下沿渐进归零、
+ *   无硬边），按钮从渲染后的场景取样。需要非空 [backdrop] 且设备支持运行时着色器。
+ * @param visualContentOffset 官方 0.9.5 语义：内容位置（px，向上为负，含弹性位移），
+ *   覆盖 band / 阴影 ramp 的进度来源；默认读 `state.visualContentOffset`。
+ */
+@Composable
+fun GlassTopAppBar(
+    title: String,
+    modifier: Modifier = Modifier,
+    contentModifier: Modifier = Modifier,
+    backdrop: Backdrop? = null,
+    largeTitle: String = title,
+    subtitle: String = "",
+    /** 折叠态小标题下方那行副标题；默认跟随 [subtitle]，传空串让折叠态不带副标题。 */
+    smallSubtitle: String = subtitle,
+    titleColor: Color = MiuixTheme.colorScheme.onSurface,
+    largeTitleColor: Color = MiuixTheme.colorScheme.onSurface,
+    subtitleColor: Color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+    scrollBehavior: ScrollBehavior? = null,
+    bandBrush: Brush = GlassTopAppBarDefaults.bandBrush(MiuixTheme.colorScheme.surface),
+    bandOverhang: Dp = GlassTopAppBarDefaults.BandOverhang,
+    largeTitleBlurRadius: Dp = GlassTopAppBarDefaults.LargeTitleBlurRadius,
+    style: GlassStyle = GlassDefaults.Style,
+    alpha: Float = 1f,
+    buttonSize: Dp = GlassTopAppBarDefaults.ButtonSize,
+    buttonShape: GlassShape = GlassShape(buttonSize / 2),
+    buttonPadding: Dp = GlassTopAppBarDefaults.ButtonPadding,
+    fill: Color = GlassTopAppBarDefaults.buttonFill(),
+    stroke: EdgeStroke? = GlassTopAppBarDefaults.buttonStroke(),
+    buttonShadow: GlassShadow? = GlassShadows.Regular,
+    defaultWindowInsetsPadding: Boolean = true,
+    titleAlpha: () -> Float = { 1f },
+    navigationIcon: @Composable () -> Unit = {},
+    actions: @Composable RowScope.() -> Unit = {},
+    bottomContent: @Composable () -> Unit = {},
+    onBlankTap: (() -> Unit)? = null,
+    progressiveBlur: Boolean = false,
+    visualContentOffset: (() -> Float)? = null,
+    bandBlurRadius: Dp = GlassTopAppBarDefaults.BandBlurRadius,
+    background: (@Composable BoxScope.() -> Unit)? = null,
+    /** 展开态最小额外展开高度（px），用于封面背景完整露出。 */
+    minExpansionPx: Int = 0,
+    /** 折叠态总高度回报（px，不含状态栏），详见 [BlurTopAppBar] 同名参数。 */
+    onCollapsedHeightPx: ((Int) -> Unit)? = null,
+    /** 展开态把大标题/副标题贴到顶栏底部（叠在背景下部）。 */
+    largeTitleBottomAligned: Boolean = false,
+    /** 展开态大标题字重。 */
+    largeTitleFontWeight: androidx.compose.ui.text.font.FontWeight = androidx.compose.ui.text.font.FontWeight.Normal,
+    /** 展开态大标题行尾插槽（与大标题同一行、垂直居中对齐），随大标题同频折叠。 */
+    largeTitleTrailing: (@Composable () -> Unit)? = null,
+) {
+    val isContentScrolled by remember(scrollBehavior) {
+        derivedStateOf { scrollBehavior?.state?.let { it.contentOffset < 0f } ?: true }
+    }
+    GlassTopAppBar(
+        title = title,
+        isContentScrolled = isContentScrolled,
+        modifier = modifier,
+        backdrop = backdrop,
+        largeTitle = largeTitle,
+        subtitle = subtitle,
+        smallSubtitle = smallSubtitle,
+        titleColor = titleColor,
+        largeTitleColor = largeTitleColor,
+        subtitleColor = subtitleColor,
+        scrollBehavior = scrollBehavior,
+        bandBrush = bandBrush,
+        bandOverhang = bandOverhang,
+        largeTitleBlurRadius = largeTitleBlurRadius,
+        style = style,
+        alpha = alpha,
+        buttonSize = buttonSize,
+        buttonShape = buttonShape,
+        buttonPadding = buttonPadding,
+        fill = fill,
+        stroke = stroke,
+        buttonShadow = buttonShadow,
+        defaultWindowInsetsPadding = defaultWindowInsetsPadding,
+        contentModifier = contentModifier,
+        titleAlpha = titleAlpha,
+        navigationIcon = navigationIcon,
+        actions = actions,
+        bottomContent = bottomContent,
+        onBlankTap = onBlankTap,
+        progressiveBlur = progressiveBlur,
+        visualContentOffset = visualContentOffset,
+        bandBlurRadius = bandBlurRadius,
+        background = background,
+        minExpansionPx = minExpansionPx,
+        onCollapsedHeightPx = onCollapsedHeightPx,
+        largeTitleBottomAligned = largeTitleBottomAligned,
+        largeTitleFontWeight = largeTitleFontWeight,
+        largeTitleTrailing = largeTitleTrailing,
+    )
+}
+
+/**
+ * A glass top bar with an explicit page-overlap state.
+ *
+ * @param title The compact title.
+ * @param isContentScrolled Whether page content has left its resting position. For a lazy list,
+ *   pass `listState.canScrollBackward`. This clears the material when the page returns to the top
+ *   even if the large title stays collapsed. Other parameters behave as in the scroll-behaviour
+ *   overload.
+ * @param rampFromOverlay Drive the button shadow from [isContentScrolled] instead of the scroll
+ *   distance. Enable it for pages that scroll themselves (`animateScrollTo` /
+ *   `animateScrollToItem`) yet still pass a `scrollBehavior` for the collapse: those never feed
+ *   `contentOffset`, so the default ramp sits at 0 and the pills keep no shadow even though their
+ *   band and material turned on. Gesture-driven pages should leave it off, keeping the shadow's
+ *   gradual ramp over `RampDistance`.
+ */
+@Composable
+fun GlassTopAppBar(
+    title: String,
+    isContentScrolled: Boolean,
+    modifier: Modifier = Modifier,
+    contentModifier: Modifier = Modifier,
+    backdrop: Backdrop? = null,
+    largeTitle: String = title,
+    subtitle: String = "",
+    /** 折叠态小标题下方那行副标题；默认跟随 [subtitle]，传空串让折叠态不带副标题。 */
+    smallSubtitle: String = subtitle,
+    titleColor: Color = MiuixTheme.colorScheme.onSurface,
+    largeTitleColor: Color = MiuixTheme.colorScheme.onSurface,
+    subtitleColor: Color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+    scrollBehavior: ScrollBehavior? = null,
+    bandBrush: Brush = GlassTopAppBarDefaults.bandBrush(MiuixTheme.colorScheme.surface),
+    bandOverhang: Dp = GlassTopAppBarDefaults.BandOverhang,
+    largeTitleBlurRadius: Dp = GlassTopAppBarDefaults.LargeTitleBlurRadius,
+    style: GlassStyle = GlassDefaults.Style,
+    alpha: Float = 1f,
+    buttonSize: Dp = GlassTopAppBarDefaults.ButtonSize,
+    buttonShape: GlassShape = GlassShape(buttonSize / 2),
+    buttonPadding: Dp = GlassTopAppBarDefaults.ButtonPadding,
+    fill: Color = GlassTopAppBarDefaults.buttonFill(),
+    stroke: EdgeStroke? = GlassTopAppBarDefaults.buttonStroke(),
+    buttonShadow: GlassShadow? = GlassShadows.Regular,
+    defaultWindowInsetsPadding: Boolean = true,
+    titleAlpha: () -> Float = { 1f },
+    navigationIcon: @Composable () -> Unit = {},
+    actions: @Composable RowScope.() -> Unit = {},
+    bottomContent: @Composable () -> Unit = {},
+    onBlankTap: (() -> Unit)? = null,
+    rampFromOverlay: Boolean = false,
+    progressiveBlur: Boolean = false,
+    visualContentOffset: (() -> Float)? = null,
+    /**
+     * 标题带高斯模糊半径（dp）。0 表示关闭模糊、仅保留 scrim 渐变。
+     * 不显式传入时，顶栏在 backdrop 存在（即「真·高级材质」开启）且设备支持运行时着色器时
+     * 自动取 20.dp，关闭时保持 0，与原生默认顶栏行为一致。
+     */
+    bandBlurRadius: Dp = GlassTopAppBarDefaults.BandBlurRadius,
+    /**
+     * 展开态的自定义背景（如歌曲详情页的封面大图），画在背板 band 之下。
+     * 随 [GlassTopAppBarDefaults.RampDistance] 的同一个 mask 时钟淡出：
+     * 未滚动时 alpha=1 全显，滚动（折叠）后淡出让位于背板 band。
+     */
+    background: (@Composable BoxScope.() -> Unit)? = null,
+    /** 展开态最小额外展开高度（px），用于封面背景完整露出。 */
+    minExpansionPx: Int = 0,
+    /** 折叠态总高度回报（px，不含状态栏），详见 [BlurTopAppBar] 同名参数。 */
+    onCollapsedHeightPx: ((Int) -> Unit)? = null,
+    /** 展开态把大标题/副标题贴到顶栏底部（叠在背景下部），距底边留空白。 */
+    largeTitleBottomAligned: Boolean = false,
+    /** 展开态大标题字重。 */
+    largeTitleFontWeight: androidx.compose.ui.text.font.FontWeight = androidx.compose.ui.text.font.FontWeight.Normal,
+    /** 展开态大标题行尾插槽（与大标题同一行、垂直居中对齐），随大标题同频折叠。 */
+    largeTitleTrailing: (@Composable () -> Unit)? = null,
+) {
+    // Buttons carry their own horizontal margin (see [GlassTopAppBarDefaults.ButtonPadding]), so
+    // the trailing row needs no spacing of its own; the wrapper only pins them to the end.
+    val actionsWithPadding: @Composable RowScope.() -> Unit = {
+        Row(
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically,
+            content = actions,
+        )
+    }
+    // The leading slot takes a single control, so it gets the same margin directly. Without it the
+    // pill would sit flush against the bar's own start padding.
+    val navigationIconWithPadding: @Composable () -> Unit = {
+        Box(modifier = Modifier.padding(horizontal = buttonPadding)) { navigationIcon() }
+    }
+    val contentOffsetRamp = GlassTopAppBarDefaults.collapseRamp(scrollBehavior, visualContentOffset)
+    // 自滚动页面（animateScrollTo / animateScrollToItem）拿不到 contentOffset，上一行会一直停在 0，
+    // 连带把玻璃按钮的阴影吃掉；这类页面已用 isContentScrolled 自行接管滚动判定，
+    // 开启 rampFromOverlay 后阴影改由同一枚标记驱动，与 band / 按钮材质同步。
+    val overlayRampState = GlassTopAppBarDefaults.overlayRamp(isContentScrolled)
+
+    // 大封面页（歌曲详情 / 中二详情 / 播放列表面板 / 歌单 / 收藏 / 账户）：
+    // **封面淡出、蒙版渐显、按钮材质、阴影共用一条跟手的折叠进度**。
+    //
+    // 原生这几路各跑各的：mask 是 100ms tween、按钮材质是 350ms tween，都由
+    // `isContentScrolled` 布尔触发；而 `collapseRamp` 只有 32dp，顶栏真正的高度收缩
+    // 却是整个 `heightOffsetLimit`（大封面页上千 px）。结果遮罩与材质在手指刚动时
+    // 就播完了，顶栏还在后面慢慢折 —— 观感即「动画先跑完、折叠慢半拍继续」。
+    //
+    // 改成直接读 `collapsedFraction`（0=展开 / 1=完全折叠，覆盖整个行程）：
+    // 每一帧封面少一点、当前材质的蒙版多一点、按钮与文字同步转过去，谁也不等谁。
+    // 用 `State` 的 getter 实时读而不是 derivedStateOf：`heightOffsetLimit` 是普通字段
+    // 不是 snapshot state，换页重新测量时 derivedStateOf 可能卡在旧值；这样在 draw 阶段
+    // 读，只触发重绘不触发重组。普通页面（background == null）保持原生行为不变。
+    val coverSyncProgress: State<Float>? = if (background != null && scrollBehavior != null) {
+        remember(scrollBehavior) {
+            object : State<Float> {
+                override val value: Float
+                    get() = scrollBehavior.state.collapsedFraction.coerceIn(0f, 1f)
+            }
+        }
+    } else {
+        null
+    }
+
+    // 材质**不再等内容滚离原位**：`isContentScrolled` 是 `contentOffset < 0` 的布尔，
+    // 而官方 behavior 在顶栏折叠阶段独占滚动量、列表根本不滚 —— 旧行为要等折完、
+    // 再上滑一次让列表动起来，按钮/底板才切到折叠态材质（「再次上滑才变回原材质」）。
+    // 现在材质过渡搬进折叠行程，大封面页改由同一条 `coverSyncProgress` 跨过 0 的那一帧
+    // 启用（与封面淡出同帧）；普通页仍按原来的内容滚动判定。
+    val floating by remember(isContentScrolled, coverSyncProgress) {
+        if (coverSyncProgress != null) {
+            derivedStateOf { coverSyncProgress.value > 0f }
+        } else {
+            derivedStateOf { isContentScrolled }
+        }
+    }
+    val transition = updateTransition(floating, label = "glassTopBarFloat")
+    val transitionMask = transition.animateFloat(
+        transitionSpec = { tween(durationMillis = 100, easing = LinearEasing) },
+        label = "glassTopBarMask",
+    ) { if (it) 1f else 0f }
+    val transitionMaterial = transition.animateFloat(
+        transitionSpec = { GlassMotion.topBarButtonFloat() },
+        label = "glassTopBarMaterial",
+    ) { if (it) 1f else 0f }
+
+    // 三路过渡全部由同一条进度派生，不再各自跑定时 tween。
+    val ramp = coverSyncProgress
+        ?: (if (rampFromOverlay) overlayRampState else contentOffsetRamp)
+    val maskProgress: State<Float> = coverSyncProgress ?: transitionMask
+    val materialProgress: State<Float> = coverSyncProgress ?: transitionMaterial
+    val buttonBackdrop = backdrop?.takeIf { isRuntimeShaderSupported() }
+    // 真·高级材质开启（backdrop 存在且支持运行时着色器）时自动套用超级柔光标准值：
+    // 模糊 20.dp、底板整体向上平移 24.dp。显式传入的 bandBlurRadius / 调高的全局默认值
+    // 会覆盖 20.dp（coerceAtLeast 只兜底，不压低）。
+    val advancedGlass = backdrop != null && isRuntimeShaderSupported()
+    val requestedBandBlur = if (bandBlurRadius > 0.dp) {
+        bandBlurRadius
+    } else if (advancedGlass) {
+        GlassTopAppBarDefaults.BandBlurRadius.coerceAtLeast(20.dp)
+    } else {
+        0.dp
+    }
+    val requestedScrimOffset = if (advancedGlass) {
+        GlassTopAppBarDefaults.BandScrimOffset.coerceAtLeast(24.dp)
+    } else {
+        0.dp
+    }
+    val bandBlurPx = with(LocalDensity.current) { requestedBandBlur.toPx() }
+    val bandBlurBackdrop = backdrop?.takeIf { bandBlurPx > 0f && isRuntimeShaderSupported() }
+    val overhangPx = with(LocalDensity.current) { bandOverhang.toPx() }
+    val scrimOffsetPx = with(LocalDensity.current) { requestedScrimOffset.toPx() }
+    // Nothing has scrolled under the bar yet, so there is nothing for the glass to show: the pills
+    // stay bare icons until [floating] turns the material, the plate and the shadow on together.
+    val keepButtonMaterial by remember(floating, materialProgress) {
+        derivedStateOf { floating || materialProgress.value > 0f }
+    }
+    val baseMaterial = GlassTopAppBarDefaults.buttonMaterial()
+    val material = if (keepButtonMaterial && buttonBackdrop != null) {
+        baseMaterial.copy(blurRadius = GlassTopAppBarDefaults.nestedMaterialBlurRadius())
+    } else {
+        baseMaterial
+    }
+    val underlayMaterial = GlassTopAppBarDefaults.actionBarUnderlayMaterial()
+        .takeIf { keepButtonMaterial && buttonBackdrop != null }
+
+    // 官方 0.9.5 语义的渐进模糊带：按钮从「渲染后的 band 场景」取样，
+    // 需要把 band Box 注册成 progressiveBackdrop 的内容层（见下方 Band Layer）。
+    var bandCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    val useProgressiveBand = progressiveBlur && backdrop != null && isRuntimeShaderSupported()
+    val progressiveBackdrop = if (useProgressiveBand) {
+        rememberLayerBackdrop {
+            val coordinates = bandCoordinates?.takeIf { it.isAttached }
+            with(backdrop!!) { drawBackdrop(this@rememberLayerBackdrop, coordinates) }
+            drawContent()
+        }
+    } else {
+        null
+    }
+
+    Box(modifier = modifier) {
+        // 展开态自定义背景：与背板 band 共用 mask 时钟，折叠时封面淡出、背板淡入。
+        if (background != null) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .graphicsLayer { this.alpha = 1f - maskProgress.value.coerceIn(0f, 1f) },
+                content = background,
+            )
+        }
+        if (progressiveBackdrop != null) {
+            // ── Band Layer：官方 0.9.5 渐进模糊（progressiveBlur = true）──
+            // 自身注册为 progressiveBackdrop 的内容层，纹理模糊的采样源是它背后的
+            // [backdrop]；按钮经 LocalGlassTopAppBarContext.buttonBackdrop 从这条链取景。
+            val surfaceColor = MiuixTheme.colorScheme.surface
+            // blurColors 内部自带 remember，可直接在组合期取用
+            val blurColors = BlurDefaults.blurColors(
+                blendColors = listOf(BlendColorEntry(surfaceColor.copy(alpha = 0.2f))),
+            )
+            val scrimBrush = remember(surfaceColor) {
+                Brush.verticalGradient(
+                    0.00f to surfaceColor.copy(alpha = 0.50f),
+                    0.25f to surfaceColor.copy(alpha = 0.44f),
+                    0.50f to surfaceColor.copy(alpha = 0.32f),
+                    0.75f to surfaceColor.copy(alpha = 0.16f),
+                    0.90f to surfaceColor.copy(alpha = 0.05f),
+                    1.00f to Color.Transparent,
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .onGloballyPositioned { bandCoordinates = it }
+                    .layerBackdrop(progressiveBackdrop)
+                    .graphicsLayer {
+                        this.alpha = maskProgress.value.coerceIn(0f, 1f)
+                    }
+                    .progressiveTextureBlur(
+                        backdrop = backdrop!!,
+                        shape = RectangleShape,
+                        gradient = TopBarProgressiveGradient,
+                        blurRadius = 80f,
+                        colors = blurColors,
+                    )
+                    .drawWithContent {
+                        drawContent()
+                        drawRect(brush = scrimBrush)
+                    },
+            )
+        } else {
+            // 底层：渐变底板（可淡 / 可关）。随滚动 maskProgress 渐显；scaleY + overhang 略外扩，
+            // translationY(-scrimOffsetPx) 把整块白雾整体上移，让它落在状态栏一带、不再压到内容区。
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .graphicsLayer {
+                        this.alpha = maskProgress.value
+                        transformOrigin = TransformOrigin(0.5f, 0f)
+                        scaleY = if (size.height > 0f) (size.height + overhangPx) / size.height else 1f
+                        translationY = -scrimOffsetPx
+                    }
+                    .background(bandBrush),
+            )
+            // 上层：真实高斯模糊，盖在底板之上；竖向遮罩让下沿归零（无硬边），且 blur 强到接近下沿
+            // （6 段渐变），避免早前「下沿 28dp 提前淡出 → 只剩纯色 scrim」造成的白雾。
+            if (bandBlurBackdrop != null) {
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .graphicsLayer {
+                            compositingStrategy = CompositingStrategy.Offscreen
+                            this.alpha = maskProgress.value
+                        }
+                        .drawBackdrop(
+                            backdrop = bandBlurBackdrop,
+                            shape = { RectangleShape },
+                            effects = { blur(bandBlurPx) },
+                        )
+                        .drawWithContent {
+                            drawContent()
+                            drawRect(
+                                brush = Brush.verticalGradient(
+                                    colorStops = arrayOf(
+                                        0.00f to Color.White,
+                                        0.55f to Color.White,
+                                        0.70f to Color.White.copy(alpha = 0.92f),
+                                        0.82f to Color.White.copy(alpha = 0.74f),
+                                        0.92f to Color.White.copy(alpha = 0.45f),
+                                        1.00f to Color.Transparent,
+                                    ),
+                                ),
+                                blendMode = BlendMode.DstIn,
+                            )
+                        },
+                )
+            }
+        }
+        CompositionLocalProvider(
+            LocalGlassTopAppBarContext provides GlassTopAppBarContext(
+                backdrop = buttonBackdrop,
+                material = material,
+                underlayMaterial = underlayMaterial,
+                floating = floating,
+                alpha = alpha,
+                ramp = ramp,
+                materialProgress = materialProgress,
+                keepMaterial = keepButtonMaterial && buttonBackdrop != null,
+                style = style,
+                size = buttonSize,
+                shape = buttonShape,
+                buttonPadding = buttonPadding,
+                fill = fill,
+                stroke = stroke,
+                shadow = buttonShadow,
+                buttonBackdropOverride = progressiveBackdrop,
+            ),
+        ) {
+            BlurTopAppBar(
+                title = title,
+                modifier = contentModifier,
+                titleAlpha = titleAlpha,
+                titleColor = titleColor,
+                largeTitle = largeTitle,
+                largeTitleColor = largeTitleColor,
+                largeTitleBlurRadius = largeTitleBlurRadius,
+                subtitle = subtitle,
+                subtitleColor = subtitleColor,
+                smallSubtitle = smallSubtitle,
+                color = Color.Transparent,
+                scrollBehavior = scrollBehavior,
+                defaultWindowInsetsPadding = defaultWindowInsetsPadding,
+                navigationIconPadding = GlassTopAppBarDefaults.HorizontalPadding,
+                actionIconPadding = GlassTopAppBarDefaults.HorizontalPadding,
+                navigationIcon = navigationIconWithPadding,
+                actions = actionsWithPadding,
+                bottomContent = bottomContent,
+                onBlankTap = onBlankTap,
+                minExpansionPx = minExpansionPx,
+                onCollapsedHeightPx = onCollapsedHeightPx,
+                largeTitleBottomAligned = largeTitleBottomAligned,
+                largeTitleFontWeight = largeTitleFontWeight,
+                largeTitleTrailing = largeTitleTrailing,
+            )
+        }
+    }
+}
+
+/**
+ * A round glass button for a bar's leading or trailing controls.
+ *
+ * @param onClick Called when the button is tapped.
+ * @param backdrop Optional [Backdrop] behind the glass. Inside [GlassTopAppBar] the button inherits
+ *   the bar's backdrop and effective blur; elsewhere `null` gives the traditional [fill].
+ * @param modifier The modifier applied to the button.
+ * @param surfaceAlpha Opacity of the pill. Inside [GlassTopAppBar], leave this at its default.
+ * @param style Compatibility style forwarded to the renderer.
+ * @param size Diameter of the button.
+ * @param shape The button's silhouette. Defaults to a circle of [size].
+ * @param shadow The shadow under the button. `null` removes it.
+ * @param padding Horizontal margin on each side of the pill, which is the gap between two
+ *   adjacent buttons. Defaults to [GlassTopAppBarDefaults.ButtonPadding].
+ * @param stroke Optional bloom stroke along the rim.
+ * @param content The icon inside.
+ */
+@Composable
+fun GlassIconButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    backdrop: Backdrop? = null,
+    surfaceAlpha: Float = 1f,
+    padding: Dp = LocalGlassTopAppBarContext.current?.buttonPadding ?: GlassTopAppBarDefaults.ButtonPadding,
+    style: GlassStyle = LocalGlassTopAppBarContext.current?.style ?: GlassDefaults.Style,
+    size: Dp = LocalGlassTopAppBarContext.current?.size ?: GlassTopAppBarDefaults.ButtonSize,
+    shape: GlassShape = LocalGlassTopAppBarContext.current?.shape ?: GlassShape(size / 2),
+    fill: Color = LocalGlassTopAppBarContext.current?.fill ?: GlassTopAppBarDefaults.buttonFill(),
+    stroke: EdgeStroke? = LocalGlassTopAppBarContext.current.let { if (it != null) it.stroke else GlassTopAppBarDefaults.buttonStroke() },
+    shadow: GlassShadow? = LocalGlassTopAppBarContext.current.let { if (it != null) it.shadow else GlassShadows.Regular },
+    content: @Composable () -> Unit,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val topBarContext = LocalGlassTopAppBarContext.current
+    val resolvedSurfaceAlpha = surfaceAlpha * (topBarContext?.alpha ?: 1f)
+    val topBarRamp = topBarContext?.ramp
+    GlassButtonSurface(
+        backdrop = topBarContext?.buttonBackdropOverride ?: topBarContext?.backdrop ?: backdrop,
+        floating = topBarContext?.floating ?: (surfaceAlpha > 0.01f),
+        surfaceAlpha = resolvedSurfaceAlpha,
+        shadowAlpha = { resolvedSurfaceAlpha * (topBarRamp?.value ?: 1f) },
+        style = style,
+        material = topBarContext?.material ?: GlassTopAppBarDefaults.buttonMaterial(),
+        underlayMaterial = topBarContext?.underlayMaterial,
+        shape = shape,
+        size = size,
+        fill = fill,
+        stroke = stroke,
+        shadow = shadow,
+        padding = padding,
+        sharedProgress = topBarContext?.materialProgress,
+        sharedKeepMaterial = topBarContext?.keepMaterial,
+        pressed = pressed,
+        modifier = modifier
+            .combinedClickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick,
+            ),
+        content = content,
+    )
+}
+
+/** The surface and press feedback used by [GlassIconButton] in either top-bar slot. */
+@Composable
+@Suppress("ktlint:compose:state-param-check")
+private fun GlassButtonSurface(
+    backdrop: Backdrop?,
+    floating: Boolean,
+    surfaceAlpha: Float,
+    shadowAlpha: () -> Float,
+    style: GlassStyle,
+    material: GlassMaterial,
+    underlayMaterial: GlassMaterial?,
+    fill: Color,
+    shape: GlassShape,
+    size: Dp,
+    stroke: EdgeStroke?,
+    shadow: GlassShadow?,
+    modifier: Modifier = Modifier,
+    padding: Dp = GlassTopAppBarDefaults.ButtonPadding,
+    pressed: Boolean = false,
+    // Retain State for draw-phase reads; the bar owns the shared animation clock.
+    sharedProgress: State<Float>? = null,
+    sharedKeepMaterial: Boolean? = null,
+    content: @Composable () -> Unit,
+) {
+    val progress = sharedProgress ?: run {
+        val floatingTransition = updateTransition(targetState = floating, label = "glassTopBarButtonFloat")
+        floatingTransition.animateFloat(
+            transitionSpec = { GlassMotion.topBarButtonFloat() },
+            label = "glassTopBarButtonMaterial",
+        ) { active ->
+            if (active) 1f else 0f
+        }
+    }
+    val opacity = surfaceAlpha.coerceIn(0f, 1f)
+    // How far the button has floated in. Everything it wears — the plate, the material, the shadow
+    // — rides this, so a bar sitting at the top of a page shows bare icons and nothing else.
+    val floatAlpha = progress.value.coerceIn(0f, 1f)
+    val ownKeepMaterial by remember(floating, progress) {
+        derivedStateOf { floating || progress.value > 0f }
+    }
+    val keepMaterial = sharedKeepMaterial ?: ownKeepMaterial
+    val pressTransition = updateTransition(targetState = pressed, label = "glassTopBarButtonPress")
+    val contentAlpha = pressTransition.animateFloat(
+        transitionSpec = { if (targetState) GlassMotion.pressDown() else GlassMotion.pressUp() },
+        label = "glassTopBarButtonContentAlpha",
+    ) { down ->
+        if (down) GlassTopAppBarDefaults.PressedContentAlpha else 1f
+    }
+    val overlayAlpha = pressTransition.animateFloat(
+        transitionSpec = { if (targetState) GlassMotion.pressDown() else GlassMotion.pressUp() },
+        label = "glassTopBarButtonOverlayAlpha",
+    ) { down ->
+        if (down) 1f else 0f
+    }
+    val pressedOverlay = GlassTopAppBarDefaults.buttonPressedOverlay()
+
+    Box(
+        modifier = modifier
+            .padding(horizontal = padding)
+            .size(size)
+            .glassShadow(shape, shadow, shadowAlpha),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .graphicsLayer { alpha = opacity * progress.value }
+                .then(
+                    if (backdrop != null) {
+                        // 顶栏内材质：官方 0.9.5 语义——underlay 经 withUnderlayBlur 烘进
+                        // 按钮材质（官方 glassOnActionBar 是模块内部实现，不对外）。
+                        Modifier.glass(
+                            backdrop = backdrop,
+                            shape = shape,
+                            style = style,
+                            alpha = 1f,
+                            material = material.withUnderlayBlur(underlayMaterial),
+                            stroke = stroke.takeIf { keepMaterial },
+                            enabled = keepMaterial,
+                            shading = false,
+                        )
+                    } else {
+                        Modifier
+                            .clip(shape)
+                            .background(fill)
+                            .drawWithContent {
+                                drawContent()
+                                if (stroke != null && keepMaterial) {
+                                    drawEdgeStroke(shape, stroke, 1f)
+                                    // 裁掉 rim 光晕的方形溢出（与旧版 fallback 一致）
+                                    drawGlassMask(shape, layoutDirection)
+                                }
+                            }
+                    },
+                ),
+        )
+        // The plate the material stands on: [fill], brought up with the float so a bar at the top of
+        // a page keeps its icons bare. It sits over the glass rather than under it — the glass draws
+        // an opaque backdrop of its own — and carries the rim and stroke that make it read as glass
+        // rather than as a flat disc.
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .graphicsLayer { alpha = opacity * floatAlpha }
+                .then(
+                    if (isRuntimeShaderSupported()) {
+                        Modifier.graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                    } else {
+                        Modifier.clip(shape)
+                    },
+                )
+                .background(fill)
+                .drawWithContent {
+                    drawContent()
+                    if (stroke != null) {
+                        drawEdgeStroke(shape, stroke, floatAlpha)
+                    }
+                    drawGlassRim(shape, style, fill, floatAlpha)
+                    // 方形 fill 裁成按钮形状（旧版 drawGlassMask 等价物）：rim 光晕要
+                    // 溢出边界不能 clip，只能在绘制期用 DstIn 遮罩裁形。
+                    drawGlassMask(shape, layoutDirection)
+                },
+        )
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .clip(shape)
+                .drawBehind {
+                    drawRect(pressedOverlay.copy(alpha = pressedOverlay.alpha * overlayAlpha.value.coerceIn(0f, 1f)))
+                },
+        )
+        Box(
+            modifier = Modifier.graphicsLayer { alpha = contentAlpha.value.coerceIn(0f, 1f) },
+            contentAlignment = Alignment.Center,
+        ) {
+            content()
+        }
+    }
+}

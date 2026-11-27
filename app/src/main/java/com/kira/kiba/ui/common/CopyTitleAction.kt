@@ -10,8 +10,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import com.kira.kiba.ui.navigation.KibaActionButton
 import top.yukonga.miuix.kmp.basic.Icon
-import top.yukonga.miuix.kmp.icon.glass.Copy
-import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
+import top.yukonga.miuix.kmp.icon.extended.Copy
+import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
@@ -51,7 +51,7 @@ fun CopyTitleAction(
         modifier = modifier,
     ) {
         Icon(
-            MiuixGlassIcons.Regular.Copy,
+            MiuixIcons.Copy,
             contentDescription = contentDescription,
             tint = tint,
         )

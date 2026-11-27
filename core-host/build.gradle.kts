@@ -28,7 +28,7 @@ android {
 }
 
 dependencies {
-    val miuixVersion = "0.9.4"
+    val miuixVersion = "0.9.5-rc01"
     implementation("androidx.compose.runtime:runtime:1.8.3")
     implementation("top.yukonga.miuix.kmp:miuix-ui-android:$miuixVersion")
 }

@@ -48,8 +48,9 @@ import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
-import top.yukonga.miuix.kmp.icon.glass.*
+import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.*
+import com.kira.kiba.ui.icon.*
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
@@ -140,7 +141,7 @@ fun ChartDetailScreen(
                     ArrowPreference(
                         title = "谱面预览（落雪）",
                         summary = "加载落雪官方谱面确认播放页，可随音乐查看每拍物量分布",
-                        startAction = { PrefIcon(MiuixGlassIcons.Regular.Play, com.kira.kiba.ui.common.KibaIconTint.GREEN) },
+                        startAction = { PrefIcon(MiuixIcons.Play, com.kira.kiba.ui.common.KibaIconTint.GREEN) },
                         onClick = {
                             onOpenPreview(
                                 chartPreviewUrl(currentChart),

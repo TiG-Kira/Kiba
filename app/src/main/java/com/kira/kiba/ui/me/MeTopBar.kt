@@ -67,10 +67,10 @@ import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TopAppBarDefaults
 import top.yukonga.miuix.kmp.basic.TopAppBarState
-import top.yukonga.miuix.kmp.glass.GlassTopAppBar
-import top.yukonga.miuix.kmp.glass.GlassTopAppBarDefaults
-import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
-import top.yukonga.miuix.kmp.icon.glass.Refresh
+import com.kira.kiba.ui.material.glass.GlassTopAppBar
+import com.kira.kiba.ui.material.glass.GlassTopAppBarDefaults
+import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.Refresh
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
@@ -250,6 +250,8 @@ fun MeTopBarSlot(
                 largeTitleColor = onSurface,
                 subtitleColor = onSurface.copy(alpha = 0.72f),
                 backdrop = if (liquidSkin) null else LocalGlassTopAppBarBackdrop.current,
+                progressiveBlur = !liquidSkin,
+                visualContentOffset = { scrollBehavior.state.visualContentOffset },
                 scrollBehavior = scrollBehavior,
                 bandBrush = if (liquidSkin) {
                     Brush.verticalGradient(listOf(Color.Transparent, Color.Transparent))
@@ -314,7 +316,7 @@ fun MeTopBarSlot(
 private fun RowScope.MeRefreshAction(onClick: () -> Unit, tint: Color) {
     KibaActionButton(onClick = onClick) {
         Icon(
-            imageVector = MiuixGlassIcons.Refresh,
+            imageVector = MiuixIcons.Refresh,
             contentDescription = "刷新成绩",
             modifier = Modifier.size(24.dp),
             tint = tint,

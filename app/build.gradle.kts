@@ -56,16 +56,16 @@ val lxnsClientSecret = (localProps.getProperty("kiba.lxnsClientSecret")
 
 android {
     namespace = "com.kira.kiba"
-    // miuix 0.9.4 / kyant backdrop 2.0.1 硬要求 compileSdk >= 37
+    // miuix 0.9.5-rc01 / kyant backdrop 2.0.1 硬要求 compileSdk >= 37
     compileSdk = 37
 
     defaultConfig {
         applicationId = "com.kira.kiba"
-        // miuix 0.9.4 各模块（blur/ui/icons/preference）要求 minSdk >= 33
+        // miuix 0.9.5-rc01 各模块（blur/ui/glass/material/icons/preference）要求 minSdk >= 33
         minSdk = 33
         targetSdk = 37
-        versionCode = 152
-        versionName = "3.6.9"
+        versionCode = 153
+        versionName = "3.7.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
@@ -279,8 +279,8 @@ tasks.named("preBuild") { dependsOn(sealLxns) }
 
 configurations.all {
     resolutionStrategy {
-        // miuix 各模块（ui/blur/icons/preference）可能互相拉取不同 miuix-ui 版本，统一锁 0.9.4
-        force("top.yukonga.miuix.kmp:miuix-ui-android:0.9.4")
+        // miuix 各模块（ui/blur/glass/material/icons/preference）可能互相拉取不同 miuix-ui 版本，统一锁 0.9.5-rc01
+        force("top.yukonga.miuix.kmp:miuix-ui-android:0.9.5-rc01")
         // concurrent-futures 1.1.0 的 AbstractResolvableFuture 依赖 guava；
         // 本项目无完整 guava，锁 1.2.0（自包含实现）修 ProfileInstaller NoClassDefFound
         force("androidx.concurrent:concurrent-futures:1.2.0")
@@ -303,12 +303,17 @@ dependencies {
     // ── 宿主公共契约层（模型枚举 + 中性扩展挂接点）──
     implementation(project(":core-host"))
 
-    // ── miuix（Termux Ultra 视觉体系 / miuix-glass）──
-    val miuixVersion = "0.9.4"
+    // ── miuix（Termux Ultra 视觉体系 / miuix-glass 官方 0.9.5-rc01）──
+    // 顶栏家族（GlassTopAppBar/GlassIconButton）保留 Kiba 定制版，源码在
+    // com.kira.kiba.ui.material.glass（基于官方 material/blur/glass API 适配）；
+    // 底栏 / 弹层 / 按钮 / 面板 / 图标全部走官方 artifact。
+    val miuixVersion = "0.9.5-rc01"
     implementation("top.yukonga.miuix.kmp:miuix-ui-android:$miuixVersion")
     implementation("top.yukonga.miuix.kmp:miuix-blur-android:$miuixVersion")
     implementation("top.yukonga.miuix.kmp:miuix-icons-android:$miuixVersion")
     implementation("top.yukonga.miuix.kmp:miuix-preference-android:$miuixVersion")
+    implementation("top.yukonga.miuix.kmp:miuix-glass-android:$miuixVersion")
+    implementation("top.yukonga.miuix.kmp:miuix-material-android:$miuixVersion")
 
     // 液态玻璃（Kyant0/AndroidLiquidGlass，Maven Central 发布）：真·高级材质「液态玻璃」档
     implementation("io.github.kyant0:backdrop:2.0.1")

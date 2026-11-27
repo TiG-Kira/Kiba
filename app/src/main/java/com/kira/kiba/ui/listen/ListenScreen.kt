@@ -71,7 +71,9 @@ import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
-import top.yukonga.miuix.kmp.icon.glass.*
+import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.*
+import com.kira.kiba.ui.icon.*
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.utils.PressFeedbackType
 import java.text.SimpleDateFormat
@@ -287,7 +289,7 @@ fun ListenScreen(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             androidx.compose.material3.Icon(
-                                imageVector = MiuixGlassIcons.Regular.Favorites,
+                                imageVector = MiuixIcons.Favorites,
                                 contentDescription = "收藏连播",
                                 tint = com.kira.kiba.ui.common.kibaIconTint(com.kira.kiba.ui.common.KibaIconTint.PINK),
                                 modifier = Modifier.size(22.dp),
@@ -324,7 +326,7 @@ fun ListenScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         androidx.compose.material3.Icon(
-                            imageVector = MiuixGlassIcons.Regular.Download,
+                            imageVector = MiuixIcons.Download,
                             contentDescription = "我的下载",
                             tint = com.kira.kiba.ui.common.kibaIconTint(com.kira.kiba.ui.common.KibaIconTint.GREEN),
                             modifier = Modifier.size(22.dp),
@@ -365,7 +367,7 @@ fun ListenScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         androidx.compose.material3.Icon(
-                            imageVector = MiuixGlassIcons.Regular.Add,
+                            imageVector = MiuixIcons.Add,
                             contentDescription = "新建歌单",
                             tint = com.kira.kiba.ui.common.kibaIconTint(com.kira.kiba.ui.common.KibaIconTint.PINK),
                             modifier = Modifier.size(22.dp),
@@ -417,7 +419,7 @@ fun ListenScreen(
                                     contentAlignment = Alignment.Center,
                                 ) {
                                     androidx.compose.material3.Icon(
-                                        imageVector = MiuixGlassIcons.Regular.Playlist,
+                                        imageVector = MiuixIcons.Playlist,
                                         contentDescription = null,
                                         tint = com.kira.kiba.ui.common.kibaIconTint(com.kira.kiba.ui.common.KibaIconTint.PINK),
                                         modifier = Modifier.size(22.dp),
@@ -462,7 +464,7 @@ fun ListenScreen(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             androidx.compose.material3.Icon(
-                                imageVector = MiuixGlassIcons.Regular.AiScan,
+                                imageVector = MiuixIcons.AiScan,
                                 contentDescription = "生成专属歌单",
                                 tint = com.kira.kiba.ui.common.kibaIconTint(com.kira.kiba.ui.common.KibaIconTint.PURPLE),
                                 modifier = Modifier.size(22.dp),
@@ -508,7 +510,7 @@ fun ListenScreen(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             androidx.compose.material3.Icon(
-                                imageVector = MiuixGlassIcons.Regular.Edit,
+                                imageVector = MiuixIcons.Edit,
                                 contentDescription = "按需求生成歌单",
                                 tint = com.kira.kiba.ui.common.kibaIconTint(com.kira.kiba.ui.common.KibaIconTint.BLUE),
                                 modifier = Modifier.size(22.dp),
@@ -816,7 +818,7 @@ private fun RecommendMiniCard(
                     .padding(6.dp),
             ) {
                 androidx.compose.material3.Icon(
-                    imageVector = MiuixGlassIcons.Regular.Info,
+                    imageVector = MiuixIcons.Info,
                     contentDescription = "曲目详情",
                     tint = com.kira.kiba.ui.common.kibaIconTint(com.kira.kiba.ui.common.KibaIconTint.CYAN),
                     modifier = Modifier.size(16.dp),
@@ -865,7 +867,7 @@ private fun AgentPlaylistEntry(
                     contentAlignment = Alignment.Center,
                 ) {
                     androidx.compose.material3.Icon(
-                        imageVector = MiuixGlassIcons.Regular.Playlist,
+                        imageVector = MiuixIcons.Playlist,
                         contentDescription = null,
                         tint = com.kira.kiba.ui.common.kibaIconTint(com.kira.kiba.ui.common.KibaIconTint.PINK),
                         modifier = Modifier.size(22.dp),
@@ -903,7 +905,7 @@ private fun AgentPlaylistEntry(
                     .padding(8.dp),
             ) {
                 androidx.compose.material3.Icon(
-                    imageVector = MiuixGlassIcons.Regular.Delete,
+                    imageVector = MiuixIcons.Delete,
                     contentDescription = "删除歌单",
                     tint = com.kira.kiba.ui.common.kibaIconTint(com.kira.kiba.ui.common.KibaIconTint.RED),
                     modifier = Modifier.size(18.dp),
@@ -980,7 +982,7 @@ fun ListenSongRow(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     androidx.compose.material3.Icon(
-                        imageVector = MiuixGlassIcons.Regular.Info,
+                        imageVector = MiuixIcons.Info,
                         contentDescription = "曲目详情",
                         tint = com.kira.kiba.ui.common.kibaIconTint(com.kira.kiba.ui.common.KibaIconTint.CYAN),
                         modifier = Modifier.size(20.dp),

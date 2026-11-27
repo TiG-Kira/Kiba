@@ -42,8 +42,8 @@ import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
-import top.yukonga.miuix.kmp.icon.glass.Play
+import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.Play
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.utils.PressFeedbackType
 
@@ -176,7 +176,7 @@ fun FavoritesScreen(
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 androidx.compose.material3.Icon(
-                                    imageVector = MiuixGlassIcons.Regular.Play,
+                                    imageVector = MiuixIcons.Play,
                                     contentDescription = "播放全部",
                                     tint = MiuixTheme.colorScheme.primary,
                                     modifier = Modifier.size(22.dp),

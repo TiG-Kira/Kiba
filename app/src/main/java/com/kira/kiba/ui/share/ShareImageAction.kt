@@ -33,7 +33,9 @@ import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import com.kira.kiba.ui.navigation.KibaActionButton
-import top.yukonga.miuix.kmp.icon.glass.*
+import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.*
+import com.kira.kiba.ui.icon.*
 import com.kira.kiba.ui.material.KibaGlassDialog
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
@@ -99,7 +101,7 @@ fun ShareImageAction(
         modifier = modifier,
     ) {
         Icon(
-            MiuixGlassIcons.Regular.Share,
+            MiuixIcons.Share,
             contentDescription = contentDescription,
             tint = tint,
         )

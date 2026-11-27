@@ -62,17 +62,17 @@ import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
-import top.yukonga.miuix.kmp.icon.glass.Alarm
-import top.yukonga.miuix.kmp.icon.glass.ChevronBackward
-import top.yukonga.miuix.kmp.icon.glass.ChevronForward
-import top.yukonga.miuix.kmp.icon.glass.Download
-import top.yukonga.miuix.kmp.icon.glass.Music
-import top.yukonga.miuix.kmp.icon.glass.Ok
-import top.yukonga.miuix.kmp.icon.glass.Pause
-import top.yukonga.miuix.kmp.icon.glass.Play
-import top.yukonga.miuix.kmp.icon.glass.Playlist
-import top.yukonga.miuix.kmp.icon.glass.Redo
+import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.Alarm
+import top.yukonga.miuix.kmp.icon.extended.ChevronBackward
+import top.yukonga.miuix.kmp.icon.extended.ChevronForward
+import top.yukonga.miuix.kmp.icon.extended.Download
+import top.yukonga.miuix.kmp.icon.extended.Music
+import top.yukonga.miuix.kmp.icon.extended.Ok
+import top.yukonga.miuix.kmp.icon.extended.Pause
+import top.yukonga.miuix.kmp.icon.extended.Play
+import top.yukonga.miuix.kmp.icon.extended.Playlist
+import top.yukonga.miuix.kmp.icon.extended.Redo
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import com.kira.kiba.ui.theme.KibaMotion
 
@@ -256,7 +256,7 @@ fun SongPlayerScreen(
                             horizontalArrangement = Arrangement.Center,
                         ) {
                             PlayerFunc(
-                                icon = if (downloaded) MiuixGlassIcons.Regular.Ok else MiuixGlassIcons.Regular.Download,
+                                icon = if (downloaded) MiuixIcons.Ok else MiuixIcons.Download,
                                 label = when {
                                     downloading -> "下载中…"
                                     downloaded -> "已下载"
@@ -296,7 +296,7 @@ fun SongPlayerScreen(
                             // ── 设为铃声：需「修改系统设置」特殊权限（两段式流程）；
                             // 流媒体播放中的歌先落盘（已下载则直接复用本地文件）
                             PlayerFunc(
-                                icon = MiuixGlassIcons.Regular.Alarm,
+                                icon = MiuixIcons.Alarm,
                                 label = if (ringtoneBusy) "处理中…" else "设为铃声",
                                 onClick = {
                                     val t = track ?: return@PlayerFunc
@@ -338,7 +338,7 @@ fun SongPlayerScreen(
                                 modifier = Modifier.weight(1f),
                             )
                             PlayerFunc(
-                                icon = MiuixGlassIcons.Regular.Music,
+                                icon = MiuixIcons.Music,
                                 label = "音源来自落雪",
                                 onClick = {
                                     Toast.makeText(context, "整轨音源：assets2.lxns.net（落雪）", Toast.LENGTH_SHORT).show()
@@ -370,7 +370,7 @@ fun SongPlayerScreen(
                     ) {
                         // 左：循环模式
                         ControlIcon(
-                            icon = MiuixGlassIcons.Regular.Redo,
+                            icon = MiuixIcons.Redo,
                             contentDescription = when (state.loopMode) {
                                 LoopMode.OFF -> "顺序播放"
                                 LoopMode.ALL -> "列表循环"
@@ -387,7 +387,7 @@ fun SongPlayerScreen(
                         ) { SongPlaybackController.cycleLoopMode() }
                         // 中间组：上一首 / 大播放键 / 下一首
                         ControlIcon(
-                            icon = MiuixGlassIcons.Regular.ChevronBackward,
+                            icon = MiuixIcons.ChevronBackward,
                             contentDescription = "上一首",
                             enabled = state.queueIndex > 0,
                             size = 46.dp,
@@ -402,14 +402,14 @@ fun SongPlayerScreen(
                             contentAlignment = Alignment.Center,
                         ) {
                             androidx.compose.material3.Icon(
-                                imageVector = if (state.playing) MiuixGlassIcons.Regular.Pause else MiuixGlassIcons.Regular.Play,
+                                imageVector = if (state.playing) MiuixIcons.Pause else MiuixIcons.Play,
                                 contentDescription = if (state.playing) "暂停" else "播放",
                                 tint = Color.Black,
                                 modifier = Modifier.size(38.dp),
                             )
                         }
                         ControlIcon(
-                            icon = MiuixGlassIcons.Regular.ChevronForward,
+                            icon = MiuixIcons.ChevronForward,
                             contentDescription = "下一首",
                             enabled = state.queueIndex < state.queue.lastIndex,
                             size = 46.dp,
@@ -423,7 +423,7 @@ fun SongPlayerScreen(
                         ) {
                             if (showFuncRow) {
                                 ControlIcon(
-                                    icon = MiuixGlassIcons.Regular.Playlist,
+                                    icon = MiuixIcons.Playlist,
                                     contentDescription = "播放列表 · ${state.queue.size} 首",
                                     enabled = true,
                                     size = 46.dp,
@@ -527,7 +527,7 @@ private fun QueuePanel(
                     }
                     if (isCurrent) {
                         androidx.compose.material3.Icon(
-                            imageVector = if (state.playing) MiuixGlassIcons.Regular.Pause else MiuixGlassIcons.Regular.Play,
+                            imageVector = if (state.playing) MiuixIcons.Pause else MiuixIcons.Play,
                             contentDescription = if (state.playing) "正在播放" else "已暂停",
                             tint = MiuixTheme.colorScheme.primary,
                             modifier = Modifier.size(16.dp),

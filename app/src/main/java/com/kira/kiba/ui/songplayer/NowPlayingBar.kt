@@ -24,16 +24,16 @@ import com.kira.kiba.core.playback.SongPlaybackController
 import com.kira.kiba.ui.common.CoverFrame
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.glass.GlassDefaults
-import top.yukonga.miuix.kmp.glass.GlassMaterials
-import top.yukonga.miuix.kmp.glass.GlassShadows
-import top.yukonga.miuix.kmp.glass.GlassShape
-import top.yukonga.miuix.kmp.glass.GlassStrokes
+import top.yukonga.miuix.kmp.material.GlassDefaults
+import top.yukonga.miuix.kmp.material.GlassMaterials
+import top.yukonga.miuix.kmp.material.GlassShadows
+import top.yukonga.miuix.kmp.material.GlassShape
+import top.yukonga.miuix.kmp.material.GlassEdgeStrokes
 import top.yukonga.miuix.kmp.glass.glassPanel
 import top.yukonga.miuix.kmp.blur.Backdrop
-import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
-import top.yukonga.miuix.kmp.icon.glass.Pause
-import top.yukonga.miuix.kmp.icon.glass.Play
+import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.Pause
+import top.yukonga.miuix.kmp.icon.extended.Play
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import androidx.compose.ui.unit.Dp
 
@@ -90,7 +90,7 @@ fun NowPlayingBar(
     // 避免每次重组都生成新对象（对象身份变化同样会把玻璃拖进重录）。
     val shape = remember { GlassShape(29.dp) }
     val material = remember(isDark) { GlassMaterials.puredThinGlass(isDark) }
-    val stroke = remember(isDark) { GlassStrokes.forTheme(isDark) }
+    val stroke = remember(isDark) { GlassEdgeStrokes.forTheme(isDark) }
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -159,7 +159,7 @@ fun NowPlayingBar(
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    if (state.playing) MiuixGlassIcons.Regular.Pause else MiuixGlassIcons.Regular.Play,
+                    if (state.playing) MiuixIcons.Pause else MiuixIcons.Play,
                     contentDescription = if (state.playing) "暂停" else "播放",
                     tint = MiuixTheme.colorScheme.primary,
                 )

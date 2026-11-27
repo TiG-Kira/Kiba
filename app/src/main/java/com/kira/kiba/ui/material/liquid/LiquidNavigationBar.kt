@@ -40,6 +40,8 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.GraphicsLayerScope
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -77,8 +79,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.blur.sensor.rememberDeviceTilt
-import top.yukonga.miuix.kmp.glass.GlassNavigationItem
+import top.yukonga.miuix.kmp.material.sensor.rememberDeviceTilt
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import kotlin.math.abs
 import kotlin.math.sign
@@ -109,9 +110,22 @@ val LiquidNavHeight: Dp = 54.dp
  * 只服务于 `MaterialFamily.LIQUID`；柔光玻璃+（默认）与未开启高级材质时的经典
  * 底栏都由 `GlassNavigationBar` 承担，与本文件无关。
  */
+
+/**
+ * 液态玻璃底栏的导航项。官方 miuix-glass 0.9.5 的 GlassNavigationItem 不支持
+ * 位图（Painter）图标——Kiba tab 的产品 Logo 需要它，故液态底栏自带此类型；
+ * 柔光玻璃底栏走官方 [top.yukonga.miuix.kmp.glass.GlassNavigationItem]（Logo 用官方图标代替）。
+ */
+data class LiquidNavigationItem(
+    val icon: ImageVector,
+    val label: String? = null,
+    val contentDescription: String? = null,
+    /** 可选栅格图标（如产品 Logo PNG）。设置后优先于 [icon] 渲染，且不随选中态变色（由调用方着色）。 */
+    val iconPainter: Painter? = null,
+)
 @Composable
 fun LiquidNavigationBar(
-    items: List<GlassNavigationItem>,
+    items: List<LiquidNavigationItem>,
     selectedIndex: Int,
     onSelect: (Int) -> Unit,
     backdrop: Backdrop?,
@@ -697,7 +711,7 @@ private fun unselectedTint(): Color = MiuixTheme.colorScheme.onSurface.copy(alph
 
 @Composable
 private fun TabContent(
-    item: GlassNavigationItem,
+    item: LiquidNavigationItem,
     tint: Color,
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,

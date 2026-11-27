@@ -38,8 +38,9 @@ import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
-import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
-import top.yukonga.miuix.kmp.icon.glass.*
+import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.*
+import com.kira.kiba.ui.icon.*
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -112,7 +113,7 @@ fun AgentMemoryScreen(scrollBehavior: ScrollBehavior) {
                         summary = "写一句 Agent 需要一直记得的话",
                         startAction = {
                             Icon(
-                                imageVector = MiuixGlassIcons.Regular.Add,
+                                imageVector = MiuixIcons.Add,
                                 contentDescription = null,
                                 tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                                 modifier = Modifier.size(26.dp),
@@ -151,7 +152,7 @@ fun AgentMemoryScreen(scrollBehavior: ScrollBehavior) {
                         summary = if (items.isEmpty()) "当前没有可清空的条目" else "删除全部 ${items.size} 条（不可撤销）",
                         startAction = {
                             Icon(
-                                imageVector = MiuixGlassIcons.Regular.Delete,
+                                imageVector = MiuixIcons.Delete,
                                 contentDescription = null,
                                 tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                                 modifier = Modifier.size(26.dp),

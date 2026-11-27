@@ -16,8 +16,8 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        // miuix（ui/blur/icons/preference）均发布在 Maven Central，免鉴权；
-        // miuix-glass 模块以源码形式 vendor 于 app/src/main/java/top/yukonga/miuix/kmp/glass。
+        // miuix（ui/blur/glass/material/icons/preference）均发布在 Maven Central，免鉴权；
+        // Kiba 定制顶栏家族源码在 app/src/main/java/com/kira/kiba/ui/material/glass。
         mavenLocal()
     }
 }

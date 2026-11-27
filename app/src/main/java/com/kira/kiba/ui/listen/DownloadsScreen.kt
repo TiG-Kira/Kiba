@@ -43,9 +43,9 @@ import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.icon.glass.Delete
-import top.yukonga.miuix.kmp.icon.glass.Info
-import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
+import top.yukonga.miuix.kmp.icon.extended.Delete
+import top.yukonga.miuix.kmp.icon.extended.Info
+import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import java.util.Locale
 
@@ -179,7 +179,7 @@ fun DownloadsScreen(
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 androidx.compose.material3.Icon(
-                                    imageVector = MiuixGlassIcons.Regular.Info,
+                                    imageVector = MiuixIcons.Info,
                                     contentDescription = "曲目详情",
                                     tint = MiuixTheme.colorScheme.primary,
                                     modifier = Modifier.size(20.dp),
@@ -202,7 +202,7 @@ fun DownloadsScreen(
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 androidx.compose.material3.Icon(
-                                    imageVector = MiuixGlassIcons.Regular.Delete,
+                                    imageVector = MiuixIcons.Delete,
                                     contentDescription = "删除",
                                     tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                                     modifier = Modifier.size(20.dp),

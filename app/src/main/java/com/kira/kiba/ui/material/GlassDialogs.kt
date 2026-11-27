@@ -13,6 +13,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
@@ -21,12 +22,9 @@ import com.kira.kiba.ui.material.liquid.LiquidGlassDialog
 import com.kira.kiba.ui.material.liquid.LocalLiquidBackdrop
 import com.kira.kiba.ui.navigation.LocalGlassDialogBackdrop
 import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.glass.GlassDefaults
 import top.yukonga.miuix.kmp.glass.GlassDialog
-import top.yukonga.miuix.kmp.glass.GlassOverlayDefaults
-import top.yukonga.miuix.kmp.glass.GlassShape
-import top.yukonga.miuix.kmp.glass.GlassShadows
-import top.yukonga.miuix.kmp.glass.GlassStrokes
+import top.yukonga.miuix.kmp.glass.GlassDialogDefaults
+import top.yukonga.miuix.kmp.material.GlassEdgeStrokes
 import top.yukonga.miuix.kmp.layout.DialogDefaults
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
@@ -115,6 +113,32 @@ fun KibaGlassDialog(
     val dismiss: () -> Unit = { onDismissRequest?.invoke() }
     val finish: () -> Unit = { onDismissFinished?.invoke() }
 
+    if (family != MaterialFamily.LIQUID) {
+        // 官方 0.9.5 GlassDialog：show/onDismissRequest/backdrop + title/summary 直传，
+        // 排版走 miuix DialogContentLayout（与 OverlayDialog 同一套标题/说明规范），
+        // 自带弹层宿主（renderInRootScaffold），不再套 MiuixPopupUtils.DialogLayout。
+        // Scrim 强度对齐旧 GlassOverlayDefaults：亮 0.30 / 暗 0.60（黑）。
+        val isDark = MiuixTheme.colorScheme.background.luminance() < 0.5f
+        GlassDialog(
+            show = show,
+            onDismissRequest = dismiss,
+            backdrop = backdrop!!,
+            enableWindowDim = false,
+            title = title,
+            summary = summary,
+            // 与 miuix 对话框同源的圆角（不是 glass 默认的 28dp，也不再写死 32dp）
+            cornerRadius = dialogCornerRadius,
+            maxWidth = maxWidth,
+            material = GlassDialogDefaults.material(),
+            stroke = GlassEdgeStrokes.BigLight,
+            dimColor = Color.Black.copy(alpha = if (isDark) 0.60f else 0.30f),
+            onDismissFinished = if (onDismissFinished == null) null else finish,
+        ) {
+            content()
+        }
+        return
+    }
+
     MiuixPopupUtils.DialogLayout(
         visible = visibleState,
         enterTransition = EnterTransition.None,
@@ -124,37 +148,15 @@ fun KibaGlassDialog(
         renderInRootScaffold = true,
         onDismissFinished = if (onDismissFinished == null) null else finish,
     ) {
-        if (family == MaterialFamily.LIQUID) {
-            // 液态玻璃弹层：圆角与 miuix 对话框同源 + 强折射色散（Kyant0/AndroidLiquidGlass）
-            LiquidGlassDialog(
-                visible = show,
-                onDismissRequest = dismiss,
-                backdrop = liquidBackdrop!!,
-                alignment = Alignment.BottomCenter,
-                cornerRadius = dialogCornerRadius,
-            ) {
-                DialogBody(title = title, summary = summary, maxWidth = maxWidth, content = content)
-            }
-        } else {
-            val isDark = MiuixTheme.colorScheme.background.luminance() < 0.5f
-            GlassDialog(
-                visible = show,
-                onDismissRequest = dismiss,
-                backdrop = backdrop!!,
-                alignment = Alignment.BottomCenter,
-                scrimAlpha = if (isDark) {
-                    GlassOverlayDefaults.ScrimAlphaDark
-                } else {
-                    GlassOverlayDefaults.ScrimAlphaLight
-                },
-                style = GlassDefaults.style(isDark),
-                // 与 miuix 对话框同源的圆角（不是 glass 默认的 28dp，也不再写死 32dp）
-                shape = GlassShape(dialogCornerRadius),
-                stroke = GlassStrokes.BigLight,
-                shadow = GlassShadows.ExtraHigh,
-            ) {
-                DialogBody(title = title, summary = summary, maxWidth = maxWidth, content = content)
-            }
+        // 液态玻璃弹层：圆角与 miuix 对话框同源 + 强折射色散（Kyant0/AndroidLiquidGlass）
+        LiquidGlassDialog(
+            visible = show,
+            onDismissRequest = dismiss,
+            backdrop = liquidBackdrop!!,
+            alignment = Alignment.BottomCenter,
+            cornerRadius = dialogCornerRadius,
+        ) {
+            DialogBody(title = title, summary = summary, maxWidth = maxWidth, content = content)
         }
     }
 }

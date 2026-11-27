@@ -25,8 +25,9 @@ import java.util.Locale
 import com.kira.kiba.core.model.ChuniDiffType
 import com.kira.kiba.core.utils.CoverHits
 import com.kira.kiba.core.utils.CoverSources
-import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
-import top.yukonga.miuix.kmp.icon.glass.*
+import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.*
+import com.kira.kiba.ui.icon.*
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.basic.Text
 
@@ -92,7 +93,7 @@ fun ChuniCoverPlaceholder(stroke: Color, size: Dp, modifier: Modifier) {
         contentAlignment = Alignment.Center,
     ) {
         androidx.compose.material3.Icon(
-            imageVector = MiuixGlassIcons.Regular.Music, contentDescription = null,
+            imageVector = MiuixIcons.Music, contentDescription = null,
             tint = stroke, modifier = Modifier.size(size / 2.6f),
         )
     }

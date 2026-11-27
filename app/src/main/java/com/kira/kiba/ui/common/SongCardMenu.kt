@@ -37,7 +37,9 @@ import top.yukonga.miuix.kmp.basic.ListPopupDefaults
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 // 通配符导入：Regular.Info / Regular.Copy 等为同包扩展属性，单导入 MiuixGlassIcons 无法解析
-import top.yukonga.miuix.kmp.icon.glass.*
+import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.*
+import com.kira.kiba.ui.icon.*
 import top.yukonga.miuix.kmp.overlay.OverlayListPopup
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
@@ -130,7 +132,7 @@ fun SongCardMenuHost(
             add(
                 SongCardMenuAction(
                     text = "显示歌曲详情",
-                    icon = MiuixGlassIcons.Regular.Info,
+                    icon = MiuixIcons.Info,
                     tint = KibaIconTint.BLUE,
                 ) {
                     menu.visible = false
@@ -140,7 +142,7 @@ fun SongCardMenuHost(
             add(
                 SongCardMenuAction(
                     text = "复制歌曲名",
-                    icon = MiuixGlassIcons.Regular.Copy,
+                    icon = MiuixIcons.Copy,
                     tint = KibaIconTint.CYAN,
                 ) {
                     menu.visible = false
@@ -151,7 +153,7 @@ fun SongCardMenuHost(
                 add(
                     SongCardMenuAction(
                         text = "播放歌曲",
-                        icon = MiuixGlassIcons.Regular.Play,
+                        icon = MiuixIcons.Play,
                         tint = KibaIconTint.GREEN,
                     ) {
                         menu.visible = false
@@ -161,7 +163,7 @@ fun SongCardMenuHost(
                 add(
                     SongCardMenuAction(
                         text = "加入歌单",
-                        icon = MiuixGlassIcons.Regular.Add,
+                        icon = MiuixIcons.Add,
                         tint = KibaIconTint.PINK,
                     ) {
                         menu.visible = false

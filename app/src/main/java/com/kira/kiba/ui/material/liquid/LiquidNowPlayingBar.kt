@@ -34,9 +34,9 @@ import com.kira.kiba.ui.common.CoverFrame
 import com.kira.kiba.ui.songplayer.PlayerBarSnapshot
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
-import top.yukonga.miuix.kmp.icon.glass.Pause
-import top.yukonga.miuix.kmp.icon.glass.Play
+import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.Pause
+import top.yukonga.miuix.kmp.icon.extended.Play
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /** 液态玻璃播放底栏高度（比柔光玻璃+ 的 58dp 更厚一档，胶囊形体才对称）。 */
@@ -149,9 +149,9 @@ fun LiquidNowPlayingBar(
         ) {
             Icon(
                 imageVector = if (state.playing) {
-                    MiuixGlassIcons.Regular.Pause
+                    MiuixIcons.Pause
                 } else {
-                    MiuixGlassIcons.Regular.Play
+                    MiuixIcons.Play
                 },
                 contentDescription = if (state.playing) "暂停" else "播放",
                 tint = MiuixTheme.colorScheme.primary,

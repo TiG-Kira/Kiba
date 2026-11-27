@@ -60,10 +60,11 @@ import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.TopAppBarState
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.TopAppBarDefaults
-import top.yukonga.miuix.kmp.glass.GlassTopAppBar
-import top.yukonga.miuix.kmp.glass.GlassTopAppBarDefaults
-import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
-import top.yukonga.miuix.kmp.icon.glass.*
+import com.kira.kiba.ui.material.glass.GlassTopAppBar
+import com.kira.kiba.ui.material.glass.GlassTopAppBarDefaults
+import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.*
+import com.kira.kiba.ui.icon.*
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
@@ -248,6 +249,8 @@ fun SongDetailTopBarSlot(
             largeTitleColor = onCoverColor,
             subtitleColor = onCoverColor.copy(alpha = 0.72f),
             backdrop = if (liquidSkin) null else LocalGlassTopAppBarBackdrop.current,
+                progressiveBlur = !liquidSkin,
+                visualContentOffset = { scrollBehavior.state.visualContentOffset },
             scrollBehavior = scrollBehavior,
             bandBrush = if (liquidSkin) {
                 Brush.verticalGradient(listOf(Color.Transparent, Color.Transparent))
@@ -263,7 +266,7 @@ fun SongDetailTopBarSlot(
                     // 注意：miuix-glass 图标库命名与形状相反——Starred 画的是空心星（双轮廓），
                     // Unstar 画的是实心星（单轮廓），这里按实际形状取用。
                     Icon(
-                        if (favor) MiuixGlassIcons.Regular.Unstar else MiuixGlassIcons.Regular.Starred,
+                        if (favor) MiuixIcons.Unstar else MiuixIcons.Starred,
                         contentDescription = if (favor) "取消收藏" else "收藏",
                         tint = onCoverColor,
                     )

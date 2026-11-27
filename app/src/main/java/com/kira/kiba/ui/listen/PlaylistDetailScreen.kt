@@ -46,9 +46,9 @@ import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
-import top.yukonga.miuix.kmp.icon.glass.Info
-import top.yukonga.miuix.kmp.icon.glass.MiuixGlassIcons
-import top.yukonga.miuix.kmp.icon.glass.Remove
+import top.yukonga.miuix.kmp.icon.extended.Info
+import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.Remove
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.utils.PressFeedbackType
 import androidx.compose.ui.text.style.TextOverflow
@@ -182,7 +182,7 @@ fun PlaylistDetailScreen(
                                         verticalAlignment = Alignment.CenterVertically,
                                     ) {
                                         androidx.compose.material3.Icon(
-                                            imageVector = MiuixGlassIcons.Regular.Remove,
+                                            imageVector = MiuixIcons.Remove,
                                             contentDescription = "移出歌单",
                                             tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                                             modifier = Modifier.size(20.dp),
@@ -196,7 +196,7 @@ fun PlaylistDetailScreen(
                                         verticalAlignment = Alignment.CenterVertically,
                                     ) {
                                         androidx.compose.material3.Icon(
-                                            imageVector = MiuixGlassIcons.Regular.Info,
+                                            imageVector = MiuixIcons.Info,
                                             contentDescription = "曲目详情",
                                             tint = MiuixTheme.colorScheme.primary,
                                             modifier = Modifier.size(20.dp),

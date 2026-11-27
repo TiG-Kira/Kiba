@@ -48,8 +48,8 @@ import com.kira.kiba.ui.navigation.LocalGlassTopAppBarBackdrop
 import com.kira.kiba.ui.navigation.useLiquidBar
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.TopAppBarDefaults
-import top.yukonga.miuix.kmp.glass.GlassTopAppBar
-import top.yukonga.miuix.kmp.glass.GlassTopAppBarDefaults
+import com.kira.kiba.ui.material.glass.GlassTopAppBar
+import com.kira.kiba.ui.material.glass.GlassTopAppBarDefaults
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
@@ -176,6 +176,8 @@ fun CollectionTopBarSlot(
                 largeTitleColor = onCoverColor,
                 subtitleColor = onCoverColor.copy(alpha = 0.72f),
                 backdrop = if (liquidSkin) null else LocalGlassTopAppBarBackdrop.current,
+                progressiveBlur = !liquidSkin,
+                visualContentOffset = { scrollBehavior.state.visualContentOffset },
                 scrollBehavior = scrollBehavior,
                 bandBrush = if (liquidSkin) {
                     androidx.compose.ui.graphics.Brush.verticalGradient(
