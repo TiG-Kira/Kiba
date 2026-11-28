@@ -81,6 +81,23 @@ object AppExtensions {
         val level: String,
     )
 
+    /**
+     * 谱面物量（chart 表投影：各类 note 数量）。
+     * 插件成绩写入时按物量合成判定分布，使达成率 / DX 分 / 判定计数相互自洽。
+     */
+    data class ExtChartNotes(
+        val songId: Int,
+        val levelIndex: Int,
+        val tap: Int,
+        val hold: Int,
+        val slide: Int,
+        val touch: Int,
+        val breakCount: Int,
+    ) {
+        /** 补正总物量：TAP + 2×HOLD + 3×SLIDE + 1×TOUCH + 5×BREAK（TOUCH 与 TAP 同权重）。 */
+        val weightedTotal: Int get() = tap + 2 * hold + 3 * slide + touch + 5 * breakCount
+    }
+
     /** 插件元信息（设置页「插件管理」列表展示用）。 */
     data class PluginInfo(
         val id: String,
@@ -222,6 +239,12 @@ object AppExtensions {
         suspend fun chartInfo(songId: Int, levelIndex: Int): ExtChartInfo? = null
 
         /**
+         * 按 (songId, levelIndex) 取谱面物量（各类 note 数量）；null 表示无数据。
+         * 带默认实现——旧版插件不改此方法也能被加载（跨 dex 二进制兼容铁律）。
+         */
+        suspend fun chartNotes(songId: Int, levelIndex: Int): ExtChartNotes? = null
+
+        /**
          * 发布外部成绩（宿主实现：走与常规源相同的落库 / B50 / 账户状态管线）。
          * 仅官方签名插件可用；非官方注入实例上此方法静默 no-op。
          * @param historySourceKey Rating 历史分桶的源 key（null 不记历史）
@@ -255,8 +278,11 @@ object AppExtensions {
 
         override suspend fun songById(songId: Int): ExtSong? = base?.songById(songId)
 
-        override suspend fun chartInfo(songId: Int, levelIndex: Int): ExtChartInfo? =
+        override suspend fun chartInfo(songId: Int, levelIndex: Int): AppExtensions.ExtChartInfo? =
             base?.chartInfo(songId, levelIndex)
+
+        override suspend fun chartNotes(songId: Int, levelIndex: Int): AppExtensions.ExtChartNotes? =
+            base?.chartNotes(songId, levelIndex)
 
         override suspend fun publishRecords(
             records: List<ExtRecord>,

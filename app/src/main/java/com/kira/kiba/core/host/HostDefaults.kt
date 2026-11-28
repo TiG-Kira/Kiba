@@ -62,6 +62,33 @@ object HostDefaults {
                     ?.let { AppExtensions.ExtChartInfo(it.songId, levelIndex, it.ds, it.level) }
             }.getOrNull()
 
+        override suspend fun chartNotes(songId: Int, levelIndex: Int): AppExtensions.ExtChartNotes? =
+            runCatching {
+                // levelIndex 与官方难度序号对齐：0..4 = BASIC..REMASTER，10 = 宴会场
+                val difficulty = when (levelIndex) {
+                    0 -> DifficultyType.BASIC
+                    1 -> DifficultyType.ADVANCED
+                    2 -> DifficultyType.EXPERT
+                    3 -> DifficultyType.MASTER
+                    4 -> DifficultyType.REMASTER
+                    10 -> DifficultyType.UTAGE
+                    else -> return@runCatching null
+                }
+                AppDataBase.getInstance().chartDao().getChartsBySongId(songId)
+                    .firstOrNull { it.difficultyType == difficulty }
+                    ?.let {
+                        AppExtensions.ExtChartNotes(
+                            songId = it.songId,
+                            levelIndex = levelIndex,
+                            tap = it.notesTap,
+                            hold = it.notesHold,
+                            slide = it.notesSlide,
+                            touch = it.notesTouch,
+                            breakCount = it.notesBreak,
+                        )
+                    }
+            }.getOrNull()
+
         override fun toast(context: Context, message: String) {
             android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_SHORT).show()
         }
