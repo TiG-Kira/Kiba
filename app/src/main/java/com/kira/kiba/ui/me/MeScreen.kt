@@ -342,7 +342,12 @@ fun MeScreen(
                     }                    // 二维码导入是**舞萌 + 水鱼**专用通道（官方登录二维码 + 水鱼导入令牌）：
                     // 中二节奏既没有对应二维码体系、也没有水鱼导入通道，切到中二时整行隐藏；
                     // 数据源选落雪时同理 —— 落雪走官方服务端解析，这条路的终点是水鱼。
-                    if (!isChunithm && src == ScoreSource.WATER_FISH && !extMasked) {
+                    // 插件启用期间同样隐藏：插件「更新查分器」已是同能力入口，
+                    // 双入口并存只会让用户困惑（v3.7.3 起）。
+                    val pluginActive = com.kira.kiba.core.host.AppExtensions.pluginInfos().any {
+                        com.kira.kiba.core.host.AppExtensions.pluginEnabled(it.id)
+                    }
+                    if (!isChunithm && src == ScoreSource.WATER_FISH && !extMasked && !pluginActive) {
                         ArrowPreference(
                             title = "二维码导入成绩",
                             summary = "仅舞萌 DX：免 VPN —— 先在「工具箱 → 接入 Easymai 账号」登录，" +
