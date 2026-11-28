@@ -202,3 +202,11 @@
     androidx.compose.runtime.Composer startRestartGroup(int);
     androidx.compose.runtime.ScopeUpdateScope endRestartGroup();
 }
+
+# gen_host_keep v3 校准（2026-11-28，v3.7.3 真机 1.0.21 进高级选项页闪退）：
+# ExtPrefIcon/MiuixIcons 扩展图标是 1.0.21 新增插件引用，Icon-ww6aTOc/getMusic 等
+# kept 方法的签名引用了未 keep 的类型 → 改名后描述符失配 NoSuchMethodError。
+# keep 住方法 ≠ 签名匹配：签名里的参数/返回类型必须一并 keep（缺口 #6 同款）。
+-keep class androidx.compose.ui.graphics.vector.ImageVector { *; }
+-keep class androidx.compose.ui.graphics.ColorKt { *; }
+-keep class androidx.compose.foundation.DarkThemeKt { *; }
